@@ -147,6 +147,34 @@ enum Commands {
         config: Option<PathBuf>,
     },
 
+    /// Check provider connectivity and model availability
+    CheckProvider {
+        /// Provider name (omit to check the first configured provider)
+        name: Option<String>,
+
+        /// Check all configured providers
+        #[arg(long)]
+        all: bool,
+
+        /// Path to baton.toml
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
+
+    /// Check runtime connectivity and health
+    CheckRuntime {
+        /// Runtime name (omit to check the first configured runtime)
+        name: Option<String>,
+
+        /// Check all configured runtimes
+        #[arg(long)]
+        all: bool,
+
+        /// Path to baton.toml
+        #[arg(long)]
+        config: Option<PathBuf>,
+    },
+
     /// Print version information
     Version {
         /// Path to baton.toml
@@ -231,6 +259,8 @@ fn main() {
             config,
         } => cmd_history(config.as_ref(), gate.as_deref(), status.as_deref(), artifact_hash.as_deref(), limit),
         Commands::ValidateConfig { config } => cmd_validate_config(config.as_ref()),
+        Commands::CheckProvider { name, all, config } => cmd_check_provider(config.as_ref(), name.as_deref(), all),
+        Commands::CheckRuntime { name, all, config } => cmd_check_runtime(config.as_ref(), name.as_deref(), all),
         Commands::Clean { dry_run, config } => cmd_clean(config.as_ref(), dry_run),
         Commands::Version { config } => cmd_version(config.as_ref()),
     };
@@ -676,6 +706,242 @@ fn cmd_validate_config(config_path: Option<&PathBuf>) -> i32 {
     }
 
     if validation.has_errors() { 1 } else { 0 }
+}
+
+fn check_single_provider(name: &str, provider: &baton::config::Provider) -> bool {
+    // 1. Check API key
+    let api_key = if provider.api_key_env.is_empty() {
+        None
+    } else {
+        match std::env::var(&provider.api_key_env) {
+            Ok(key) => Some(key),
+            Err(_) => {
+                eprintln!("  ERROR: API key env var '{}' is not set", provider.api_key_env);
+                return false;
+            }
+        }
+    };
+
+    // 2. Build HTTP client with short timeout
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("  ERROR: Failed to create HTTP client: {e}");
+            return false;
+        }
+    };
+
+    // Build auth headers
+    let mut headers = reqwest::header::HeaderMap::new();
+    if let Some(ref key) = api_key {
+        if let Ok(val) = reqwest::header::HeaderValue::from_str(&format!("Bearer {key}")) {
+            headers.insert(reqwest::header::AUTHORIZATION, val);
+        }
+    }
+
+    // 3. Try /v1/models endpoint
+    let models_url = format!("{}/v1/models", provider.api_base);
+    let models_response = client.get(&models_url).headers(headers.clone()).send();
+
+    match models_response {
+        Err(e) => {
+            if e.is_timeout() {
+                eprintln!("  ERROR: Provider '{name}': connection timed out to {}", provider.api_base);
+            } else {
+                eprintln!("  ERROR: Cannot reach {}: {e}", provider.api_base);
+            }
+            return false;
+        }
+        Ok(resp) => {
+            let status = resp.status();
+            if status.as_u16() == 401 || status.as_u16() == 403 {
+                eprintln!("  ERROR: Authentication failed for provider '{name}'. Check {}.", provider.api_key_env);
+                return false;
+            }
+            if status.is_success() {
+                // Parse model list and check for default_model
+                let body: serde_json::Value = resp.json().unwrap_or_default();
+                let models: Vec<String> = body
+                    .get("data")
+                    .and_then(|d| d.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|m| m.get("id").and_then(|v| v.as_str()))
+                            .map(|s| s.to_string())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                if models.iter().any(|m| m == &provider.default_model) {
+                    eprintln!("  OK: Provider '{name}': reachable, model '{}' available", provider.default_model);
+                    return true;
+                } else if models.is_empty() {
+                    // Model list came back empty — fall through to test completion
+                } else {
+                    eprintln!("  WARN: Provider '{name}': reachable, but model '{}' not found", provider.default_model);
+                    let display: Vec<&str> = models.iter().take(10).map(|s| s.as_str()).collect();
+                    eprintln!("  Available models: {}", display.join(", "));
+                    return true; // reachable, just model not found
+                }
+            }
+            // /v1/models not available or empty — try test completion
+        }
+    }
+
+    // 4. Fallback: minimal test completion
+    eprintln!("  WARN: Model list not available. Attempting test completion...");
+    let completions_url = format!("{}/v1/chat/completions", provider.api_base);
+    let test_body = serde_json::json!({
+        "model": provider.default_model,
+        "messages": [{"role": "user", "content": "ping"}],
+        "max_tokens": 1,
+    });
+
+    let test_client = match reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("  ERROR: Failed to create HTTP client: {e}");
+            return false;
+        }
+    };
+
+    match test_client.post(&completions_url).headers(headers).json(&test_body).send() {
+        Ok(resp) if resp.status().is_success() => {
+            eprintln!("  OK: Provider '{name}': reachable, model '{}' responds", provider.default_model);
+            true
+        }
+        Ok(resp) => {
+            eprintln!("  ERROR: Provider '{name}': HTTP {}", resp.status());
+            false
+        }
+        Err(e) => {
+            eprintln!("  ERROR: Provider '{name}': test completion failed: {e}");
+            false
+        }
+    }
+}
+
+fn cmd_check_provider(config_path: Option<&PathBuf>, name: Option<&str>, all: bool) -> i32 {
+    let (config, _) = match load_config(config_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            return 2;
+        }
+    };
+
+    if config.providers.is_empty() {
+        eprintln!("No providers configured in baton.toml.");
+        return 1;
+    }
+
+    let providers_to_check: Vec<(&String, &baton::config::Provider)> = if all {
+        config.providers.iter().collect()
+    } else if let Some(name) = name {
+        match config.providers.get_key_value(name) {
+            Some((k, p)) => vec![(k, p)],
+            None => {
+                let available: Vec<&String> = config.providers.keys().collect();
+                eprintln!(
+                    "Error: Provider '{name}' not found. Available providers: {}",
+                    available.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                );
+                return 1;
+            }
+        }
+    } else {
+        // Default: check the first provider
+        config.providers.iter().take(1).collect()
+    };
+
+    let mut any_failed = false;
+    for (pname, provider) in &providers_to_check {
+        eprintln!("Checking provider '{pname}'...");
+        if !check_single_provider(pname, provider) {
+            any_failed = true;
+        }
+    }
+
+    if any_failed { 1 } else { 0 }
+}
+
+fn cmd_check_runtime(config_path: Option<&PathBuf>, name: Option<&str>, all: bool) -> i32 {
+    let (config, _) = match load_config(config_path) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            return 2;
+        }
+    };
+
+    if config.runtimes.is_empty() {
+        eprintln!("No runtimes configured in baton.toml.");
+        return 1;
+    }
+
+    let runtimes_to_check: Vec<(&String, &baton::config::Runtime)> = if all {
+        config.runtimes.iter().collect()
+    } else if let Some(name) = name {
+        match config.runtimes.get_key_value(name) {
+            Some((k, r)) => vec![(k, r)],
+            None => {
+                let available: Vec<&String> = config.runtimes.keys().collect();
+                eprintln!(
+                    "Error: Runtime '{name}' not found. Available runtimes: {}",
+                    available.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                );
+                return 1;
+            }
+        }
+    } else {
+        // Default: check the first runtime
+        config.runtimes.iter().take(1).collect()
+    };
+
+    let mut any_failed = false;
+    for (rname, runtime_config) in &runtimes_to_check {
+        eprintln!("Checking runtime '{rname}'...");
+
+        // Create the adapter
+        let adapter = match baton::runtime::create_adapter(rname, runtime_config) {
+            Ok(a) => a,
+            Err(e) => {
+                eprintln!("  ERROR: Failed to create adapter for runtime '{rname}': {e}");
+                any_failed = true;
+                continue;
+            }
+        };
+
+        // Run health check
+        match adapter.health_check() {
+            Ok(health) => {
+                if health.reachable {
+                    let version_info = health
+                        .version
+                        .as_ref()
+                        .map(|v| format!(", version {v}"))
+                        .unwrap_or_default();
+                    eprintln!("  OK: Runtime '{rname}': reachable{version_info}");
+                } else {
+                    let msg = health.message.as_deref().unwrap_or("unknown error");
+                    eprintln!("  ERROR: Runtime '{rname}': not reachable ({msg})");
+                    any_failed = true;
+                }
+            }
+            Err(e) => {
+                eprintln!("  ERROR: Runtime '{rname}': health check failed: {e}");
+                any_failed = true;
+            }
+        }
+    }
+
+    if any_failed { 1 } else { 0 }
 }
 
 fn cmd_clean(config_path: Option<&PathBuf>, dry_run: bool) -> i32 {
