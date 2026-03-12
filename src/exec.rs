@@ -4,11 +4,14 @@ use std::process::Command;
 use std::time::Instant;
 
 use crate::config::{
-    split_run_if, BatonConfig, GateConfig, LlmMode, ValidatorConfig, ValidatorType,
+    split_run_if, BatonConfig, GateConfig, LlmMode, ResponseFormat, ValidatorConfig, ValidatorType,
 };
 use crate::error::{BatonError, Result};
 use crate::placeholder::{resolve_placeholders, ResolutionWarnings};
+use crate::prompt::{is_file_reference, resolve_prompt_value};
+use crate::runtime::{self, SessionConfig, SessionStatus};
 use crate::types::*;
+use crate::verdict_parser::parse_verdict;
 
 // ─── run_if evaluation ──────────────────────────────────
 
@@ -251,6 +254,7 @@ pub fn execute_validator(
     artifact: &mut Artifact,
     context: &mut Context,
     prior_results: &BTreeMap<String, ValidatorResult>,
+    config: Option<&BatonConfig>,
 ) -> ValidatorResult {
     let start = Instant::now();
 
@@ -287,10 +291,13 @@ pub fn execute_validator(
             execute_human_validator(validator, artifact, context, prior_results)
         }
         ValidatorType::Llm => {
-            // LLM validators are stubbed for now - they require HTTP calls
             match validator.mode {
-                LlmMode::Completion => execute_llm_stub(validator),
-                LlmMode::Session => execute_llm_stub(validator),
+                LlmMode::Completion => {
+                    execute_llm_completion(validator, artifact, context, prior_results, config)
+                }
+                LlmMode::Session => {
+                    execute_llm_session(validator, artifact, context, prior_results, config)
+                }
             }
         }
     };
@@ -299,14 +306,599 @@ pub fn execute_validator(
     result
 }
 
-fn execute_llm_stub(validator: &ValidatorConfig) -> ValidatorResult {
-    // Placeholder for LLM execution - requires HTTP client
+// ─── LLM completion validator ────────────────────────────
+
+fn execute_llm_completion(
+    validator: &ValidatorConfig,
+    artifact: &mut Artifact,
+    context: &mut Context,
+    prior_results: &BTreeMap<String, ValidatorResult>,
+    config: Option<&BatonConfig>,
+) -> ValidatorResult {
+    let config = match config {
+        Some(c) => c,
+        None => {
+            return ValidatorResult {
+                name: validator.name.clone(),
+                status: Status::Error,
+                feedback: Some("[baton] LLM validator requires config with provider settings".into()),
+                duration_ms: 0,
+                cost: None,
+            };
+        }
+    };
+
+    // Resolve provider
+    let provider = match config.providers.get(&validator.provider) {
+        Some(p) => p,
+        None => {
+            return ValidatorResult {
+                name: validator.name.clone(),
+                status: Status::Error,
+                feedback: Some(format!(
+                    "[baton] Provider '{}' is not defined in [providers].",
+                    validator.provider
+                )),
+                duration_ms: 0,
+                cost: None,
+            };
+        }
+    };
+
+    // Resolve API key
+    let api_key = if provider.api_key_env.is_empty() {
+        None
+    } else {
+        match std::env::var(&provider.api_key_env) {
+            Ok(key) => Some(key),
+            Err(_) => {
+                return ValidatorResult {
+                    name: validator.name.clone(),
+                    status: Status::Error,
+                    feedback: Some(format!(
+                        "[baton] Authentication failed for provider '{}'. Check {}.",
+                        validator.provider, provider.api_key_env
+                    )),
+                    duration_ms: 0,
+                    cost: None,
+                };
+            }
+        }
+    };
+
+    // Resolve prompt
+    let prompt_value = match &validator.prompt {
+        Some(p) => p.clone(),
+        None => {
+            return ValidatorResult {
+                name: validator.name.clone(),
+                status: Status::Error,
+                feedback: Some("[baton] LLM validator missing prompt".into()),
+                duration_ms: 0,
+                cost: None,
+            };
+        }
+    };
+
+    let prompt_body = if is_file_reference(&prompt_value) {
+        match resolve_prompt_value(
+            &prompt_value,
+            &config.defaults.prompts_dir,
+            &config.config_dir,
+        ) {
+            Ok(template) => template.body,
+            Err(e) => {
+                return ValidatorResult {
+                    name: validator.name.clone(),
+                    status: Status::Error,
+                    feedback: Some(format!("[baton] {e}")),
+                    duration_ms: 0,
+                    cost: None,
+                };
+            }
+        }
+    } else {
+        prompt_value
+    };
+
+    // Resolve placeholders in prompt
+    let mut warnings = ResolutionWarnings::new();
+    let rendered_prompt =
+        resolve_placeholders(&prompt_body, artifact, context, prior_results, &mut warnings);
+
+    // Build model name
+    let model = validator
+        .model
+        .clone()
+        .unwrap_or_else(|| provider.default_model.clone());
+
+    // Build messages
+    let mut messages = Vec::new();
+
+    if let Some(ref sys) = validator.system_prompt {
+        let rendered_sys =
+            resolve_placeholders(sys, artifact, context, prior_results, &mut warnings);
+        messages.push(serde_json::json!({
+            "role": "system",
+            "content": rendered_sys,
+        }));
+    }
+
+    messages.push(serde_json::json!({
+        "role": "user",
+        "content": rendered_prompt,
+    }));
+
+    // Build request body
+    let mut request_body = serde_json::json!({
+        "model": model,
+        "messages": messages,
+        "temperature": validator.temperature,
+    });
+
+    if let Some(max_tokens) = validator.max_tokens {
+        request_body["max_tokens"] = serde_json::json!(max_tokens);
+    }
+
+    // Make HTTP request
+    let url = format!("{}/v1/chat/completions", provider.api_base);
+
+    let client = match reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(validator.timeout_seconds))
+        .build()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return ValidatorResult {
+                name: validator.name.clone(),
+                status: Status::Error,
+                feedback: Some(format!("[baton] Failed to create HTTP client: {e}")),
+                duration_ms: 0,
+                cost: None,
+            };
+        }
+    };
+
+    let mut req = client.post(&url).json(&request_body);
+
+    if let Some(ref key) = api_key {
+        req = req.header("Authorization", format!("Bearer {key}"));
+    }
+
+    let response = match req.send() {
+        Ok(r) => r,
+        Err(e) => {
+            let feedback = if e.is_timeout() {
+                format!(
+                    "[baton] Validator timed out after {} seconds",
+                    validator.timeout_seconds
+                )
+            } else {
+                format!(
+                    "[baton] Cannot reach provider '{}' at {}: {e}",
+                    validator.provider, provider.api_base
+                )
+            };
+            return ValidatorResult {
+                name: validator.name.clone(),
+                status: Status::Error,
+                feedback: Some(feedback),
+                duration_ms: 0,
+                cost: None,
+            };
+        }
+    };
+
+    let status_code = response.status();
+
+    // Handle HTTP error statuses
+    if !status_code.is_success() {
+        let body_text = response.text().unwrap_or_default();
+        let feedback = match status_code.as_u16() {
+            401 | 403 => format!(
+                "[baton] Authentication failed for provider '{}'. Check {}.",
+                validator.provider, provider.api_key_env
+            ),
+            404 => format!(
+                "[baton] Model '{model}' not found on provider '{}'.",
+                validator.provider
+            ),
+            429 => {
+                let retry_after = "unknown";
+                format!(
+                    "[baton] Rate limited by provider '{}'. Retry-After: {retry_after}s",
+                    validator.provider
+                )
+            }
+            _ => format!(
+                "[baton] Provider returned HTTP {status_code}: {body_text}"
+            ),
+        };
+        return ValidatorResult {
+            name: validator.name.clone(),
+            status: Status::Error,
+            feedback: Some(feedback),
+            duration_ms: 0,
+            cost: None,
+        };
+    }
+
+    // Parse response
+    let resp_body: serde_json::Value = match response.json() {
+        Ok(v) => v,
+        Err(e) => {
+            return ValidatorResult {
+                name: validator.name.clone(),
+                status: Status::Error,
+                feedback: Some(format!(
+                    "[baton] Provider returned empty or malformed response: {e}"
+                )),
+                duration_ms: 0,
+                cost: None,
+            };
+        }
+    };
+
+    // Extract content from response
+    let content = resp_body
+        .get("choices")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("message"))
+        .and_then(|m| m.get("content"))
+        .and_then(|c| c.as_str())
+        .unwrap_or("");
+
+    if content.is_empty() {
+        return ValidatorResult {
+            name: validator.name.clone(),
+            status: Status::Error,
+            feedback: Some("[baton] Provider returned empty or malformed response.".into()),
+            duration_ms: 0,
+            cost: extract_cost(&resp_body, &model),
+        };
+    }
+
+    // Extract cost
+    let cost = extract_cost(&resp_body, &model);
+
+    // Parse verdict from content
+    match validator.response_format {
+        ResponseFormat::Verdict => {
+            let parsed = parse_verdict(content);
+            ValidatorResult {
+                name: validator.name.clone(),
+                status: parsed.status,
+                feedback: parsed.evidence,
+                duration_ms: 0,
+                cost,
+            }
+        }
+        ResponseFormat::Freeform => {
+            // Freeform always returns warn with the content as feedback
+            ValidatorResult {
+                name: validator.name.clone(),
+                status: Status::Warn,
+                feedback: Some(content.to_string()),
+                duration_ms: 0,
+                cost,
+            }
+        }
+    }
+}
+
+fn extract_cost(resp_body: &serde_json::Value, model: &str) -> Option<Cost> {
+    let usage = resp_body.get("usage")?;
+
+    let input_tokens = usage
+        .get("prompt_tokens")
+        .and_then(|v| v.as_i64());
+    let output_tokens = usage
+        .get("completion_tokens")
+        .and_then(|v| v.as_i64());
+
+    if input_tokens.is_none() && output_tokens.is_none() {
+        return None;
+    }
+
+    Some(Cost {
+        input_tokens,
+        output_tokens,
+        model: Some(model.to_string()),
+        estimated_usd: None,
+    })
+}
+
+// ─── LLM session validator ──────────────────────────────
+
+fn execute_llm_session(
+    validator: &ValidatorConfig,
+    artifact: &mut Artifact,
+    context: &mut Context,
+    prior_results: &BTreeMap<String, ValidatorResult>,
+    config: Option<&BatonConfig>,
+) -> ValidatorResult {
+    let config = match config {
+        Some(c) => c,
+        None => {
+            return ValidatorResult {
+                name: validator.name.clone(),
+                status: Status::Error,
+                feedback: Some("[baton] LLM session validator requires config with runtime settings".into()),
+                duration_ms: 0,
+                cost: None,
+            };
+        }
+    };
+
+    // Resolve runtime
+    let runtime_name = match &validator.runtime {
+        Some(name) => name.clone(),
+        None => {
+            return ValidatorResult {
+                name: validator.name.clone(),
+                status: Status::Error,
+                feedback: Some(format!(
+                    "[baton] Validator '{}': mode 'session' requires a 'runtime' field.",
+                    validator.name
+                )),
+                duration_ms: 0,
+                cost: None,
+            };
+        }
+    };
+
+    let runtime_config = match config.runtimes.get(&runtime_name) {
+        Some(r) => r,
+        None => {
+            return ValidatorResult {
+                name: validator.name.clone(),
+                status: Status::Error,
+                feedback: Some(format!(
+                    "[baton] Runtime '{runtime_name}' is not defined in [runtimes]."
+                )),
+                duration_ms: 0,
+                cost: None,
+            };
+        }
+    };
+
+    // Create adapter
+    let adapter = match runtime::create_adapter(&runtime_name, runtime_config) {
+        Ok(a) => a,
+        Err(e) => {
+            return ValidatorResult {
+                name: validator.name.clone(),
+                status: Status::Error,
+                feedback: Some(format!(
+                    "[baton] Failed to create session on runtime '{runtime_name}': {e}"
+                )),
+                duration_ms: 0,
+                cost: None,
+            };
+        }
+    };
+
+    // Resolve prompt
+    let prompt_value = match &validator.prompt {
+        Some(p) => p.clone(),
+        None => {
+            return ValidatorResult {
+                name: validator.name.clone(),
+                status: Status::Error,
+                feedback: Some("[baton] LLM session validator missing prompt".into()),
+                duration_ms: 0,
+                cost: None,
+            };
+        }
+    };
+
+    let prompt_body = if is_file_reference(&prompt_value) {
+        match resolve_prompt_value(
+            &prompt_value,
+            &config.defaults.prompts_dir,
+            &config.config_dir,
+        ) {
+            Ok(template) => template.body,
+            Err(e) => {
+                return ValidatorResult {
+                    name: validator.name.clone(),
+                    status: Status::Error,
+                    feedback: Some(format!("[baton] {e}")),
+                    duration_ms: 0,
+                    cost: None,
+                };
+            }
+        }
+    } else {
+        prompt_value
+    };
+
+    // Resolve placeholders in prompt
+    let mut warnings = ResolutionWarnings::new();
+    let rendered_prompt =
+        resolve_placeholders(&prompt_body, artifact, context, prior_results, &mut warnings);
+
+    // Prepare file set for isolation
+    let mut files = BTreeMap::new();
+    if let Some(ref path) = artifact.path {
+        files.insert("artifact".into(), path.display().to_string());
+    }
+    for ref_name in &validator.context_refs {
+        if let Some(item) = context.items.get(ref_name) {
+            if let Some(ref path) = item.path {
+                files.insert(ref_name.clone(), path.display().to_string());
+            }
+        }
+    }
+
+    // Determine model
+    let model = validator
+        .model
+        .clone()
+        .or_else(|| runtime_config.default_model.clone())
+        .unwrap_or_else(|| "default".to_string());
+
+    // Determine session parameters
+    let sandbox = validator.sandbox.unwrap_or(runtime_config.sandbox);
+    let max_iterations = validator.max_iterations.unwrap_or(runtime_config.max_iterations);
+    let timeout_seconds = validator.timeout_seconds;
+
+    // Create session
+    let session_config = SessionConfig {
+        task: rendered_prompt,
+        files,
+        model,
+        sandbox,
+        max_iterations,
+        timeout_seconds,
+        env: BTreeMap::new(),
+    };
+
+    let handle = match adapter.create_session(session_config) {
+        Ok(h) => h,
+        Err(e) => {
+            return ValidatorResult {
+                name: validator.name.clone(),
+                status: Status::Error,
+                feedback: Some(format!(
+                    "[baton] Failed to create session on runtime '{runtime_name}': {e}"
+                )),
+                duration_ms: 0,
+                cost: None,
+            };
+        }
+    };
+
+    // Poll until terminal
+    let poll_interval = std::time::Duration::from_secs(2);
+    let poll_start = Instant::now();
+
+    loop {
+        if poll_start.elapsed().as_secs() > timeout_seconds {
+            let _ = adapter.cancel(&handle);
+            let _ = adapter.teardown(&handle);
+            return ValidatorResult {
+                name: validator.name.clone(),
+                status: Status::Error,
+                feedback: Some(format!(
+                    "[baton] Agent session timed out after {timeout_seconds} seconds"
+                )),
+                duration_ms: 0,
+                cost: None,
+            };
+        }
+
+        match adapter.poll_status(&handle) {
+            Ok(status) => match status {
+                SessionStatus::Running => {
+                    std::thread::sleep(poll_interval);
+                    continue;
+                }
+                SessionStatus::Completed
+                | SessionStatus::Failed
+                | SessionStatus::TimedOut
+                | SessionStatus::Cancelled => break,
+            },
+            Err(e) => {
+                let _ = adapter.cancel(&handle);
+                let _ = adapter.teardown(&handle);
+                return ValidatorResult {
+                    name: validator.name.clone(),
+                    status: Status::Error,
+                    feedback: Some(format!("[baton] Error polling session: {e}")),
+                    duration_ms: 0,
+                    cost: None,
+                };
+            }
+        }
+    }
+
+    // Collect result
+    let session_result = match adapter.collect_result(&handle) {
+        Ok(r) => r,
+        Err(e) => {
+            let _ = adapter.teardown(&handle);
+            return ValidatorResult {
+                name: validator.name.clone(),
+                status: Status::Error,
+                feedback: Some(format!("[baton] Error collecting session result: {e}")),
+                duration_ms: 0,
+                cost: None,
+            };
+        }
+    };
+
+    // Teardown
+    let _ = adapter.teardown(&handle);
+
+    // Handle non-completed sessions
+    match session_result.status {
+        SessionStatus::Completed => {}
+        SessionStatus::TimedOut => {
+            return ValidatorResult {
+                name: validator.name.clone(),
+                status: Status::Error,
+                feedback: Some(format!(
+                    "[baton] Agent session timed out after {timeout_seconds} seconds"
+                )),
+                duration_ms: 0,
+                cost: session_result.cost,
+            };
+        }
+        SessionStatus::Failed => {
+            return ValidatorResult {
+                name: validator.name.clone(),
+                status: Status::Error,
+                feedback: Some("[baton] Agent session ended with status 'failed'".into()),
+                duration_ms: 0,
+                cost: session_result.cost,
+            };
+        }
+        SessionStatus::Cancelled => {
+            return ValidatorResult {
+                name: validator.name.clone(),
+                status: Status::Error,
+                feedback: Some("[baton] Agent session ended with status 'cancelled'".into()),
+                duration_ms: 0,
+                cost: session_result.cost,
+            };
+        }
+        SessionStatus::Running => {
+            // Should not happen after polling exits, but handle defensively
+            return ValidatorResult {
+                name: validator.name.clone(),
+                status: Status::Error,
+                feedback: Some(
+                    "[baton] Agent produced no verdict.".into(),
+                ),
+                duration_ms: 0,
+                cost: session_result.cost,
+            };
+        }
+    }
+
+    // Check for empty output
+    if session_result.output.trim().is_empty() {
+        return ValidatorResult {
+            name: validator.name.clone(),
+            status: Status::Error,
+            feedback: Some(
+                "[baton] Agent session completed but output contained no PASS/FAIL/WARN verdict."
+                    .into(),
+            ),
+            duration_ms: 0,
+            cost: session_result.cost,
+        };
+    }
+
+    // Parse verdict from agent output
+    let parsed = parse_verdict(&session_result.output);
     ValidatorResult {
         name: validator.name.clone(),
-        status: Status::Error,
-        feedback: Some("[baton] LLM validators not yet implemented".into()),
+        status: parsed.status,
+        feedback: parsed.evidence,
         duration_ms: 0,
-        cost: None,
+        cost: session_result.cost,
     }
 }
 
@@ -314,7 +906,7 @@ fn execute_llm_stub(validator: &ValidatorConfig) -> ValidatorResult {
 
 pub fn run_gate(
     gate: &GateConfig,
-    _config: &BatonConfig,
+    config: &BatonConfig,
     artifact: &mut Artifact,
     context: &mut Context,
     options: &RunOptions,
@@ -429,7 +1021,7 @@ pub fn run_gate(
             }
         }
 
-        let result = execute_validator(validator, artifact, context, &results);
+        let result = execute_validator(validator, artifact, context, &results, Some(config));
         results.insert(validator.name.clone(), result.clone());
 
         if result.status == Status::Warn {
@@ -727,7 +1319,7 @@ mod tests {
         let mut art = Artifact::from_string("hello");
         let mut ctx = Context::new();
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior);
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
         assert_eq!(result.status, Status::Pass);
     }
 
@@ -737,7 +1329,7 @@ mod tests {
         let mut art = Artifact::from_string("hello");
         let mut ctx = Context::new();
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior);
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
         assert_eq!(result.status, Status::Fail);
     }
 
@@ -748,7 +1340,7 @@ mod tests {
         let mut art = Artifact::from_string("hello");
         let mut ctx = Context::new();
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior);
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
         assert_eq!(result.status, Status::Warn);
         assert!(result.feedback.as_ref().unwrap().contains("warning message"));
     }
@@ -759,7 +1351,7 @@ mod tests {
         let mut art = Artifact::from_string("hello");
         let mut ctx = Context::new();
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior);
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
         assert_eq!(result.status, Status::Fail);
     }
 
@@ -769,7 +1361,7 @@ mod tests {
         let mut art = Artifact::from_string("hello");
         let mut ctx = Context::new();
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior);
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
         assert_eq!(result.status, Status::Fail);
         assert!(result.feedback.as_ref().unwrap().contains("no output"));
     }
@@ -780,7 +1372,7 @@ mod tests {
         let mut art = Artifact::from_string("hello");
         let mut ctx = Context::new();
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior);
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
         assert_eq!(result.status, Status::Fail);
         assert!(result.feedback.as_ref().unwrap().contains("error detail"));
     }
@@ -795,7 +1387,7 @@ mod tests {
         let mut art = Artifact::from_file(&art_path).unwrap();
         let mut ctx = Context::new();
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior);
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
         assert_eq!(result.status, Status::Pass);
     }
 
@@ -811,7 +1403,7 @@ mod tests {
         let mut art = Artifact::from_string("hello");
         let mut ctx = Context::new();
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior);
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
         assert_eq!(result.status, Status::Fail);
         assert!(result.feedback.as_ref().unwrap().contains("[human-review-requested]"));
         assert!(result.feedback.as_ref().unwrap().contains("Please review"));
@@ -1176,5 +1768,684 @@ mod tests {
 
         let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
         assert_eq!(verdict.status, VerdictStatus::Pass);
+    }
+
+    // ─── LLM completion validator tests ─────────────────
+
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// Start a mock HTTP server that returns a fixed response body.
+    /// Returns (port, join_handle). The server handles exactly one request.
+    fn start_mock_server(status_code: u16, response_body: &str) -> (u16, std::thread::JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = response_body.to_string();
+
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let n = stream.read(&mut buf).unwrap();
+            let request = String::from_utf8_lossy(&buf[..n]).to_string();
+
+            let response = format!(
+                "HTTP/1.1 {status_code} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+            stream.flush().unwrap();
+            request
+        });
+
+        (port, handle)
+    }
+
+    fn make_llm_validator(name: &str, prompt: &str) -> ValidatorConfig {
+        ValidatorConfig {
+            name: name.into(),
+            validator_type: ValidatorType::Llm,
+            blocking: true,
+            run_if: None,
+            timeout_seconds: 30,
+            tags: vec![],
+            command: None,
+            warn_exit_codes: vec![],
+            working_dir: None,
+            env: BTreeMap::new(),
+            mode: LlmMode::Completion,
+            provider: "default".into(),
+            model: Some("test-model".into()),
+            prompt: Some(prompt.into()),
+            context_refs: vec![],
+            temperature: 0.0,
+            response_format: ResponseFormat::Verdict,
+            max_tokens: Some(4096),
+            system_prompt: None,
+            runtime: None,
+            sandbox: None,
+            max_iterations: None,
+        }
+    }
+
+    fn make_config_with_provider(api_base: &str) -> BatonConfig {
+        let mut providers = BTreeMap::new();
+        providers.insert(
+            "default".into(),
+            Provider {
+                api_base: api_base.into(),
+                api_key_env: "".into(), // no auth for tests
+                default_model: "test-model".into(),
+            },
+        );
+
+        let mut gates = BTreeMap::new();
+        gates.insert(
+            "test".into(),
+            GateConfig {
+                name: "test".into(),
+                description: None,
+                context: BTreeMap::new(),
+                validators: vec![],
+            },
+        );
+
+        BatonConfig {
+            version: "0.4".into(),
+            defaults: Defaults {
+                timeout_seconds: 300,
+                blocking: true,
+                prompts_dir: "/tmp/prompts".into(),
+                log_dir: "/tmp/logs".into(),
+                history_db: "/tmp/history.db".into(),
+                tmp_dir: "/tmp/tmp".into(),
+            },
+            providers,
+            runtimes: BTreeMap::new(),
+            gates,
+            config_dir: "/tmp".into(),
+        }
+    }
+
+    #[test]
+    fn llm_completion_pass_verdict() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "PASS — code looks good"
+                }
+            }],
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 20
+            }
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = make_llm_validator("llm-check", "Review this code");
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Pass);
+        assert!(result.cost.is_some());
+        let cost = result.cost.unwrap();
+        assert_eq!(cost.input_tokens, Some(100));
+        assert_eq!(cost.output_tokens, Some(20));
+        assert_eq!(cost.model, Some("test-model".into()));
+
+        // Verify the request was sent
+        let request = handle.join().unwrap();
+        assert!(request.contains("POST"));
+        assert!(request.contains("/v1/chat/completions"));
+    }
+
+    #[test]
+    fn llm_completion_fail_verdict() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "FAIL — missing error handling in function parse()"
+                }
+            }],
+            "usage": {
+                "prompt_tokens": 150,
+                "completion_tokens": 30
+            }
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = make_llm_validator("llm-check", "Review this code");
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Fail);
+        assert!(result.feedback.as_ref().unwrap().contains("missing error handling"));
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn llm_completion_warn_verdict() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "WARN minor style issue"
+                }
+            }]
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = make_llm_validator("llm-check", "Review this");
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Warn);
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn llm_completion_unparseable_verdict() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "I reviewed the code but I'm not sure what to say about it."
+                }
+            }]
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = make_llm_validator("llm-check", "Review this");
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("Could not parse verdict"));
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn llm_completion_empty_response() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": ""
+                }
+            }]
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = make_llm_validator("llm-check", "Review this");
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("empty or malformed"));
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn llm_completion_http_401() {
+        let (port, handle) = start_mock_server(401, r#"{"error": "unauthorized"}"#);
+        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = make_llm_validator("llm-check", "Review this");
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("Authentication failed"));
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn llm_completion_http_404() {
+        let (port, handle) = start_mock_server(404, r#"{"error": "model not found"}"#);
+        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = make_llm_validator("llm-check", "Review this");
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("Model"));
+        assert!(result.feedback.as_ref().unwrap().contains("not found"));
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn llm_completion_http_429() {
+        let (port, handle) = start_mock_server(429, r#"{"error": "rate limited"}"#);
+        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = make_llm_validator("llm-check", "Review this");
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("Rate limited"));
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn llm_completion_http_500() {
+        let (port, handle) = start_mock_server(500, r#"{"error": "internal error"}"#);
+        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = make_llm_validator("llm-check", "Review this");
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("HTTP 500"));
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn llm_completion_unreachable_provider() {
+        let config = make_config_with_provider("http://127.0.0.1:1");
+        let v = make_llm_validator("llm-check", "Review this");
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("Cannot reach provider"));
+    }
+
+    #[test]
+    fn llm_completion_missing_provider() {
+        let config = make_config_with_provider("http://localhost");
+        let mut v = make_llm_validator("llm-check", "Review this");
+        v.provider = "nonexistent".into();
+
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("not defined"));
+    }
+
+    #[test]
+    fn llm_completion_no_config() {
+        let v = make_llm_validator("llm-check", "Review this");
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("requires config"));
+    }
+
+    #[test]
+    fn llm_completion_freeform_returns_warn() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "The code could use better variable names."
+                }
+            }]
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let mut v = make_llm_validator("llm-check", "Review this");
+        v.response_format = ResponseFormat::Freeform;
+
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Warn);
+        assert!(result.feedback.as_ref().unwrap().contains("variable names"));
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn llm_completion_with_system_prompt() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "PASS"
+                }
+            }]
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let mut v = make_llm_validator("llm-check", "Review this");
+        v.system_prompt = Some("You are a code reviewer.".into());
+
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Pass);
+
+        // Verify system message was sent
+        let request = handle.join().unwrap();
+        assert!(request.contains("system"));
+        assert!(request.contains("code reviewer"));
+    }
+
+    #[test]
+    fn llm_completion_with_placeholders() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "PASS"
+                }
+            }]
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = make_llm_validator("llm-check", "Review: {artifact_content}");
+
+        let mut art = Artifact::from_string("def hello(): pass");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Pass);
+
+        // Verify placeholder was resolved in the request
+        let request = handle.join().unwrap();
+        assert!(request.contains("def hello()"));
+    }
+
+    #[test]
+    fn llm_completion_cost_tracking() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "PASS"
+                }
+            }],
+            "usage": {
+                "prompt_tokens": 500,
+                "completion_tokens": 100
+            }
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = make_llm_validator("llm-check", "Review this");
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert!(result.cost.is_some());
+        let cost = result.cost.unwrap();
+        assert_eq!(cost.input_tokens, Some(500));
+        assert_eq!(cost.output_tokens, Some(100));
+        assert_eq!(cost.model, Some("test-model".into()));
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn llm_completion_no_usage_in_response() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "PASS"
+                }
+            }]
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = make_llm_validator("llm-check", "Review this");
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Pass);
+        assert!(result.cost.is_none());
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn llm_completion_uses_default_model() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "PASS"
+                }
+            }],
+            "usage": {
+                "prompt_tokens": 50,
+                "completion_tokens": 10
+            }
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let mut v = make_llm_validator("llm-check", "Review this");
+        v.model = None; // Should use provider default
+
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Pass);
+        // Cost should reflect the provider's default model
+        let cost = result.cost.unwrap();
+        assert_eq!(cost.model, Some("test-model".into()));
+
+        let request = handle.join().unwrap();
+        assert!(request.contains("test-model"));
+    }
+
+    #[test]
+    fn llm_completion_in_gate_run() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "PASS"
+                }
+            }]
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let api_base = format!("http://127.0.0.1:{port}");
+
+        let v = make_llm_validator("llm-check", "Review this");
+        let gate = make_gate("test", vec![v]);
+
+        let mut config = make_config_with_provider(&api_base);
+        config.gates.insert("test".into(), gate.clone());
+
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let opts = RunOptions::new();
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        assert_eq!(verdict.status, VerdictStatus::Pass);
+        assert_eq!(verdict.history.len(), 1);
+        assert_eq!(verdict.history[0].status, Status::Pass);
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn llm_completion_fail_blocks_gate() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "FAIL — missing tests"
+                }
+            }]
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let api_base = format!("http://127.0.0.1:{port}");
+
+        let v = make_llm_validator("llm-check", "Review this");
+        let gate = make_gate(
+            "test",
+            vec![v, make_script_validator("after", "exit 0")],
+        );
+
+        let mut config = make_config_with_provider(&api_base);
+        config.gates.insert("test".into(), gate.clone());
+
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let opts = RunOptions::new();
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        assert_eq!(verdict.status, VerdictStatus::Fail);
+        assert_eq!(verdict.failed_at, Some("llm-check".into()));
+        // After validator should not have run (blocking)
+        assert_eq!(verdict.history.len(), 1);
+
+        handle.join().unwrap();
+    }
+
+    // ─── LLM session validator tests ────────────────────
+
+    #[test]
+    fn llm_session_no_config() {
+        let mut v = make_llm_validator("session-check", "Review this");
+        v.mode = LlmMode::Session;
+        v.runtime = Some("openhands".into());
+
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("requires config"));
+    }
+
+    #[test]
+    fn llm_session_missing_runtime() {
+        let config = make_config_with_provider("http://localhost");
+        let mut v = make_llm_validator("session-check", "Review this");
+        v.mode = LlmMode::Session;
+        v.runtime = None;
+
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("runtime"));
+    }
+
+    #[test]
+    fn llm_session_undefined_runtime() {
+        let config = make_config_with_provider("http://localhost");
+        let mut v = make_llm_validator("session-check", "Review this");
+        v.mode = LlmMode::Session;
+        v.runtime = Some("nonexistent".into());
+
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("not defined"));
+    }
+
+    // ─── extract_cost tests ─────────────────────────────
+
+    #[test]
+    fn extract_cost_full_usage() {
+        let body = serde_json::json!({
+            "usage": {
+                "prompt_tokens": 1500,
+                "completion_tokens": 300,
+            }
+        });
+        let cost = extract_cost(&body, "claude-haiku").unwrap();
+        assert_eq!(cost.input_tokens, Some(1500));
+        assert_eq!(cost.output_tokens, Some(300));
+        assert_eq!(cost.model, Some("claude-haiku".into()));
+        assert!(cost.estimated_usd.is_none());
+    }
+
+    #[test]
+    fn extract_cost_no_usage() {
+        let body = serde_json::json!({
+            "choices": [{"message": {"content": "PASS"}}]
+        });
+        assert!(extract_cost(&body, "model").is_none());
+    }
+
+    #[test]
+    fn extract_cost_empty_usage() {
+        let body = serde_json::json!({
+            "usage": {}
+        });
+        assert!(extract_cost(&body, "model").is_none());
+    }
+
+    #[test]
+    fn extract_cost_partial_usage() {
+        let body = serde_json::json!({
+            "usage": {
+                "prompt_tokens": 100
+            }
+        });
+        let cost = extract_cost(&body, "model").unwrap();
+        assert_eq!(cost.input_tokens, Some(100));
+        assert_eq!(cost.output_tokens, None);
     }
 }
