@@ -1,0 +1,23 @@
+version = "0.4"
+
+[defaults]
+timeout_seconds = 300
+blocking = true
+prompts_dir = "./prompts"
+log_dir = "./.baton/logs"
+history_db = "./.baton/history.db"
+tmp_dir = "./.baton/tmp"
+
+# [providers.default]
+# api_base = "https://api.anthropic.com"
+# api_key_env = "ANTHROPIC_API_KEY"
+# default_model = "claude-haiku"
+
+[gates.example]
+description = "Example validation gate"
+
+[[gates.example.validators]]
+name = "lint"
+type = "script"
+command = "echo 'Replace with your lint command' && exit 0"
+blocking = true
