@@ -1,0 +1,326 @@
+# Baton
+
+A composable validation gate for AI agent outputs.
+
+Baton runs a user-defined sequence of checks — deterministic scripts, LLM queries, or human reviews — against an artifact and produces a structured verdict: **pass** or **fail**. An explicit validation step means automated output is only accepted if it can *pass the Baton*.
+
+Baton is **not** an agent orchestrator. It receives an artifact, evaluates it, and reports results. You decide what to do with the verdict.
+
+## Design Principles
+
+- **User-defined.** You describe what "valid" means for your domain. Validator steps are shell commands, LLM prompt templates, or agent configs.
+- **Context-isolated.** Baton only sees what you explicitly provide: `artifact + context = verdict`. No implicit state, no context bleed.
+- **Observable.** Every step produces structured output. Verdict history is persisted locally in SQLite and queryable via CLI.
+
+## Installation
+
+### Homebrew (macOS and Linux)
+
+```bash
+brew install apierron/tap/baton
+```
+
+### Shell installer
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/apierron/baton/main/install.sh | bash
+```
+
+This installs to `~/.local/bin` by default. Set `BATON_INSTALL_DIR` to customize.
+
+### Cargo
+
+```bash
+cargo install --git https://github.com/apierron/baton.git
+```
+
+### Prebuilt binaries
+
+Download from [GitHub Releases](https://github.com/apierron/baton/releases). Builds are available for:
+
+| Target | Format |
+|--------|--------|
+| `x86_64-unknown-linux-gnu` | `.tar.gz` |
+| `aarch64-unknown-linux-gnu` | `.tar.gz` |
+| `x86_64-apple-darwin` | `.tar.gz` |
+| `aarch64-apple-darwin` | `.tar.gz` |
+| `x86_64-pc-windows-msvc` | `.zip` |
+| `aarch64-pc-windows-msvc` | `.zip` |
+
+### Uninstall
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/apierron/baton/main/uninstall.sh | bash
+```
+
+## Quick Start
+
+### 1. Initialize a project
+
+```bash
+baton init
+```
+
+This creates a `baton.toml` config, a `.baton/` directory for history and logs, and a `prompts/` directory with starter prompt templates.
+
+### 2. Define a gate
+
+Edit `baton.toml`:
+
+```toml
+version = "0.4"
+
+[gates.code-review]
+description = "Validates a code patch against a task spec"
+
+  [gates.code-review.context.spec]
+  description = "The task specification"
+  required = true
+
+  [[gates.code-review.validators]]
+  name = "lint"
+  type = "script"
+  command = "ruff check {artifact}"
+
+  [[gates.code-review.validators]]
+  name = "tests"
+  type = "script"
+  command = "pytest --tb=short"
+  blocking = true
+```
+
+### 3. Run a gate
+
+```bash
+baton check --gate code-review --artifact ./output.py --context spec=./task.md
+```
+
+Pipe from stdin:
+
+```bash
+cat output.py | baton check --gate code-review --artifact - --context spec=./task.md
+```
+
+### 4. View results
+
+The verdict is printed as JSON by default:
+
+```json
+{
+  "status": "pass",
+  "gate": "code-review",
+  "artifact_hash": "sha256:...",
+  "context_hash": "sha256:...",
+  "duration_ms": 1234,
+  "warnings": [],
+  "history": [
+    { "name": "lint", "status": "pass", "duration_ms": 450 },
+    { "name": "tests", "status": "pass", "duration_ms": 784 }
+  ]
+}
+```
+
+Use `--format human` for a readable summary or `--format summary` for a one-line result.
+
+## CLI Reference
+
+```
+baton check       Run a gate against an artifact
+baton init        Scaffold a new baton project
+baton list        List gates and validators in a config
+baton history     Query verdict history from the SQLite database
+baton validate-config  Check a baton.toml for errors and warnings
+baton clean       Remove temporary files from .baton/tmp/
+baton version     Print version information
+```
+
+### Key flags for `baton check`
+
+| Flag | Description |
+|------|-------------|
+| `--gate <name>` | Gate to run (required) |
+| `--artifact <path>` | Path to artifact, or `-` for stdin (required) |
+| `--context <name>=<path>` | Context item (repeatable) |
+| `--config <path>` | Path to `baton.toml` (default: auto-discover) |
+| `--format <json\|human\|summary>` | Output format |
+| `--dry-run` | Print validators that would run and exit |
+| `--all` | Run all validators even if a blocking one fails |
+| `--only <names>` | Run only named validators (comma-separated) |
+| `--skip <names>` | Skip named validators (comma-separated) |
+| `--tags <tags>` | Run only validators with these tags |
+| `--timeout <seconds>` | Override default timeout for all validators |
+| `--no-log` | Don't write to history database |
+| `--verbose` | Print each validator's result as it completes |
+| `--suppress-warnings` | Treat warn statuses as pass |
+| `--suppress-errors` | Treat error statuses as pass |
+
+## Validator Types
+
+### Script
+
+Runs a shell command. Exit code 0 = pass, nonzero = fail. An optional `warn_exit_codes` list maps specific exit codes to `warn`. Stdout/stderr is captured as feedback.
+
+```toml
+[[gates.my-gate.validators]]
+name = "lint"
+type = "script"
+command = "ruff check {artifact}"
+warn_exit_codes = [2]
+```
+
+### LLM
+
+Invokes a language model for validation in one of two modes:
+
+- **completion** — Sends the artifact and a prompt template to a model. The response is parsed for a structured verdict keyword (PASS/FAIL/WARN).
+- **session** — Launches a multi-turn agent session via a runtime adapter. The agent can use tools, read files, and produce a verdict grounded in observation.
+
+```toml
+[[gates.my-gate.validators]]
+name = "spec-check"
+type = "llm"
+mode = "completion"
+prompt = "spec-compliance"
+provider = "default"
+model = "claude-haiku"
+```
+
+### Human
+
+Halts the pipeline and reports a failure with a human-review prompt as feedback. Baton does not block waiting for input — it fails with a clear signal that human review was requested.
+
+```toml
+[[gates.my-gate.validators]]
+name = "human-review"
+type = "human"
+prompt = "Review this artifact for correctness"
+blocking = false
+```
+
+## Configuration
+
+Baton uses TOML for configuration. One file can define multiple named gates, shared defaults, provider configuration, and runtime settings. See the [full spec](baton-spec-v0_4.md) for the complete configuration reference.
+
+Config discovery walks upward from the current directory looking for `baton.toml`, stopping at `.git` boundaries.
+
+Environment variables can be interpolated in any string value:
+
+```toml
+api_base = "${CUSTOM_API_BASE:-https://api.anthropic.com}"
+api_key_env = "ANTHROPIC_API_KEY"
+```
+
+## Prompt Templates
+
+Prompt templates use a `+++`-delimited TOML frontmatter format:
+
+```
++++
+name = "spec-compliance"
+description = "Check artifact against a specification"
+expects = "verdict"
++++
+
+Review the following artifact against the provided specification.
+
+**Artifact:**
+{artifact_content}
+
+**Specification:**
+{context.spec.content}
+
+Respond with PASS if the artifact meets the specification, or FAIL with an explanation.
+```
+
+Available placeholders: `{artifact}`, `{artifact_dir}`, `{artifact_content}`, `{context.<name>}`, `{context.<name>.content}`, `{verdict.<name>.status}`, `{verdict.<name>.feedback}`.
+
+Three starter templates are included with `baton init`: spec-compliance, adversarial-review, and doc-completeness.
+
+## Verdict History
+
+Baton persists every verdict to a local SQLite database (`.baton/history.db`). Query it:
+
+```bash
+# Last 10 verdicts
+baton history --limit 10
+
+# Filter by gate
+baton history --gate code-review
+
+# Filter by status
+baton history --status fail
+```
+
+## Implementation Status
+
+This is a Rust implementation of [baton-spec-v0_4.md](baton-spec-v0_4.md). The table below tracks what has been implemented.
+
+### Implemented
+
+- Core types: Artifact (with lazy content/hash loading), Context, Verdict, ValidatorResult, Cost
+- Configuration parsing and validation (`baton.toml`, env var interpolation, config discovery)
+- Prompt template parsing (TOML frontmatter, placeholder resolution)
+- Verdict parsing (word-boundary-aware keyword matching for PASS/FAIL/WARN)
+- Script validators (command execution, exit code mapping, stdout/stderr capture)
+- Human validators (fail with `[human-review-requested]` feedback)
+- Gate execution pipeline (sequential validators, blocking logic, `run_if` conditionals, `--all` mode, status suppression, `--only`/`--skip`/`--tags` filtering)
+- Full CLI (check, init, list, history, validate-config, clean, version)
+- SQLite verdict history (WAL mode, query by gate/status/artifact hash)
+- Dry-run mode
+- Stdin artifact support (piped input via temp file)
+- Output formats: JSON, human-readable, summary
+- CI/CD: GitHub Actions for lint, test (Linux/macOS/Windows), cross-platform release builds
+- Distribution: Homebrew tap, shell installer, prebuilt binaries
+
+### Not Yet Implemented
+
+- **LLM completion validator** — HTTP calls to provider APIs (currently stubbed)
+- **LLM session validator** — Runtime adapter interface for multi-turn agent sessions
+- **Timeout enforcement** — SIGTERM/SIGKILL on script validators exceeding timeout
+- **Signal handling** — Graceful shutdown on SIGINT/SIGTERM with temp file cleanup
+- **Log file writing** — JSON log entries to `<log_dir>/<date>/` (only SQLite history is implemented)
+- **`check-provider` command** — HTTP health check against configured providers
+- **`check-runtime` command** — Runtime adapter health check
+- **TTY auto-detection** — `--format` should default to `human` when stdout is a TTY
+
+## Testing
+
+153 tests covering all implemented modules:
+
+```bash
+cargo test
+```
+
+```bash
+cargo clippy --all-targets -- -D warnings
+```
+
+| Module | Tests |
+|--------|-------|
+| types | 20 |
+| verdict_parser | 26 |
+| prompt | 17 |
+| placeholder | 16 |
+| config | 28 |
+| exec | 38 |
+| history | 8 |
+
+## Contributing
+
+Contributions are welcome! Areas where help is especially appreciated:
+
+- **LLM validator implementation** — Adding HTTP client calls to provider APIs for completion mode validators
+- **Runtime adapter interface** — Implementing the session mode for multi-turn agent validation
+- **Timeout and signal handling** — Process management for long-running validators
+- **Additional validator types or prompt templates** — Community-shared validation patterns
+
+To get started:
+
+1. Fork the repository
+2. Create a feature branch
+3. Run `cargo test` and `cargo clippy --all-targets -- -D warnings` before submitting
+4. Open a pull request
+
+## License
+
+MIT
