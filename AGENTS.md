@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Instructions for AI coding agents working in this repository.
 
 ## What is Baton?
 
@@ -10,7 +10,7 @@ A composable validation gate for AI agent outputs. Accepts an artifact (file to 
 
 ```bash
 cargo build                          # Build
-cargo test                           # Run all tests (153 across 7 modules)
+cargo test                           # Run all tests (198 across 8 modules)
 cargo test config::tests::test_name  # Run a single test
 cargo test config::tests             # Run one module's tests
 cargo clippy --all-targets -- -D warnings  # Lint (must pass with zero warnings)
@@ -22,10 +22,11 @@ cargo clippy --all-targets -- -D warnings  # Lint (must pass with zero warnings)
 
 **Module dependency layers** (top → bottom, never import upward):
 ```
-main.rs → exec, config, history, types
-exec → config, types, placeholder, error
+main.rs → exec, config, history, runtime, types
+exec → config, types, placeholder, runtime, error
 config → types, placeholder, error
 history, placeholder → types, error
+runtime → types, error
 prompt, verdict_parser → types or error only
 error → (leaf, no internal imports)
 ```
@@ -42,6 +43,10 @@ See `docs/ARCHITECTURE.md` for the full dependency table and design rationale (t
 
 See `docs/CONVENTIONS.md` for the full list.
 
+## Version
+
+**Single source of truth:** `Cargo.toml` `[package].version`. All runtime version strings use `env!("CARGO_PKG_VERSION")`. Never hardcode the version elsewhere.
+
 ## Deep References
 
 | Topic | File |
@@ -55,4 +60,4 @@ See `docs/CONVENTIONS.md` for the full list.
 
 ## Not Yet Implemented
 
-LLM completion/session validators (HTTP calls stubbed), timeout enforcement, signal handling (SIGINT/SIGTERM), log file writing (only SQLite), `check-provider`/`check-runtime` commands, TTY auto-detection for `--format`
+Timeout enforcement on script validators, signal handling (SIGINT/SIGTERM), log file writing (only SQLite history), TTY auto-detection for `--format`

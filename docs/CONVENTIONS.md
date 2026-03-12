@@ -48,6 +48,10 @@ Files referenced by placeholders (`{artifact_content}`, `{context.spec.content}`
 - Subcommands are variants of a single `Commands` enum.
 - Repeated key-value args (like `--context name=path`) use a custom `value_parser` function.
 
+## Version: Single Source of Truth
+
+The version is defined once in `Cargo.toml` under `[package].version`. All runtime references use `env!("CARGO_PKG_VERSION")`. Never hardcode a version string in Rust source, README, or other files. The Homebrew formula version is updated by CI during releases.
+
 ## Commit & PR Conventions
 
 - Commits are imperative mood, lowercase: `add timeout enforcement`, `fix run_if with missing validator`.

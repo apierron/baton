@@ -9,7 +9,7 @@ use baton::history;
 use baton::types::*;
 
 #[derive(Parser)]
-#[command(name = "baton", version = "0.4.0", about = "A composable validation gate for AI agent outputs")]
+#[command(name = "baton", version = env!("CARGO_PKG_VERSION"), about = "A composable validation gate for AI agent outputs")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -995,7 +995,7 @@ fn cmd_clean(config_path: Option<&PathBuf>, dry_run: bool) -> i32 {
 }
 
 fn cmd_version(config_path: Option<&PathBuf>) -> i32 {
-    println!("baton 0.4.0");
+    println!("baton {}", env!("CARGO_PKG_VERSION"));
     println!("spec version: 0.4");
 
     match load_config(config_path) {

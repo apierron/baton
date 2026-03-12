@@ -1,13 +1,18 @@
 [package]
 name = "baton"
-version = "0.4.0"
+version = "0.4.2"
 edition = "2021"
 
 [dependencies]
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive"] }
 regex = "1"
-reqwest = { version = "0.12", default-features = false, features = ["json", "blocking", "multipart", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "blocking",
+    "multipart",
+    "rustls-tls",
+] }
 rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

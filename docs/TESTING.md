@@ -113,6 +113,7 @@ For new features, cover:
 | prompt | 17 |
 | placeholder | 16 |
 | config | 28 |
-| exec | 38 |
+| exec | 65 |
 | history | 8 |
-| **Total** | **153** |
+| runtime | 18 |
+| **Total** | **198** |

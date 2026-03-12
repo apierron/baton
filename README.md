@@ -125,13 +125,15 @@ Use `--format human` for a readable summary or `--format summary` for a one-line
 ## CLI Reference
 
 ```bash
-baton check       Run a gate against an artifact
-baton init        Scaffold a new baton project
-baton list        List gates and validators in a config
-baton history     Query verdict history from the SQLite database
+baton check            Run a gate against an artifact
+baton init             Scaffold a new baton project
+baton list             List gates and validators in a config
+baton history          Query verdict history from the SQLite database
 baton validate-config  Check a baton.toml for errors and warnings
-baton clean       Remove temporary files from .baton/tmp/
-baton version     Print version information
+baton check-provider   Check provider connectivity and model availability
+baton check-runtime    Check runtime connectivity and health
+baton clean            Remove temporary files from .baton/tmp/
+baton version          Print version information
 ```
 
 ### Key flags for `baton check`
@@ -262,9 +264,11 @@ This is a Rust implementation of [baton-spec-v0_4.md](baton-spec-v0_4.md). The t
 - Prompt template parsing (TOML frontmatter, placeholder resolution)
 - Verdict parsing (word-boundary-aware keyword matching for PASS/FAIL/WARN)
 - Script validators (command execution, exit code mapping, stdout/stderr capture)
+- LLM completion validators (HTTP POST to OpenAI-compatible `/v1/chat/completions` endpoints)
+- LLM session validators (runtime adapter interface with OpenHands implementation)
 - Human validators (fail with `[human-review-requested]` feedback)
 - Gate execution pipeline (sequential validators, blocking logic, `run_if` conditionals, `--all` mode, status suppression, `--only`/`--skip`/`--tags` filtering)
-- Full CLI (check, init, list, history, validate-config, clean, version)
+- Full CLI (check, init, list, history, validate-config, check-provider, check-runtime, clean, version)
 - SQLite verdict history (WAL mode, query by gate/status/artifact hash)
 - Dry-run mode
 - Stdin artifact support (piped input via temp file)
@@ -274,18 +278,14 @@ This is a Rust implementation of [baton-spec-v0_4.md](baton-spec-v0_4.md). The t
 
 ### Not Yet Implemented
 
-- **LLM completion validator** — HTTP calls to provider APIs (currently stubbed)
-- **LLM session validator** — Runtime adapter interface for multi-turn agent sessions
 - **Timeout enforcement** — SIGTERM/SIGKILL on script validators exceeding timeout
 - **Signal handling** — Graceful shutdown on SIGINT/SIGTERM with temp file cleanup
 - **Log file writing** — JSON log entries to `<log_dir>/<date>/` (only SQLite history is implemented)
-- **`check-provider` command** — HTTP health check against configured providers
-- **`check-runtime` command** — Runtime adapter health check
 - **TTY auto-detection** — `--format` should default to `human` when stdout is a TTY
 
 ## Testing
 
-153 tests covering all implemented modules:
+198 tests covering all implemented modules:
 
 ```bash
 cargo test
@@ -302,17 +302,18 @@ cargo clippy --all-targets -- -D warnings
 | prompt | 17 |
 | placeholder | 16 |
 | config | 28 |
-| exec | 38 |
+| exec | 65 |
 | history | 8 |
+| runtime | 18 |
 
 ## Contributing
 
 Contributions are welcome! Areas where help is especially appreciated:
 
-- **LLM validator implementation** — Adding HTTP client calls to provider APIs for completion mode validators
-- **Runtime adapter interface** — Implementing the session mode for multi-turn agent validation
 - **Timeout and signal handling** — Process management for long-running validators
+- **Additional runtime adapters** — Beyond OpenHands (e.g., SWE-agent, Devika)
 - **Additional validator types or prompt templates** — Community-shared validation patterns
+- **Log file writing** — JSON log entries alongside SQLite history
 
 To get started:
 
