@@ -5,6 +5,7 @@ Rules about what NOT to do. Each rule here exists because it was either violated
 ## Do Not Add Dependencies Without Justification
 
 The dependency list is intentionally small. Before adding a crate:
+
 - Check if `std` or an existing dependency already covers the need.
 - `reqwest` is already included — don't add `ureq` or `hyper` for HTTP.
 - `serde_json` handles all JSON — don't add `simd-json` or `json5`.
@@ -12,6 +13,7 @@ The dependency list is intentionally small. Before adding a crate:
 ## Do Not Use HashMap for User-Visible Data
 
 `HashMap` iteration order is non-deterministic. Any data that affects:
+
 - JSON output
 - SHA-256 hashing
 - Test assertions comparing serialized output

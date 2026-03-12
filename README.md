@@ -39,7 +39,7 @@ cargo install --git https://github.com/apierron/baton.git
 Download from [GitHub Releases](https://github.com/apierron/baton/releases). Builds are available for:
 
 | Target | Format |
-|--------|--------|
+| ------ | ------ |
 | `x86_64-unknown-linux-gnu` | `.tar.gz` |
 | `aarch64-unknown-linux-gnu` | `.tar.gz` |
 | `x86_64-apple-darwin` | `.tar.gz` |
@@ -124,7 +124,7 @@ Use `--format human` for a readable summary or `--format summary` for a one-line
 
 ## CLI Reference
 
-```
+```bash
 baton check       Run a gate against an artifact
 baton init        Scaffold a new baton project
 baton list        List gates and validators in a config
@@ -137,7 +137,7 @@ baton version     Print version information
 ### Key flags for `baton check`
 
 | Flag | Description |
-|------|-------------|
+| ---- | ----------- |
 | `--gate <name>` | Gate to run (required) |
 | `--artifact <path>` | Path to artifact, or `-` for stdin (required) |
 | `--context <name>=<path>` | Context item (repeatable) |
@@ -214,7 +214,7 @@ api_key_env = "ANTHROPIC_API_KEY"
 
 Prompt templates use a `+++`-delimited TOML frontmatter format:
 
-```
+```text
 +++
 name = "spec-compliance"
 description = "Check artifact against a specification"
@@ -296,7 +296,7 @@ cargo clippy --all-targets -- -D warnings
 ```
 
 | Module | Tests |
-|--------|-------|
+| ------ | ----- |
 | types | 20 |
 | verdict_parser | 26 |
 | prompt | 17 |

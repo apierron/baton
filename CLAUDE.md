@@ -45,7 +45,7 @@ See `docs/CONVENTIONS.md` for the full list.
 ## Deep References
 
 | Topic | File |
-|-------|------|
+| ----- | ---- |
 | Code style, naming, formatting | `docs/STYLE.md` |
 | Module layers, execution pipeline, design decisions | `docs/ARCHITECTURE.md` |
 | Golden rules, mechanical conventions | `docs/CONVENTIONS.md` |

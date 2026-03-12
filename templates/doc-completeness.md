@@ -11,6 +11,7 @@ Do NOT evaluate quality, writing style, or correctness of claims.
 ONLY check structural completeness against the spec.
 
 Respond with exactly one of:
+
 - PASS — if all specified sections are present and populated
 - FAIL {section} — cite the missing or empty section
 - WARN {section} — if a section exists but appears incomplete

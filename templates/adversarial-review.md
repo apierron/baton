@@ -16,6 +16,7 @@ If you cannot find a concrete bug with a specific reproduction case,
 respond PASS.
 
 Respond with exactly one of:
+
 - PASS — if no concrete bugs found
 - FAIL {bug description} — with a specific input that triggers the bug
 - WARN {concern} — if you see a suspicious pattern but cannot construct

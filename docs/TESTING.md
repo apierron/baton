@@ -107,7 +107,7 @@ For new features, cover:
 ## Current Test Counts
 
 | Module | Tests |
-|--------|-------|
+| ------ | ----- |
 | types | 20 |
 | verdict_parser | 26 |
 | prompt | 17 |

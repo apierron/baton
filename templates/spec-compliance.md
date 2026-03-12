@@ -10,6 +10,7 @@ Check ONLY whether spec requirements are met.
 Do NOT check style, performance, or suggest alternatives.
 
 Respond with exactly one of:
+
 - PASS — if all requirements are satisfied
 - FAIL {requirement} — cite the unmet requirement and explain why
 

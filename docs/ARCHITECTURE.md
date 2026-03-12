@@ -4,8 +4,8 @@
 
 Modules follow a strict dependency direction. Lower layers must not import from higher layers.
 
-```
-         ┌──────────┐
+```text
+         ┌───────────┐
          │  main.rs  │  CLI entry point (clap)
          └─────┬─────┘
                │ uses
@@ -29,7 +29,7 @@ placeholder  prompt
 **Allowed dependency direction (top → bottom):**
 
 | Layer | May import from |
-|-------|----------------|
+| ----- | --------------- |
 | `main.rs` | `config`, `exec`, `history`, `types` |
 | `exec` | `config`, `types`, `placeholder`, `error` |
 | `config` | `types`, `placeholder`, `error` |
