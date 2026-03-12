@@ -1,0 +1,179 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross-compilation tools (Linux ARM)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }}
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          cd target/${{ matrix.target }}/release
+          tar czf ../../../baton-${{ github.ref_name }}-${{ matrix.target }}.tar.gz baton
+          cd ../../..
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path "target/${{ matrix.target }}/release/baton.exe" -DestinationPath "baton-${{ github.ref_name }}-${{ matrix.target }}.zip"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: baton-${{ matrix.target }}
+          path: |
+            baton-${{ github.ref_name }}-${{ matrix.target }}.tar.gz
+            baton-${{ github.ref_name }}-${{ matrix.target }}.zip
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            baton-*.tar.gz
+            baton-*.zip
+          generate_release_notes: true
+
+  update-homebrew:
+    needs: release
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Compute SHA256 checksums
+        id: sha
+        run: |
+          VERSION="${GITHUB_REF_NAME}"
+          echo "version=${VERSION#v}" >> "$GITHUB_OUTPUT"
+          echo "sha_aarch64_darwin=$(sha256sum baton-${VERSION}-aarch64-apple-darwin.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "sha_x86_64_darwin=$(sha256sum baton-${VERSION}-x86_64-apple-darwin.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "sha_aarch64_linux=$(sha256sum baton-${VERSION}-aarch64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          echo "sha_x86_64_linux=$(sha256sum baton-${VERSION}-x86_64-unknown-linux-gnu.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Update Homebrew tap
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$TAP_TOKEN" ]; then
+            echo "HOMEBREW_TAP_TOKEN secret not set — skipping Homebrew update"
+            exit 0
+          fi
+
+          VERSION="${{ steps.sha.outputs.version }}"
+
+          git clone https://x-access-token:${TAP_TOKEN}@github.com/apierron/homebrew-tap.git tap
+          cd tap
+
+          mkdir -p Formula
+
+          cat > Formula/baton.rb << 'FORMULA'
+          class Baton < Formula
+            desc "A composable validation gate for AI agent outputs"
+            homepage "https://github.com/apierron/baton"
+            version "VERSION_PLACEHOLDER"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/apierron/baton/releases/download/vVERSION_PLACEHOLDER/baton-vVERSION_PLACEHOLDER-aarch64-apple-darwin.tar.gz"
+                sha256 "SHA_AARCH64_DARWIN"
+              end
+              on_intel do
+                url "https://github.com/apierron/baton/releases/download/vVERSION_PLACEHOLDER/baton-vVERSION_PLACEHOLDER-x86_64-apple-darwin.tar.gz"
+                sha256 "SHA_X86_64_DARWIN"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/apierron/baton/releases/download/vVERSION_PLACEHOLDER/baton-vVERSION_PLACEHOLDER-aarch64-unknown-linux-gnu.tar.gz"
+                sha256 "SHA_AARCH64_LINUX"
+              end
+              on_intel do
+                url "https://github.com/apierron/baton/releases/download/vVERSION_PLACEHOLDER/baton-vVERSION_PLACEHOLDER-x86_64-unknown-linux-gnu.tar.gz"
+                sha256 "SHA_X86_64_LINUX"
+              end
+            end
+
+            def install
+              bin.install "baton"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/baton version")
+            end
+          end
+          FORMULA
+
+          # Substitute placeholders
+          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/g" Formula/baton.rb
+          sed -i "s/SHA_AARCH64_DARWIN/${{ steps.sha.outputs.sha_aarch64_darwin }}/g" Formula/baton.rb
+          sed -i "s/SHA_X86_64_DARWIN/${{ steps.sha.outputs.sha_x86_64_darwin }}/g" Formula/baton.rb
+          sed -i "s/SHA_AARCH64_LINUX/${{ steps.sha.outputs.sha_aarch64_linux }}/g" Formula/baton.rb
+          sed -i "s/SHA_X86_64_LINUX/${{ steps.sha.outputs.sha_x86_64_linux }}/g" Formula/baton.rb
+
+          # Remove leading whitespace from heredoc
+          sed -i 's/^          //' Formula/baton.rb
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/baton.rb
+          git commit -m "baton ${VERSION}" || echo "No changes to commit"
+          git push
