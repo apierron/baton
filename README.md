@@ -1,16 +1,18 @@
-# Baton
+# Baton :magic_wand:
 
 A composable validation gate for AI agent outputs.
 
-Baton runs a user-defined sequence of checks — deterministic scripts, LLM queries, or human reviews — against an artifact and produces a structured verdict: **pass** or **fail**. An explicit validation step means automated output is only accepted if it can *pass the Baton*.
+Baton runs a user-defined sequence of checks to validate agent output. These checks can be scripts, LLM queries, or human approvals. The result is a structured verdict: pass or fail. Like in a relay race, an agent is only finished after it ***passes the baton***.
 
-Baton is **not** an agent orchestrator. It receives an artifact, evaluates it, and reports results. You decide what to do with the verdict.
+Baton is **not** an agent orchestrator. It receives an artifact, evaluates it, and reports results. You decide what to do with the verdict. Baton does not conduct the orchestra, it is simply a tool for the conductor.
+
+While baton is primarily intended for improving QA in agentic workflows, it could also be used for reviewing human-generated content such as enforcing diverse style guides.
 
 ## Design Principles
 
-- **User-defined.** You describe what "valid" means for your domain. Validator steps are shell commands, LLM prompt templates, or agent configs.
-- **Context-isolated.** Baton only sees what you explicitly provide: `artifact + context = verdict`. No implicit state, no context bleed.
-- **Observable.** Every step produces structured output. Verdict history is persisted locally in SQLite and queryable via CLI.
+- **User-defined.** You describe what "valid" means for your domain with a declarative config file, baton.toml.
+- **Context-isolated.** Baton only sees what you explicitly provide. This makes validation a stateless function: `artifact + context = verdict`.
+- **Observable.** Every step produces structured output. Verdict history is queryable and persisted locally in SQLite. This also allows for previous verification runs to optionally be used as context.
 
 ## Installation
 
@@ -61,7 +63,7 @@ curl -fsSL https://raw.githubusercontent.com/apierron/baton/main/uninstall.sh | 
 baton init
 ```
 
-This creates a `baton.toml` config, a `.baton/` directory for history and logs, and a `prompts/` directory with starter prompt templates.
+This creates a `baton.toml` config, a `.baton/` directory for history and logs, and a `prompts/` directory with starter prompt templates. Run with `--minimal` to initialize without example prompts.
 
 ### 2. Define a gate
 
@@ -201,7 +203,7 @@ blocking = false
 
 ## Configuration
 
-Baton uses TOML for configuration. One file can define multiple named gates, shared defaults, provider configuration, and runtime settings. See the [full spec](baton-spec-v0_4.md) for the complete configuration reference.
+Baton uses TOML for configuration. One file can define multiple named gates, shared defaults, provider configuration, and runtime settings.
 
 Config discovery walks upward from the current directory looking for `baton.toml`, stopping at `.git` boundaries.
 
@@ -254,8 +256,6 @@ baton history --status fail
 ```
 
 ## Implementation Status
-
-This is a Rust implementation of [baton-spec-v0_4.md](baton-spec-v0_4.md). The table below tracks what has been implemented.
 
 ### Implemented
 
@@ -310,10 +310,10 @@ cargo clippy --all-targets -- -D warnings
 
 Contributions are welcome! Areas where help is especially appreciated:
 
-- **Timeout and signal handling** — Process management for long-running validators
-- **Additional runtime adapters** — Beyond OpenHands (e.g., SWE-agent, Devika)
+- **Unimplemented features** - Anything from the list above
+- **Additional runtime adapters** — Beyond OpenHands (e.g., Claude Code, Codex, SWE-agent, Devika)
 - **Additional validator types or prompt templates** — Community-shared validation patterns
-- **Log file writing** — JSON log entries alongside SQLite history
+- **Bugs** - Squash them all
 
 To get started:
 

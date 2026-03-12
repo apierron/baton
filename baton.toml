@@ -13,11 +13,72 @@ tmp_dir = "./.baton/tmp"
 # api_key_env = "ANTHROPIC_API_KEY"
 # default_model = "claude-haiku"
 
-[gates.example]
-description = "Example validation gate"
+# ── CI gate: clippy + tests ──────────────────────────────────
+[gates.ci]
+description = "Clippy linting and full test suite"
 
-[[gates.example.validators]]
-name = "lint"
+[[gates.ci.validators]]
+name = "clippy"
 type = "script"
-command = "echo 'Replace with your lint command' && exit 0"
+command = "cargo clippy --all-targets -- -D warnings"
 blocking = true
+
+[[gates.ci.validators]]
+name = "tests"
+type = "script"
+command = "cargo test"
+blocking = true
+
+# ── Deep gate: CI + fuzzing + invariant checks ───────────────
+[gates.deep]
+description = "Full CI plus fuzzing and invariant validation"
+
+[[gates.deep.validators]]
+name = "clippy"
+type = "script"
+command = "cargo clippy --all-targets -- -D warnings"
+blocking = true
+
+[[gates.deep.validators]]
+name = "tests"
+type = "script"
+command = "cargo test"
+blocking = true
+
+[[gates.deep.validators]]
+name = "fuzz-config-parser"
+type = "script"
+command = "bash validators/fuzz-config-parser.sh"
+blocking = false
+tags = ["deep", "fuzz"]
+run_if = "tests.status == pass"
+
+[[gates.deep.validators]]
+name = "fuzz-verdict-parser"
+type = "script"
+command = "bash validators/fuzz-verdict-parser.sh"
+blocking = false
+tags = ["deep", "fuzz"]
+run_if = "tests.status == pass"
+
+[[gates.deep.validators]]
+name = "invariant-no-hashmap"
+type = "script"
+command = "bash validators/invariant-no-hashmap.sh"
+blocking = true
+tags = ["invariant"]
+
+[[gates.deep.validators]]
+name = "invariant-module-layers"
+type = "script"
+command = "bash validators/invariant-module-layers.sh"
+blocking = true
+tags = ["invariant"]
+
+[[gates.deep.validators]]
+name = "invariant-error-messages"
+type = "script"
+command = "bash validators/invariant-error-messages.sh"
+blocking = false
+tags = ["invariant"]
+run_if = "clippy.status == pass"
