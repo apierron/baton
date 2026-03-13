@@ -136,11 +136,10 @@ fn execute_script_validator(
         };
     }
 
-    // Determine working directory
+    // Determine working directory: explicit override, or caller's cwd
     let working_dir = validator
         .working_dir
         .clone()
-        .or_else(|| artifact.parent_dir())
         .unwrap_or_else(|| ".".to_string());
 
     let working_path = std::path::Path::new(&working_dir);

@@ -1077,14 +1077,14 @@ fn cmd_update(target_version: Option<String>, skip_confirm: bool) -> i32 {
         "cargo" => {
             eprintln!("This baton was installed via Cargo ({}).", exe_path.display());
             eprintln!("Update it with:");
-            eprintln!("");
+            eprintln!();
             eprintln!("  cargo install --git https://github.com/apierron/baton.git");
             return 1;
         }
         "homebrew" => {
             eprintln!("This baton was installed via Homebrew ({}).", exe_path.display());
             eprintln!("Update it with:");
-            eprintln!("");
+            eprintln!();
             eprintln!("  brew upgrade baton");
             return 1;
         }
@@ -1494,14 +1494,14 @@ fn cmd_uninstall(remove_all: bool, skip_confirm: bool) -> i32 {
     // Check for homebrew — needs special handling
     let has_homebrew = targets.iter().any(|(_, source)| *source == "homebrew");
     if has_homebrew {
-        eprintln!("");
+        eprintln!();
         eprintln!("Note: Homebrew installation detected. Run `brew uninstall baton` separately");
         eprintln!("for a clean Homebrew removal. Proceeding here will delete the binary directly.");
     }
 
     // Confirm
     if !skip_confirm {
-        eprintln!("");
+        eprintln!();
         eprint!("Continue? [y/N] ");
         let mut input = String::new();
         if std::io::stdin().read_line(&mut input).is_err() {
