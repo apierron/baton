@@ -1,34 +1,37 @@
 # Baton :magic_wand:
 
-A composable validation gate for AI agent outputs.
+## A tool to predictably validate sloppy work
 
-Baton runs a user-defined sequence of checks to validate agent output. These checks can be scripts, LLM queries, or human approvals. The result is a structured verdict: pass or fail. Like in a relay race, an agent is only finished after it ***passes the baton***.
+Baton runs a sequence of user-defined checks to validate input. These validators are scripts, LLM queries, or human approvals. Baton works through your requirements in order and returns a structured verdict: **pass** or **fail**.
 
-Baton is **not** an agent orchestrator. It receives an artifact, evaluates it, and reports results. You decide what to do with the verdict. Baton does not conduct the orchestra, it is simply a tool for the conductor.
+Running your validation step explicitly makes sure no one forgets to check their work. It can also help maintain guidelines or guardrails that aren't always apparent.
 
-While baton is primarily intended for improving QA in agentic workflows, it could also be used for reviewing human-generated content such as enforcing diverse style guides.
+Like in a relay race, you're only done after you ***pass the baton***.
 
 ## Design Principles
 
-- **User-defined.** You describe what "valid" means for your domain with a declarative config file, baton.toml.
+- **User-defined.** You describe what "valid" means for your domain. It all runs through a single config file, baton.toml.
 - **Context-isolated.** Baton only sees what you explicitly provide. This makes validation a stateless function: `artifact + context = verdict`.
 - **Observable.** Every step produces structured output. Verdict history is queryable and persisted locally in SQLite. This also allows for previous verification runs to optionally be used as context.
 
 ## Installation
 
-### Homebrew (macOS and Linux)
-
-```bash
-brew install apierron/tap/baton
-```
-
-### Shell installer
+### One-liner (preferred method)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/apierron/baton/master/install.sh | bash
 ```
 
 This installs to `~/.local/bin` by default. Set `BATON_INSTALL_DIR` to customize.
+
+<details>
+<summary> Other installation methods (Homebrew, Cargo, binaries) </summary>
+
+### Homebrew (macOS and Linux)
+
+```bash
+brew install apierron/tap/baton
+```
 
 ### Cargo
 
@@ -38,7 +41,7 @@ cargo install --git https://github.com/apierron/baton.git
 
 ### Prebuilt binaries
 
-Download from [GitHub Releases](https://github.com/apierron/baton/releases). Builds are available for:
+Download builds directly from [GitHub Releases](https://github.com/apierron/baton/releases). Builds are available for:
 
 | Target | Format |
 | ------ | ------ |
@@ -49,11 +52,45 @@ Download from [GitHub Releases](https://github.com/apierron/baton/releases). Bui
 | `x86_64-pc-windows-msvc` | `.zip` |
 | `aarch64-pc-windows-msvc` | `.zip` |
 
+</details>
+
 ### Uninstall
+
+```bash
+baton uninstall
+```
+
+<details>
+<summary> Details </summary>
+
+The `uninstall` command will remove the installation it is called from. Run with `--all` to look for all baton installations (Cargo, Homebrew, etc.), not just the one in path. Use `-y` to skip confirmation if you like to live dangerously.
+
+Alternatively, you can use the uninstall script:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/apierron/baton/master/uninstall.sh | bash
 ```
+
+</details>
+
+### Updating
+
+```bash
+baton update
+```
+
+<details>
+<summary> Details </summary>
+
+To migrate to a specific version, use the `--version` flag:
+
+```bash
+baton update --version "0.4.2"
+```
+
+Note that if you used a package manager (Homebrew or Cargo) in a previous step, you should use their tooling instead.
+
+</details>
 
 ## Quick Start
 
@@ -135,6 +172,8 @@ baton validate-config  Check a baton.toml for errors and warnings
 baton check-provider   Check provider connectivity and model availability
 baton check-runtime    Check runtime connectivity and health
 baton clean            Remove temporary files from .baton/tmp/
+baton update           Update baton to the latest version
+baton uninstall        Uninstall baton from this system
 baton version          Print version information
 ```
 
@@ -311,8 +350,8 @@ cargo clippy --all-targets -- -D warnings
 Contributions are welcome! Areas where help is especially appreciated:
 
 - **Unimplemented features** - Anything from the list above
-- **Additional runtime adapters** — Beyond OpenHands (e.g., Claude Code, Codex, SWE-agent, Devika)
-- **Additional validator types or prompt templates** — Community-shared validation patterns
+- **Additional runtime adapters** — Beyond OpenHands (e.g., Claude Code, Codex, etc.)
+- **Additional validator types or prompt templates** — Community-shared validators are always helpful
 - **Bugs** - Squash them all
 
 To get started:
