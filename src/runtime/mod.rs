@@ -1,3 +1,8 @@
+//! Runtime adapter abstraction for agent-based validators.
+//!
+//! Defines the [`RuntimeAdapter`] trait and session lifecycle types.
+//! Currently supports OpenHands as the sole runtime backend.
+
 pub mod openhands;
 
 use std::collections::BTreeMap;
@@ -8,6 +13,7 @@ use crate::types::Cost;
 
 // ─── Session types ───────────────────────────────────────
 
+/// Configuration for creating an agent session.
 #[derive(Debug, Clone)]
 pub struct SessionConfig {
     pub task: String,
@@ -19,12 +25,14 @@ pub struct SessionConfig {
     pub env: BTreeMap<String, String>,
 }
 
+/// Opaque handle to a running agent session.
 #[derive(Debug, Clone)]
 pub struct SessionHandle {
     pub id: String,
     pub workspace_id: String,
 }
 
+/// Lifecycle state of an agent session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionStatus {
     Running,
@@ -34,6 +42,7 @@ pub enum SessionStatus {
     Cancelled,
 }
 
+/// Collected output from a completed agent session.
 #[derive(Debug, Clone)]
 pub struct SessionResult {
     pub status: SessionStatus,
@@ -42,6 +51,7 @@ pub struct SessionResult {
     pub cost: Option<Cost>,
 }
 
+/// Result of a runtime health check.
 #[derive(Debug, Clone)]
 pub struct HealthResult {
     pub reachable: bool,
@@ -52,17 +62,28 @@ pub struct HealthResult {
 
 // ─── RuntimeAdapter trait ────────────────────────────────
 
+/// Interface for agent runtime backends.
+///
+/// Implementations manage the full session lifecycle: creation, polling,
+/// result collection, cancellation, and cleanup.
 pub trait RuntimeAdapter: Send + Sync + Debug {
+    /// Checks whether the runtime is reachable and returns version info.
     fn health_check(&self) -> Result<HealthResult>;
+    /// Creates a new agent session with the given configuration.
     fn create_session(&self, config: SessionConfig) -> Result<SessionHandle>;
+    /// Polls the current status of a running session.
     fn poll_status(&self, handle: &SessionHandle) -> Result<SessionStatus>;
+    /// Collects the final output from a completed session.
     fn collect_result(&self, handle: &SessionHandle) -> Result<SessionResult>;
+    /// Cancels a running session. Idempotent.
     fn cancel(&self, handle: &SessionHandle) -> Result<()>;
+    /// Cleans up session resources (workspace, files). Idempotent.
     fn teardown(&self, handle: &SessionHandle) -> Result<()>;
 }
 
 // ─── Adapter registry ───────────────────────────────────
 
+/// Creates the appropriate [`RuntimeAdapter`] for the given runtime configuration.
 pub fn create_adapter(
     runtime_name: &str,
     runtime_config: &crate::config::Runtime,

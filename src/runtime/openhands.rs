@@ -1,3 +1,8 @@
+//! OpenHands runtime adapter implementation.
+//!
+//! Communicates with an OpenHands server via its REST API to create
+//! agent sessions, poll status, and collect results.
+
 use crate::error::{BatonError, Result};
 use crate::types::Cost;
 
@@ -7,6 +12,7 @@ use super::{
 
 // ─── OpenHands adapter ──────────────────────────────────
 
+/// HTTP client adapter for the OpenHands agent runtime.
 #[derive(Debug)]
 pub struct OpenHandsAdapter {
     base_url: String,
@@ -19,6 +25,10 @@ pub struct OpenHandsAdapter {
 }
 
 impl OpenHandsAdapter {
+    /// Creates a new adapter from connection parameters.
+    ///
+    /// If `api_key_env` is provided and non-empty, the corresponding
+    /// environment variable must be set or an error is returned.
     pub fn new(
         base_url: String,
         api_key_env: Option<&str>,

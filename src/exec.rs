@@ -1,3 +1,8 @@
+//! Gate execution engine.
+//!
+//! Runs validators in pipeline order, evaluates `run_if` conditions,
+//! dispatches to script/LLM/human executors, and computes the final verdict.
+
 use chrono::Utc;
 use std::collections::BTreeMap;
 use std::process::Command;
@@ -86,6 +91,8 @@ fn evaluate_atom(
 
 // ─── Compute final status ────────────────────────────────
 
+/// Computes the gate-level [`VerdictStatus`] from individual validator results,
+/// applying status suppression. Error beats Fail; Skip and Warn are ignored.
 pub fn compute_final_status(
     results: &[ValidatorResult],
     suppressed: &[Status],
@@ -247,7 +254,8 @@ fn execute_human_validator(
     }
 }
 
-/// Execute a single validator (dispatch by type).
+/// Dispatches a single validator by type (script, LLM, or human), evaluating
+/// its `run_if` condition and recording wall-clock timing.
 pub fn execute_validator(
     validator: &ValidatorConfig,
     artifact: &mut Artifact,
@@ -903,6 +911,11 @@ fn execute_llm_session(
 
 // ─── Gate run ────────────────────────────────────────────
 
+/// Runs all validators in a gate's pipeline and returns a [`Verdict`].
+///
+/// This is the main entry point for gate execution. Validates the artifact
+/// and context, then runs each validator in order, respecting `run_if`
+/// conditions, `--only`/`--skip`/`--tags` filters, and blocking semantics.
 pub fn run_gate(
     gate: &GateConfig,
     config: &BatonConfig,

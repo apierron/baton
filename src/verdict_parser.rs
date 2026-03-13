@@ -1,3 +1,9 @@
+//! Verdict parsing from LLM/agent text output.
+//!
+//! Uses a two-pass approach: first checks the opening line for PASS/FAIL/WARN
+//! keywords, then scans the full text for the last occurrence. Respects word
+//! boundaries (e.g., "PASSWORD" does not match "PASS").
+
 use crate::types::Status;
 
 /// Parsed verdict from LLM/agent text output.

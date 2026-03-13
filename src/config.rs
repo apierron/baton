@@ -1,3 +1,9 @@
+//! Configuration parsing and validation for baton.toml files.
+//!
+//! Two-stage design: [`parse_config`] deserializes TOML into validated structures,
+//! [`validate_config`] checks semantic correctness (e.g., forward references,
+//! missing providers, undefined context slots).
+
 use crate::error::{BatonError, Result};
 use crate::placeholder::resolve_env_vars;
 use serde::Deserialize;
@@ -6,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 // ─── Raw TOML structures ────────────────────────────────
 
+/// Raw deserialized baton.toml before validation.
 #[derive(Debug, Deserialize)]
 pub struct RawConfig {
     pub version: String,
@@ -18,6 +25,7 @@ pub struct RawConfig {
     pub gates: BTreeMap<String, RawGate>,
 }
 
+/// Raw default settings from `[defaults]`.
 #[derive(Debug, Deserialize, Default)]
 pub struct RawDefaults {
     #[serde(default = "default_timeout")]
@@ -41,6 +49,7 @@ fn default_log_dir() -> String { "./.baton/logs".into() }
 fn default_history_db() -> String { "./.baton/history.db".into() }
 fn default_tmp_dir() -> String { "./.baton/tmp".into() }
 
+/// Raw LLM provider entry from `[providers.<name>]`.
 #[derive(Debug, Deserialize, Clone)]
 pub struct RawProvider {
     pub api_base: String,
@@ -48,6 +57,7 @@ pub struct RawProvider {
     pub default_model: String,
 }
 
+/// Raw agent runtime entry from `[runtimes.<name>]`.
 #[derive(Debug, Deserialize, Clone)]
 pub struct RawRuntime {
     #[serde(rename = "type")]
@@ -69,6 +79,7 @@ fn default_sandbox() -> bool { true }
 fn default_runtime_timeout() -> u64 { 600 }
 fn default_max_iterations() -> u32 { 30 }
 
+/// Raw gate entry from `[gates.<name>]`.
 #[derive(Debug, Deserialize)]
 pub struct RawGate {
     #[serde(default)]
@@ -78,6 +89,7 @@ pub struct RawGate {
     pub validators: Vec<RawValidator>,
 }
 
+/// Raw context slot declaration on a gate.
 #[derive(Debug, Deserialize, Clone)]
 pub struct RawContextSlot {
     #[serde(default)]
@@ -86,6 +98,7 @@ pub struct RawContextSlot {
     pub required: bool,
 }
 
+/// Raw validator entry from `[[gates.<name>.validators]]`.
 #[derive(Debug, Deserialize, Clone)]
 pub struct RawValidator {
     pub name: String,
@@ -141,6 +154,7 @@ pub struct RawValidator {
 
 // ─── Validated config structures ─────────────────────────
 
+/// Fully validated baton configuration, ready for execution.
 #[derive(Debug, Clone)]
 pub struct BatonConfig {
     pub version: String,
@@ -151,6 +165,7 @@ pub struct BatonConfig {
     pub config_dir: PathBuf,
 }
 
+/// Resolved default settings with absolute paths.
 #[derive(Debug, Clone)]
 pub struct Defaults {
     pub timeout_seconds: u64,
@@ -161,6 +176,7 @@ pub struct Defaults {
     pub tmp_dir: PathBuf,
 }
 
+/// LLM API provider configuration.
 #[derive(Debug, Clone)]
 pub struct Provider {
     pub api_base: String,
@@ -168,6 +184,7 @@ pub struct Provider {
     pub default_model: String,
 }
 
+/// Agent runtime configuration (e.g., OpenHands).
 #[derive(Debug, Clone)]
 pub struct Runtime {
     pub runtime_type: String,
@@ -179,6 +196,7 @@ pub struct Runtime {
     pub max_iterations: u32,
 }
 
+/// A single validation gate with its validators.
 #[derive(Debug, Clone)]
 pub struct GateConfig {
     pub name: String,
@@ -187,12 +205,14 @@ pub struct GateConfig {
     pub validators: Vec<ValidatorConfig>,
 }
 
+/// Declared context slot on a gate.
 #[derive(Debug, Clone)]
 pub struct ContextSlot {
     pub description: Option<String>,
     pub required: bool,
 }
 
+/// The type of a validator: script, LLM, or human.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValidatorType {
     Script,
@@ -200,18 +220,21 @@ pub enum ValidatorType {
     Human,
 }
 
+/// LLM interaction mode: single completion or multi-step session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LlmMode {
     Completion,
     Session,
 }
 
+/// Expected response format from an LLM validator.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResponseFormat {
     Verdict,
     Freeform,
 }
 
+/// Fully resolved validator configuration with defaults applied.
 #[derive(Debug, Clone)]
 pub struct ValidatorConfig {
     pub name: String,
@@ -246,6 +269,7 @@ pub struct ValidatorConfig {
 
 // ─── Validation result ───────────────────────────────────
 
+/// Collection of validation errors and warnings from [`validate_config`].
 #[derive(Debug, Clone, Default)]
 pub struct ConfigValidation {
     pub errors: Vec<String>,
@@ -257,6 +281,7 @@ impl ConfigValidation {
         Self::default()
     }
 
+    /// Returns `true` if any validation errors were recorded.
     pub fn has_errors(&self) -> bool {
         !self.errors.is_empty()
     }

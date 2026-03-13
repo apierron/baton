@@ -1,5 +1,8 @@
+//! Error types for the baton crate.
+
 use thiserror::Error;
 
+/// All errors that can occur during baton operation.
 #[derive(Error, Debug)]
 pub enum BatonError {
     #[error("Artifact file not found: {0}")]
@@ -42,4 +45,5 @@ pub enum BatonError {
     DatabaseError(String),
 }
 
+/// Convenience alias for `Result<T, BatonError>`.
 pub type Result<T> = std::result::Result<T, BatonError>;

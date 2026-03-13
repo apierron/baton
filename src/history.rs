@@ -1,3 +1,8 @@
+//! SQLite-based verdict history storage.
+//!
+//! Persists verdicts and individual validator results with indexes for
+//! efficient querying by gate, status, artifact hash, and timestamp.
+
 use rusqlite::{params, Connection};
 use std::path::Path;
 

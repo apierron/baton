@@ -1,3 +1,5 @@
+//! Core data types for baton: artifacts, context, verdicts, and run options.
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -8,6 +10,7 @@ use crate::error::{BatonError, Result};
 
 // ─── Artifact ────────────────────────────────────────────
 
+/// A file or in-memory content to be validated, with lazy content and hash loading.
 #[derive(Debug, Clone)]
 pub struct Artifact {
     pub path: Option<PathBuf>,
@@ -16,6 +19,8 @@ pub struct Artifact {
 }
 
 impl Artifact {
+    /// Creates an artifact from a filesystem path. The file must exist and not be a directory.
+    /// Content is not read until [`get_content`](Self::get_content) is called.
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         if !path.exists() {
@@ -36,6 +41,7 @@ impl Artifact {
         })
     }
 
+    /// Creates an artifact from an inline string.
     pub fn from_string(content: &str) -> Self {
         Artifact {
             path: None,
@@ -44,6 +50,7 @@ impl Artifact {
         }
     }
 
+    /// Creates an artifact from raw bytes.
     pub fn from_bytes(content: Vec<u8>) -> Self {
         Artifact {
             path: None,
@@ -52,6 +59,7 @@ impl Artifact {
         }
     }
 
+    /// Returns the artifact content, lazily reading from disk on first access.
     pub fn get_content(&mut self) -> Result<&[u8]> {
         if self.content.is_none() {
             let path = self.path.as_ref().expect("Artifact must have path or content");
@@ -60,6 +68,7 @@ impl Artifact {
         Ok(self.content.as_ref().unwrap())
     }
 
+    /// Returns the SHA-256 hash of the content, computing and caching it on first call.
     pub fn get_hash(&mut self) -> Result<String> {
         if self.hash.is_none() {
             let content = self.get_content()?;
@@ -70,15 +79,18 @@ impl Artifact {
         Ok(self.hash.clone().unwrap())
     }
 
+    /// Returns the content as a UTF-8 string, using lossy conversion for invalid sequences.
     pub fn get_content_as_string(&mut self) -> Result<String> {
         let bytes = self.get_content()?.to_vec();
         Ok(String::from_utf8_lossy(&bytes).into_owned())
     }
 
+    /// Returns the absolute path as a string, if this artifact is file-backed.
     pub fn absolute_path(&self) -> Option<String> {
         self.path.as_ref().map(|p| p.display().to_string())
     }
 
+    /// Returns the parent directory as a string, if this artifact is file-backed.
     pub fn parent_dir(&self) -> Option<String> {
         self.path
             .as_ref()
@@ -89,6 +101,7 @@ impl Artifact {
 
 // ─── Context ─────────────────────────────────────────────
 
+/// A named reference document provided as context for validation.
 #[derive(Debug, Clone)]
 pub struct ContextItem {
     pub name: String,
@@ -97,6 +110,7 @@ pub struct ContextItem {
 }
 
 impl ContextItem {
+    /// Creates a context item from a filesystem path. The file must exist and not be a directory.
     pub fn from_file(name: String, path: impl AsRef<Path>) -> Result<Self> {
         let path = path.as_ref();
         if !path.exists() {
@@ -123,6 +137,7 @@ impl ContextItem {
         })
     }
 
+    /// Creates a context item from an inline string.
     pub fn from_string(name: String, content: String) -> Self {
         ContextItem {
             name,
@@ -131,6 +146,7 @@ impl ContextItem {
         }
     }
 
+    /// Returns the content, lazily reading from disk on first access.
     pub fn get_content(&mut self) -> Result<&str> {
         if self.content.is_none() {
             let path = self.path.as_ref().expect("ContextItem must have path or content");
@@ -139,6 +155,7 @@ impl ContextItem {
         Ok(self.content.as_ref().unwrap())
     }
 
+    /// Returns the SHA-256 hash of the content.
     pub fn get_hash(&mut self) -> Result<String> {
         let content = self.get_content()?.to_string();
         let mut hasher = Sha256::new();
@@ -146,34 +163,40 @@ impl ContextItem {
         Ok(hex::encode(hasher.finalize()))
     }
 
+    /// Returns the absolute path as a string, if this item is file-backed.
     pub fn absolute_path(&self) -> Option<String> {
         self.path.as_ref().map(|p| p.display().to_string())
     }
 }
 
+/// Ordered collection of named context items. Uses `BTreeMap` for deterministic hash ordering.
 #[derive(Debug, Clone, Default)]
 pub struct Context {
     pub items: BTreeMap<String, ContextItem>,
 }
 
 impl Context {
+    /// Creates an empty context collection.
     pub fn new() -> Self {
         Context {
             items: BTreeMap::new(),
         }
     }
 
+    /// Adds a file-backed context item by name and path.
     pub fn add_file(&mut self, name: String, path: impl AsRef<Path>) -> Result<()> {
         let item = ContextItem::from_file(name.clone(), path)?;
         self.items.insert(name, item);
         Ok(())
     }
 
+    /// Adds an inline string context item by name and content.
     pub fn add_string(&mut self, name: String, content: String) {
         let item = ContextItem::from_string(name.clone(), content);
         self.items.insert(name, item);
     }
 
+    /// Returns a combined SHA-256 hash of all items, computed in sorted key order.
     pub fn get_hash(&mut self) -> Result<String> {
         let mut item_hashes = Vec::new();
         // BTreeMap iterates in sorted order
@@ -191,6 +214,7 @@ impl Context {
 
 // ─── Cost ────────────────────────────────────────────────
 
+/// Token usage and cost metadata from an LLM validator call.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Cost {
     pub input_tokens: Option<i64>,
@@ -201,6 +225,7 @@ pub struct Cost {
 
 // ─── ValidatorResult ─────────────────────────────────────
 
+/// Validator-level outcome status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Status {
@@ -247,6 +272,7 @@ pub enum VerdictStatus {
 }
 
 impl VerdictStatus {
+    /// Maps the verdict to a process exit code: Pass=0, Fail=1, Error=2.
     pub fn exit_code(&self) -> i32 {
         match self {
             VerdictStatus::Pass => 0,
@@ -266,6 +292,7 @@ impl std::fmt::Display for VerdictStatus {
     }
 }
 
+/// Outcome of a single validator run, including status, feedback, timing, and cost.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValidatorResult {
     pub name: String,
@@ -277,6 +304,7 @@ pub struct ValidatorResult {
 
 // ─── Verdict ─────────────────────────────────────────────
 
+/// Final gate-level result containing all validator outcomes and aggregate metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Verdict {
     pub status: VerdictStatus,
@@ -293,10 +321,12 @@ pub struct Verdict {
 }
 
 impl Verdict {
+    /// Serializes the verdict as pretty-printed JSON.
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).expect("Failed to serialize verdict")
     }
 
+    /// Formats the verdict as a human-readable multi-line string with status icons.
     pub fn to_human(&self) -> String {
         let mut lines = Vec::new();
         for r in &self.history {
@@ -332,6 +362,7 @@ impl Verdict {
         lines.join("\n")
     }
 
+    /// Returns a one-line summary: "PASS" or "FAIL at <validator>: <feedback>".
     pub fn to_summary(&self) -> String {
         match self.status {
             VerdictStatus::Pass => "PASS".to_string(),
@@ -358,6 +389,7 @@ impl Verdict {
 
 // ─── RunOptions ──────────────────────────────────────────
 
+/// Runtime options controlling which validators to run and how results are reported.
 #[derive(Debug, Clone, Default)]
 pub struct RunOptions {
     pub run_all: bool,
@@ -370,6 +402,7 @@ pub struct RunOptions {
 }
 
 impl RunOptions {
+    /// Creates default run options with logging enabled.
     pub fn new() -> Self {
         RunOptions {
             log: true,

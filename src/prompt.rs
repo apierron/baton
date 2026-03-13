@@ -1,3 +1,9 @@
+//! Prompt template parsing and resolution.
+//!
+//! Supports optional TOML frontmatter delimited by `+++` for metadata
+//! (description, expected response format). Templates without frontmatter
+//! default to expecting a verdict-format response.
+
 use crate::error::{BatonError, Result};
 use std::path::Path;
 
@@ -10,6 +16,7 @@ pub struct PromptTemplate {
     pub body: String,
 }
 
+/// The expected response format from the LLM.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TemplateExpects {
     Verdict,

@@ -1,3 +1,10 @@
+//! CLI entry point for baton.
+//!
+//! Provides subcommands for running gates (`check`), project setup (`init`),
+//! inspecting configuration (`list`, `validate-config`), querying history,
+//! checking provider/runtime connectivity, and managing the installation
+//! (`update`, `uninstall`, `clean`, `version`).
+
 use clap::{Parser, Subcommand};
 use std::io::Read;
 use std::path::PathBuf;
@@ -205,6 +212,7 @@ enum Commands {
     },
 }
 
+/// Parses a `name=path` context argument from the CLI.
 fn parse_context_arg(s: &str) -> Result<(String, String), String> {
     let parts: Vec<&str> = s.splitn(2, '=').collect();
     if parts.len() != 2 {
@@ -213,6 +221,7 @@ fn parse_context_arg(s: &str) -> Result<(String, String), String> {
     Ok((parts[0].to_string(), parts[1].to_string()))
 }
 
+/// Loads and parses baton.toml from an explicit path or by discovery.
 fn load_config(config_path: Option<&PathBuf>) -> baton::error::Result<(baton::config::BatonConfig, PathBuf)> {
     let config_file = match config_path {
         Some(p) => {
@@ -292,6 +301,8 @@ fn main() {
     process::exit(exit_code);
 }
 
+/// Executes the `check` subcommand: loads config, builds artifact/context,
+/// runs the gate pipeline, stores the verdict in history, and outputs the result.
 #[allow(clippy::too_many_arguments)]
 fn cmd_check(
     config_path: Option<&PathBuf>,
@@ -508,6 +519,8 @@ fn cmd_check(
     verdict.status.exit_code()
 }
 
+/// Initializes a new baton project: creates `baton.toml`, `.baton/` directory,
+/// and optionally starter prompt templates in `prompts/`.
 fn cmd_init(minimal: bool, prompts_only: bool) -> i32 {
     if !prompts_only {
         // Check if baton.toml already exists
@@ -592,6 +605,7 @@ blocking = true
     0
 }
 
+/// Lists available gates, or shows validators for a specific gate.
 fn cmd_list(config_path: Option<&PathBuf>, gate_name: Option<&str>) -> i32 {
     let (config, _) = match load_config(config_path) {
         Ok(c) => c,
@@ -645,6 +659,7 @@ fn cmd_list(config_path: Option<&PathBuf>, gate_name: Option<&str>) -> i32 {
     0
 }
 
+/// Queries and displays verdict history, optionally filtered by gate, status, or artifact hash.
 fn cmd_history(
     config_path: Option<&PathBuf>,
     gate: Option<&str>,
@@ -706,6 +721,7 @@ fn cmd_history(
     0
 }
 
+/// Validates baton.toml and reports any errors or warnings.
 fn cmd_validate_config(config_path: Option<&PathBuf>) -> i32 {
     let (config, config_file) = match load_config(config_path) {
         Ok(c) => c,
@@ -732,6 +748,8 @@ fn cmd_validate_config(config_path: Option<&PathBuf>) -> i32 {
     if validation.has_errors() { 1 } else { 0 }
 }
 
+/// Tests connectivity to a single LLM provider: checks API key, tries `/v1/models`,
+/// and falls back to a minimal test completion if the model list is unavailable.
 fn check_single_provider(name: &str, provider: &baton::config::Provider) -> bool {
     // 1. Check API key
     let api_key = if provider.api_key_env.is_empty() {
@@ -851,6 +869,7 @@ fn check_single_provider(name: &str, provider: &baton::config::Provider) -> bool
     }
 }
 
+/// Checks connectivity for one or all configured LLM providers.
 fn cmd_check_provider(config_path: Option<&PathBuf>, name: Option<&str>, all: bool) -> i32 {
     let (config, _) = match load_config(config_path) {
         Ok(c) => c,
@@ -895,6 +914,7 @@ fn cmd_check_provider(config_path: Option<&PathBuf>, name: Option<&str>, all: bo
     if any_failed { 1 } else { 0 }
 }
 
+/// Checks health for one or all configured agent runtimes.
 fn cmd_check_runtime(config_path: Option<&PathBuf>, name: Option<&str>, all: bool) -> i32 {
     let (config, _) = match load_config(config_path) {
         Ok(c) => c,
@@ -968,6 +988,7 @@ fn cmd_check_runtime(config_path: Option<&PathBuf>, name: Option<&str>, all: boo
     if any_failed { 1 } else { 0 }
 }
 
+/// Removes stale temporary files (older than 1 hour) from the `.baton/tmp/` directory.
 fn cmd_clean(config_path: Option<&PathBuf>, dry_run: bool) -> i32 {
     let (config, _) = match load_config(config_path) {
         Ok(c) => c,
@@ -1018,6 +1039,7 @@ fn cmd_clean(config_path: Option<&PathBuf>, dry_run: bool) -> i32 {
     0
 }
 
+/// Prints baton version, spec version, and config file location.
 fn cmd_version(config_path: Option<&PathBuf>) -> i32 {
     println!("baton {}", env!("CARGO_PKG_VERSION"));
     println!("spec version: 0.4");
@@ -1070,6 +1092,8 @@ fn detect_install_method() -> (&'static str, PathBuf) {
     ("binary", exe)
 }
 
+/// Downloads and installs a new baton binary from GitHub releases.
+/// Detects the install method (cargo/homebrew/binary) and advises accordingly.
 fn cmd_update(target_version: Option<String>, skip_confirm: bool) -> i32 {
     let (method, exe_path) = detect_install_method();
 
@@ -1397,6 +1421,8 @@ fn cmd_update(target_version: Option<String>, skip_confirm: bool) -> i32 {
     0
 }
 
+/// Removes baton binaries from the system. With `--all`, searches common
+/// install locations (cargo, homebrew, install script) and removes all found copies.
 fn cmd_uninstall(remove_all: bool, skip_confirm: bool) -> i32 {
     let current_exe = match std::env::current_exe() {
         Ok(p) => match p.canonicalize() {

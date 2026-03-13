@@ -1,3 +1,8 @@
+//! Template placeholder resolution.
+//!
+//! Substitutes `{artifact}`, `{context.<name>}`, `{verdict.<name>.status}`,
+//! and similar placeholders in command strings and prompt templates.
+
 use crate::types::{Artifact, Context, ValidatorResult};
 use std::collections::BTreeMap;
 
