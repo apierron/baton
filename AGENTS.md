@@ -10,7 +10,7 @@ A composable validation gate for AI agent outputs. Accepts an artifact (file to 
 
 ```bash
 cargo build                          # Build
-cargo test                           # Run all tests (198 across 8 modules)
+cargo test                           # Run all tests (244 across 8 modules + integration)
 cargo test config::tests::test_name  # Run a single test
 cargo test config::tests             # Run one module's tests
 cargo clippy --all-targets -- -D warnings  # Lint (must pass with zero warnings)
@@ -57,6 +57,17 @@ See `docs/CONVENTIONS.md` for the full list.
 | Test patterns, running tests, what to cover | `docs/TESTING.md` |
 | Anti-patterns, security, what NOT to do | `docs/BOUNDARIES.md` |
 | Spec (authoritative behavior reference) | `baton-spec-v0_4.md` |
+| Module-level specs (assertions, test coverage gaps) | `spec/*.md` |
+
+## Spec Files
+
+The `spec/` directory contains one spec file per module with machine-readable assertions (`SPEC-XX-YY-NNN`). Each assertion maps to an existing test or is marked `UNTESTED`. Use these to:
+
+- **Find coverage gaps:** grep for `UNTESTED` to see what still needs tests
+- **Understand behavior contracts:** each assertion documents a specific decision point, error return, or invariant
+- **Write new tests:** the assertion IDs provide a checklist when adding or modifying functionality
+
+Files: `types.md`, `config.md`, `prompt.md`, `placeholder.md`, `verdict_parser.md`, `exec.md`, `history.md`, `runtime.md`
 
 ## Not Yet Implemented
 

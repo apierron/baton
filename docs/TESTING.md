@@ -116,4 +116,18 @@ For new features, cover:
 | exec | 65 |
 | history | 8 |
 | runtime | 18 |
-| **Total** | **198** |
+| cli (integration) | 46 |
+| **Total** | **244** |
+
+## Spec Files & Coverage Gaps
+
+Each module has a corresponding spec file in `spec/` (e.g., `spec/exec.md`) containing assertions in the format `SPEC-XX-YY-NNN`. Every assertion maps to an existing test (`test: module::tests::test_name`) or is marked `UNTESTED`.
+
+To find what still needs tests:
+
+```bash
+grep -r "UNTESTED" spec/          # All untested assertions
+grep -c "UNTESTED" spec/*.md      # Count per module
+```
+
+When adding a new feature or fixing a bug, check the relevant spec file for `UNTESTED` assertions related to your change — these are pre-identified gaps worth covering.

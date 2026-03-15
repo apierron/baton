@@ -52,6 +52,10 @@ Files referenced by placeholders (`{artifact_content}`, `{context.spec.content}`
 
 The version is defined once in `Cargo.toml` under `[package].version`. All runtime references use `env!("CARGO_PKG_VERSION")`. Never hardcode a version string in Rust source, README, or other files. The Homebrew formula version is updated by CI during releases.
 
+## Spec Assertions
+
+When adding new behavior or modifying existing behavior, update the corresponding `spec/*.md` file. Each assertion (`SPEC-XX-YY-NNN`) should map to a test — mark new assertions as `UNTESTED` until a test exists. See `docs/TESTING.md` for details.
+
 ## Commit & PR Conventions
 
 - Commits are imperative mood, lowercase: `add timeout enforcement`, `fix run_if with missing validator`.

@@ -100,3 +100,7 @@ LLM validators operate in two modes:
 The `runtime` module defines the `RuntimeAdapter` trait with five methods: `create_session`, `poll_status`, `collect_result`, `cancel`, and `teardown`, plus a `health_check` for connectivity verification.
 
 `runtime::openhands` implements this trait for the OpenHands platform. New runtime adapters (e.g., SWE-agent) should implement `RuntimeAdapter` and be wired into `runtime::create_adapter()`.
+
+## Spec Files
+
+Detailed behavioral assertions for each module live in `spec/*.md`. These enumerate every decision point, error return, and invariant as machine-readable `SPEC-XX-YY-NNN` assertions. See `docs/TESTING.md` for how to use them to find coverage gaps.
