@@ -1399,7 +1399,12 @@ mod tests {
         let art_path = dir.path().join("test.txt");
         std::fs::write(&art_path, "hello").unwrap();
 
-        let v = ValidatorBuilder::script("test", "cat {artifact}").build();
+        let cmd = if cfg!(windows) {
+            "type {artifact}"
+        } else {
+            "cat {artifact}"
+        };
+        let v = ValidatorBuilder::script("test", cmd).build();
         let mut art = Artifact::from_file(&art_path).unwrap();
         let mut ctx = Context::new();
         let prior = BTreeMap::new();

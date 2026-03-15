@@ -717,7 +717,7 @@ mod tests {
         let f = NamedTempFile::new().unwrap();
         let art = Artifact::from_file(f.path()).unwrap();
         let abs = art.absolute_path().unwrap();
-        assert!(abs.starts_with('/'));
+        assert!(std::path::Path::new(&abs).is_absolute());
         assert!(abs.ends_with(f.path().file_name().unwrap().to_str().unwrap()));
     }
 
@@ -787,7 +787,7 @@ mod tests {
         let f = NamedTempFile::new().unwrap();
         let item = ContextItem::from_file("spec".into(), f.path()).unwrap();
         let abs = item.absolute_path().unwrap();
-        assert!(abs.starts_with('/'));
+        assert!(std::path::Path::new(&abs).is_absolute());
     }
 
     #[test]
