@@ -45,13 +45,8 @@ pub fn resolve_placeholders(
             // Find matching closing brace
             if let Some(close) = find_closing_brace(&chars, i) {
                 let placeholder: String = chars[i + 1..close].iter().collect();
-                let resolved = resolve_single(
-                    &placeholder,
-                    artifact,
-                    context,
-                    prior_results,
-                    warnings,
-                );
+                let resolved =
+                    resolve_single(&placeholder, artifact, context, prior_results, warnings);
                 result.push_str(&resolved);
                 i = close + 1;
             } else {
@@ -152,9 +147,9 @@ fn resolve_single(
     }
 
     // Unrecognized placeholder — leave as literal and warn
-    warnings.warnings.push(format!(
-        "Unrecognized placeholder '{{{placeholder}}}'"
-    ));
+    warnings
+        .warnings
+        .push(format!("Unrecognized placeholder '{{{placeholder}}}'"));
     format!("{{{placeholder}}}")
 }
 
@@ -168,7 +163,12 @@ pub fn resolve_env_vars(input: &str) -> Result<String, String> {
     let mut i = 0;
 
     while i < len {
-        if i + 1 < len && chars[i] == '$' && chars[i + 1] == '$' && i + 2 < len && chars[i + 2] == '{' {
+        if i + 1 < len
+            && chars[i] == '$'
+            && chars[i + 1] == '$'
+            && i + 2 < len
+            && chars[i + 2] == '{'
+        {
             // Escaped: $${ → ${
             result.push('$');
             result.push('{');
@@ -456,13 +456,7 @@ mod tests {
         let mut ctx = Context::new();
         let prior = BTreeMap::new();
         let mut warns = ResolutionWarnings::new();
-        let result = resolve_placeholders(
-            "Bad: {typo}",
-            &mut art,
-            &mut ctx,
-            &prior,
-            &mut warns,
-        );
+        let result = resolve_placeholders("Bad: {typo}", &mut art, &mut ctx, &prior, &mut warns);
         assert_eq!(result, "Bad: {typo}");
         assert_eq!(warns.warnings.len(), 1);
     }
@@ -506,14 +500,8 @@ mod tests {
         let mut ctx = Context::new();
         let prior = BTreeMap::new();
         let mut warns = ResolutionWarnings::new();
-        let result = resolve_placeholders(
-            "Unclosed {brace",
-            &mut art,
-            &mut ctx,
-            &prior,
-            &mut warns,
-        );
+        let result =
+            resolve_placeholders("Unclosed {brace", &mut art, &mut ctx, &prior, &mut warns);
         assert_eq!(result, "Unclosed {brace");
     }
-
 }

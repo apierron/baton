@@ -29,7 +29,7 @@ pub fn evaluate_run_if(
 
     if tokens.is_empty() {
         return Err(BatonError::ValidationError(
-            "Empty run_if expression".into()
+            "Empty run_if expression".into(),
         ));
     }
 
@@ -63,10 +63,7 @@ pub fn evaluate_run_if(
     Ok(current_result)
 }
 
-fn evaluate_atom(
-    atom: &str,
-    prior_results: &BTreeMap<String, ValidatorResult>,
-) -> Result<bool> {
+fn evaluate_atom(atom: &str, prior_results: &BTreeMap<String, ValidatorResult>) -> Result<bool> {
     let parts: Vec<&str> = atom.split(".status == ").collect();
     if parts.len() != 2 {
         return Err(BatonError::ValidationError(format!(
@@ -78,9 +75,7 @@ fn evaluate_atom(
     let expected_status = parts[1].trim();
 
     let expected: Status = expected_status.parse().map_err(|_| {
-        BatonError::ValidationError(format!(
-            "Invalid status in run_if: '{expected_status}'"
-        ))
+        BatonError::ValidationError(format!("Invalid status in run_if: '{expected_status}'"))
     })?;
 
     match prior_results.get(validator_name) {
@@ -93,10 +88,7 @@ fn evaluate_atom(
 
 /// Computes the gate-level [`VerdictStatus`] from individual validator results,
 /// applying status suppression. Error beats Fail; Skip and Warn are ignored.
-pub fn compute_final_status(
-    results: &[ValidatorResult],
-    suppressed: &[Status],
-) -> VerdictStatus {
+pub fn compute_final_status(results: &[ValidatorResult], suppressed: &[Status]) -> VerdictStatus {
     let effective: Vec<Status> = results
         .iter()
         .filter(|r| r.status != Status::Skip)
@@ -164,7 +156,9 @@ fn execute_script_validator(
 
     // Spawn process
     let mut cmd = Command::new("sh");
-    cmd.arg("-c").arg(&resolved_command).current_dir(&working_dir);
+    cmd.arg("-c")
+        .arg(&resolved_command)
+        .current_dir(&working_dir);
 
     // Add env vars
     for (k, v) in &validator.env {
@@ -175,7 +169,13 @@ fn execute_script_validator(
         Ok(o) => o,
         Err(e) => {
             let feedback = if e.kind() == std::io::ErrorKind::NotFound {
-                format!("[baton] Command not found: {}", resolved_command.split_whitespace().next().unwrap_or(&resolved_command))
+                format!(
+                    "[baton] Command not found: {}",
+                    resolved_command
+                        .split_whitespace()
+                        .next()
+                        .unwrap_or(&resolved_command)
+                )
             } else if e.kind() == std::io::ErrorKind::PermissionDenied {
                 format!("[baton] Permission denied: {resolved_command}")
             } else {
@@ -242,8 +242,7 @@ fn execute_human_validator(
 ) -> ValidatorResult {
     let prompt = validator.prompt.as_deref().unwrap_or("");
     let mut warnings = ResolutionWarnings::new();
-    let rendered =
-        resolve_placeholders(prompt, artifact, context, prior_results, &mut warnings);
+    let rendered = resolve_placeholders(prompt, artifact, context, prior_results, &mut warnings);
 
     ValidatorResult {
         name: validator.name.clone(),
@@ -297,16 +296,14 @@ pub fn execute_validator(
         ValidatorType::Human => {
             execute_human_validator(validator, artifact, context, prior_results)
         }
-        ValidatorType::Llm => {
-            match validator.mode {
-                LlmMode::Completion => {
-                    execute_llm_completion(validator, artifact, context, prior_results, config)
-                }
-                LlmMode::Session => {
-                    execute_llm_session(validator, artifact, context, prior_results, config)
-                }
+        ValidatorType::Llm => match validator.mode {
+            LlmMode::Completion => {
+                execute_llm_completion(validator, artifact, context, prior_results, config)
             }
-        }
+            LlmMode::Session => {
+                execute_llm_session(validator, artifact, context, prior_results, config)
+            }
+        },
     };
 
     result.duration_ms = start.elapsed().as_millis() as i64;
@@ -328,7 +325,9 @@ fn execute_llm_completion(
             return ValidatorResult {
                 name: validator.name.clone(),
                 status: Status::Error,
-                feedback: Some("[baton] LLM validator requires config with provider settings".into()),
+                feedback: Some(
+                    "[baton] LLM validator requires config with provider settings".into(),
+                ),
                 duration_ms: 0,
                 cost: None,
             };
@@ -410,8 +409,13 @@ fn execute_llm_completion(
 
     // Resolve placeholders in prompt
     let mut warnings = ResolutionWarnings::new();
-    let rendered_prompt =
-        resolve_placeholders(&prompt_body, artifact, context, prior_results, &mut warnings);
+    let rendered_prompt = resolve_placeholders(
+        &prompt_body,
+        artifact,
+        context,
+        prior_results,
+        &mut warnings,
+    );
 
     // Build model name
     let model = validator
@@ -517,9 +521,7 @@ fn execute_llm_completion(
                     validator.provider
                 )
             }
-            _ => format!(
-                "[baton] Provider returned HTTP {status_code}: {body_text}"
-            ),
+            _ => format!("[baton] Provider returned HTTP {status_code}: {body_text}"),
         };
         return ValidatorResult {
             name: validator.name.clone(),
@@ -596,12 +598,8 @@ fn execute_llm_completion(
 fn extract_cost(resp_body: &serde_json::Value, model: &str) -> Option<Cost> {
     let usage = resp_body.get("usage")?;
 
-    let input_tokens = usage
-        .get("prompt_tokens")
-        .and_then(|v| v.as_i64());
-    let output_tokens = usage
-        .get("completion_tokens")
-        .and_then(|v| v.as_i64());
+    let input_tokens = usage.get("prompt_tokens").and_then(|v| v.as_i64());
+    let output_tokens = usage.get("completion_tokens").and_then(|v| v.as_i64());
 
     if input_tokens.is_none() && output_tokens.is_none() {
         return None;
@@ -630,7 +628,9 @@ fn execute_llm_session(
             return ValidatorResult {
                 name: validator.name.clone(),
                 status: Status::Error,
-                feedback: Some("[baton] LLM session validator requires config with runtime settings".into()),
+                feedback: Some(
+                    "[baton] LLM session validator requires config with runtime settings".into(),
+                ),
                 duration_ms: 0,
                 cost: None,
             };
@@ -722,8 +722,13 @@ fn execute_llm_session(
 
     // Resolve placeholders in prompt
     let mut warnings = ResolutionWarnings::new();
-    let rendered_prompt =
-        resolve_placeholders(&prompt_body, artifact, context, prior_results, &mut warnings);
+    let rendered_prompt = resolve_placeholders(
+        &prompt_body,
+        artifact,
+        context,
+        prior_results,
+        &mut warnings,
+    );
 
     // Prepare file set for isolation
     let mut files = BTreeMap::new();
@@ -747,7 +752,9 @@ fn execute_llm_session(
 
     // Determine session parameters
     let sandbox = validator.sandbox.unwrap_or(runtime_config.sandbox);
-    let max_iterations = validator.max_iterations.unwrap_or(runtime_config.max_iterations);
+    let max_iterations = validator
+        .max_iterations
+        .unwrap_or(runtime_config.max_iterations);
     let timeout_seconds = validator.timeout_seconds;
 
     // Create session
@@ -761,7 +768,12 @@ fn execute_llm_session(
         env: BTreeMap::new(),
     };
 
-    drive_session(&validator.name, adapter.as_ref(), session_config, timeout_seconds)
+    drive_session(
+        &validator.name,
+        adapter.as_ref(),
+        session_config,
+        timeout_seconds,
+    )
 }
 
 /// Core session orchestration: create → poll → collect → teardown → parse verdict.
@@ -780,9 +792,7 @@ fn drive_session(
             return ValidatorResult {
                 name: name.into(),
                 status: Status::Error,
-                feedback: Some(format!(
-                    "[baton] Failed to create session: {e}"
-                )),
+                feedback: Some(format!("[baton] Failed to create session: {e}")),
                 duration_ms: 0,
                 cost: None,
             };
@@ -888,9 +898,7 @@ fn drive_session(
             return ValidatorResult {
                 name: name.into(),
                 status: Status::Error,
-                feedback: Some(
-                    "[baton] Agent produced no verdict.".into(),
-                ),
+                feedback: Some("[baton] Agent produced no verdict.".into()),
                 duration_ms: 0,
                 cost: session_result.cost,
             };
@@ -1094,22 +1102,21 @@ pub fn run_gate(
         VerdictStatus::Pass
     };
 
-    let (failed_at, feedback) = if final_status == VerdictStatus::Fail
-        || final_status == VerdictStatus::Error
-    {
-        let target_status = match final_status {
-            VerdictStatus::Error => Status::Error,
-            VerdictStatus::Fail => Status::Fail,
-            _ => unreachable!(),
+    let (failed_at, feedback) =
+        if final_status == VerdictStatus::Fail || final_status == VerdictStatus::Error {
+            let target_status = match final_status {
+                VerdictStatus::Error => Status::Error,
+                VerdictStatus::Fail => Status::Fail,
+                _ => unreachable!(),
+            };
+            let first = result_list.iter().find(|r| r.status == target_status);
+            (
+                first.map(|r| r.name.clone()),
+                first.and_then(|r| r.feedback.clone()),
+            )
+        } else {
+            (None, None)
         };
-        let first = result_list.iter().find(|r| r.status == target_status);
-        (
-            first.map(|r| r.name.clone()),
-            first.and_then(|r| r.feedback.clone()),
-        )
-    } else {
-        (None, None)
-    };
 
     Ok(Verdict {
         status: final_status,
@@ -1156,21 +1163,17 @@ mod tests {
     #[test]
     fn run_if_and_both_true() {
         let results = th::prior_results();
-        assert!(!evaluate_run_if(
-            "lint.status == pass and typecheck.status == pass",
-            &results
-        )
-        .unwrap());
+        assert!(
+            !evaluate_run_if("lint.status == pass and typecheck.status == pass", &results).unwrap()
+        );
     }
 
     #[test]
     fn run_if_or_one_true() {
         let results = th::prior_results();
-        assert!(evaluate_run_if(
-            "lint.status == fail or typecheck.status == fail",
-            &results
-        )
-        .unwrap());
+        assert!(
+            evaluate_run_if("lint.status == fail or typecheck.status == fail", &results).unwrap()
+        );
     }
 
     #[test]
@@ -1215,28 +1218,19 @@ mod tests {
 
     #[test]
     fn final_status_all_pass() {
-        let results = vec![
-            th::result("a", Status::Pass),
-            th::result("b", Status::Pass),
-        ];
+        let results = vec![th::result("a", Status::Pass), th::result("b", Status::Pass)];
         assert_eq!(compute_final_status(&results, &[]), VerdictStatus::Pass);
     }
 
     #[test]
     fn final_status_with_warn() {
-        let results = vec![
-            th::result("a", Status::Pass),
-            th::result("b", Status::Warn),
-        ];
+        let results = vec![th::result("a", Status::Pass), th::result("b", Status::Warn)];
         assert_eq!(compute_final_status(&results, &[]), VerdictStatus::Pass);
     }
 
     #[test]
     fn final_status_with_fail() {
-        let results = vec![
-            th::result("a", Status::Pass),
-            th::result("b", Status::Fail),
-        ];
+        let results = vec![th::result("a", Status::Pass), th::result("b", Status::Fail)];
         assert_eq!(compute_final_status(&results, &[]), VerdictStatus::Fail);
     }
 
@@ -1251,10 +1245,7 @@ mod tests {
 
     #[test]
     fn final_status_skip_ignored() {
-        let results = vec![
-            th::result("a", Status::Skip),
-            th::result("b", Status::Pass),
-        ];
+        let results = vec![th::result("a", Status::Skip), th::result("b", Status::Pass)];
         assert_eq!(compute_final_status(&results, &[]), VerdictStatus::Pass);
     }
 
@@ -1363,7 +1354,11 @@ mod tests {
         let prior = BTreeMap::new();
         let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
         assert_eq!(result.status, Status::Warn);
-        assert!(result.feedback.as_ref().unwrap().contains("warning message"));
+        assert!(result
+            .feedback
+            .as_ref()
+            .unwrap()
+            .contains("warning message"));
     }
 
     #[test]
@@ -1423,7 +1418,11 @@ mod tests {
         let prior = BTreeMap::new();
         let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
         assert_eq!(result.status, Status::Fail);
-        assert!(result.feedback.as_ref().unwrap().contains("[human-review-requested]"));
+        assert!(result
+            .feedback
+            .as_ref()
+            .unwrap()
+            .contains("[human-review-requested]"));
         assert!(result.feedback.as_ref().unwrap().contains("Please review"));
     }
 
@@ -1477,7 +1476,9 @@ mod tests {
             "test",
             vec![
                 ValidatorBuilder::script("a", "exit 0").build(),
-                ValidatorBuilder::script("b", "exit 1").blocking(false).build(),
+                ValidatorBuilder::script("b", "exit 1")
+                    .blocking(false)
+                    .build(),
                 ValidatorBuilder::script("c", "exit 0").build(),
             ],
         );
@@ -1519,7 +1520,9 @@ mod tests {
             "test",
             vec![
                 ValidatorBuilder::script("a", "exit 0").build(),
-                ValidatorBuilder::script("b", "exit 1").blocking(false).build(),
+                ValidatorBuilder::script("b", "exit 1")
+                    .blocking(false)
+                    .build(),
                 ValidatorBuilder::script("c", "exit 0").build(),
             ],
         );
@@ -1539,7 +1542,9 @@ mod tests {
             "test",
             vec![
                 ValidatorBuilder::script("a", "exit 1").build(),
-                ValidatorBuilder::script("b", "exit 0").run_if("a.status == pass").build(),
+                ValidatorBuilder::script("b", "exit 0")
+                    .run_if("a.status == pass")
+                    .build(),
             ],
         );
         let config = th::config_for_gate(gate.clone());
@@ -1556,9 +1561,12 @@ mod tests {
 
     #[test]
     fn gate_warn_from_script() {
-        let gate = th::gate("test", vec![
-            ValidatorBuilder::script("check", "exit 2").warn_exit_codes(vec![2]).build(),
-        ]);
+        let gate = th::gate(
+            "test",
+            vec![ValidatorBuilder::script("check", "exit 2")
+                .warn_exit_codes(vec![2])
+                .build()],
+        );
         let config = th::config_for_gate(gate.clone());
         let mut art = Artifact::from_string("hello");
         let mut ctx = Context::new();
@@ -1614,10 +1622,17 @@ mod tests {
 
     #[test]
     fn gate_tags_filter() {
-        let gate = th::gate("test", vec![
-            ValidatorBuilder::script("fast", "exit 0").tags(vec!["quick"]).build(),
-            ValidatorBuilder::script("slow", "exit 0").tags(vec!["deep"]).build(),
-        ]);
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("fast", "exit 0")
+                    .tags(vec!["quick"])
+                    .build(),
+                ValidatorBuilder::script("slow", "exit 0")
+                    .tags(vec!["deep"])
+                    .build(),
+            ],
+        );
         let config = th::config_for_gate(gate.clone());
         let mut art = Artifact::from_string("hello");
         let mut ctx = Context::new();
@@ -1657,7 +1672,10 @@ mod tests {
 
     #[test]
     fn gate_required_context_missing() {
-        let mut gate = th::gate("test", vec![ValidatorBuilder::script("a", "exit 0").build()]);
+        let mut gate = th::gate(
+            "test",
+            vec![ValidatorBuilder::script("a", "exit 0").build()],
+        );
         gate.context.insert(
             "spec".into(),
             ContextSlot {
@@ -1683,7 +1701,9 @@ mod tests {
             "test",
             vec![
                 ValidatorBuilder::script("fail-v", "exit 1").build(),
-                ValidatorBuilder::script("error-v", "exit 0").working_dir("/nonexistent/dir").build(),
+                ValidatorBuilder::script("error-v", "exit 0")
+                    .working_dir("/nonexistent/dir")
+                    .build(),
             ],
         );
         let config = th::config_for_gate(gate.clone());
@@ -1703,7 +1723,9 @@ mod tests {
             "test",
             vec![
                 ValidatorBuilder::script("fail-v", "exit 1").build(),
-                ValidatorBuilder::script("error-v", "exit 0").working_dir("/nonexistent/dir").build(),
+                ValidatorBuilder::script("error-v", "exit 0")
+                    .working_dir("/nonexistent/dir")
+                    .build(),
             ],
         );
         let config = th::config_for_gate(gate.clone());
@@ -1724,7 +1746,9 @@ mod tests {
             "test",
             vec![
                 ValidatorBuilder::script("fail-v", "exit 1").build(),
-                ValidatorBuilder::script("error-v", "exit 0").working_dir("/nonexistent/dir").build(),
+                ValidatorBuilder::script("error-v", "exit 0")
+                    .working_dir("/nonexistent/dir")
+                    .build(),
             ],
         );
         let config = th::config_for_gate(gate.clone());
@@ -1745,7 +1769,10 @@ mod tests {
 
     /// Start a mock HTTP server that returns a fixed response body.
     /// Returns (port, join_handle). The server handles exactly one request.
-    fn start_mock_server(status_code: u16, response_body: &str) -> (u16, std::thread::JoinHandle<String>) {
+    fn start_mock_server(
+        status_code: u16,
+        response_body: &str,
+    ) -> (u16, std::thread::JoinHandle<String>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let body = response_body.to_string();
@@ -1768,7 +1795,6 @@ mod tests {
 
         (port, handle)
     }
-
 
     #[test]
     fn llm_completion_pass_verdict() {
@@ -1830,7 +1856,11 @@ mod tests {
 
         let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
         assert_eq!(result.status, Status::Fail);
-        assert!(result.feedback.as_ref().unwrap().contains("missing error handling"));
+        assert!(result
+            .feedback
+            .as_ref()
+            .unwrap()
+            .contains("missing error handling"));
 
         handle.join().unwrap();
     }
@@ -1879,7 +1909,11 @@ mod tests {
 
         let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
         assert_eq!(result.status, Status::Error);
-        assert!(result.feedback.as_ref().unwrap().contains("Could not parse verdict"));
+        assert!(result
+            .feedback
+            .as_ref()
+            .unwrap()
+            .contains("Could not parse verdict"));
 
         handle.join().unwrap();
     }
@@ -1904,7 +1938,11 @@ mod tests {
 
         let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
         assert_eq!(result.status, Status::Error);
-        assert!(result.feedback.as_ref().unwrap().contains("empty or malformed"));
+        assert!(result
+            .feedback
+            .as_ref()
+            .unwrap()
+            .contains("empty or malformed"));
 
         handle.join().unwrap();
     }
@@ -1921,7 +1959,11 @@ mod tests {
 
         let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
         assert_eq!(result.status, Status::Error);
-        assert!(result.feedback.as_ref().unwrap().contains("Authentication failed"));
+        assert!(result
+            .feedback
+            .as_ref()
+            .unwrap()
+            .contains("Authentication failed"));
 
         handle.join().unwrap();
     }
@@ -1988,13 +2030,19 @@ mod tests {
 
         let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
         assert_eq!(result.status, Status::Error);
-        assert!(result.feedback.as_ref().unwrap().contains("Cannot reach provider"));
+        assert!(result
+            .feedback
+            .as_ref()
+            .unwrap()
+            .contains("Cannot reach provider"));
     }
 
     #[test]
     fn llm_completion_missing_provider() {
         let config = th::config_with_provider("http://localhost");
-        let v = ValidatorBuilder::llm("llm-check", "Review this").provider("nonexistent").build();
+        let v = ValidatorBuilder::llm("llm-check", "Review this")
+            .provider("nonexistent")
+            .build();
 
         let mut art = Artifact::from_string("hello");
         let mut ctx = Context::new();
@@ -2014,7 +2062,11 @@ mod tests {
 
         let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
         assert_eq!(result.status, Status::Error);
-        assert!(result.feedback.as_ref().unwrap().contains("requires config"));
+        assert!(result
+            .feedback
+            .as_ref()
+            .unwrap()
+            .contains("requires config"));
     }
 
     #[test]
@@ -2275,7 +2327,11 @@ mod tests {
 
         let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
         assert_eq!(result.status, Status::Error);
-        assert!(result.feedback.as_ref().unwrap().contains("requires config"));
+        assert!(result
+            .feedback
+            .as_ref()
+            .unwrap()
+            .contains("requires config"));
     }
 
     #[test]
@@ -2347,7 +2403,11 @@ mod tests {
         let mock = MockRuntimeAdapter::completing("I think the code is fine maybe");
         let result = drive_session("v", &mock, test_session_config(), 30);
         assert_eq!(result.status, Status::Error);
-        assert!(result.feedback.as_ref().unwrap().contains("Could not parse"));
+        assert!(result
+            .feedback
+            .as_ref()
+            .unwrap()
+            .contains("Could not parse"));
     }
 
     #[test]
@@ -2355,7 +2415,11 @@ mod tests {
         let mock = MockRuntimeAdapter::completing("");
         let result = drive_session("v", &mock, test_session_config(), 30);
         assert_eq!(result.status, Status::Error);
-        assert!(result.feedback.as_ref().unwrap().contains("no PASS/FAIL/WARN"));
+        assert!(result
+            .feedback
+            .as_ref()
+            .unwrap()
+            .contains("no PASS/FAIL/WARN"));
     }
 
     #[test]
@@ -2369,8 +2433,7 @@ mod tests {
 
     #[test]
     fn session_timed_out_status() {
-        let mock = MockRuntimeAdapter::failing()
-            .with_terminal_status(SessionStatus::TimedOut);
+        let mock = MockRuntimeAdapter::failing().with_terminal_status(SessionStatus::TimedOut);
         let result = drive_session("v", &mock, test_session_config(), 30);
         assert_eq!(result.status, Status::Error);
         assert!(result.feedback.as_ref().unwrap().contains("timed out"));
@@ -2378,8 +2441,7 @@ mod tests {
 
     #[test]
     fn session_cancelled_status() {
-        let mock = MockRuntimeAdapter::failing()
-            .with_terminal_status(SessionStatus::Cancelled);
+        let mock = MockRuntimeAdapter::failing().with_terminal_status(SessionStatus::Cancelled);
         let result = drive_session("v", &mock, test_session_config(), 30);
         assert_eq!(result.status, Status::Error);
         assert!(result.feedback.as_ref().unwrap().contains("'cancelled'"));
@@ -2387,22 +2449,28 @@ mod tests {
 
     #[test]
     fn session_create_error() {
-        let mock = MockRuntimeAdapter::completing("PASS")
-            .with_create_error("connection refused");
+        let mock = MockRuntimeAdapter::completing("PASS").with_create_error("connection refused");
         let result = drive_session("v", &mock, test_session_config(), 30);
         assert_eq!(result.status, Status::Error);
-        assert!(result.feedback.as_ref().unwrap().contains("connection refused"));
+        assert!(result
+            .feedback
+            .as_ref()
+            .unwrap()
+            .contains("connection refused"));
         // No teardown since session was never created
         assert_eq!(mock.teardown_count(), 0);
     }
 
     #[test]
     fn session_collect_error_tears_down() {
-        let mock = MockRuntimeAdapter::completing("PASS")
-            .with_collect_error("network timeout");
+        let mock = MockRuntimeAdapter::completing("PASS").with_collect_error("network timeout");
         let result = drive_session("v", &mock, test_session_config(), 30);
         assert_eq!(result.status, Status::Error);
-        assert!(result.feedback.as_ref().unwrap().contains("network timeout"));
+        assert!(result
+            .feedback
+            .as_ref()
+            .unwrap()
+            .contains("network timeout"));
         assert_eq!(mock.teardown_count(), 1);
     }
 
@@ -2464,5 +2532,4 @@ mod tests {
         assert_eq!(mock.cancel_count(), 1);
         assert_eq!(mock.teardown_count(), 1);
     }
-
 }

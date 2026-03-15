@@ -62,7 +62,10 @@ impl Artifact {
     /// Returns the artifact content, lazily reading from disk on first access.
     pub fn get_content(&mut self) -> Result<&[u8]> {
         if self.content.is_none() {
-            let path = self.path.as_ref().expect("Artifact must have path or content");
+            let path = self
+                .path
+                .as_ref()
+                .expect("Artifact must have path or content");
             self.content = Some(std::fs::read(path)?);
         }
         Ok(self.content.as_ref().unwrap())
@@ -149,7 +152,10 @@ impl ContextItem {
     /// Returns the content, lazily reading from disk on first access.
     pub fn get_content(&mut self) -> Result<&str> {
         if self.content.is_none() {
-            let path = self.path.as_ref().expect("ContextItem must have path or content");
+            let path = self
+                .path
+                .as_ref()
+                .expect("ContextItem must have path or content");
             self.content = Some(std::fs::read_to_string(path)?);
         }
         Ok(self.content.as_ref().unwrap())
@@ -331,10 +337,10 @@ impl Verdict {
         let mut lines = Vec::new();
         for r in &self.history {
             let icon = match r.status {
-                Status::Pass => "\u{2713}",  // ✓
-                Status::Fail => "\u{2717}",  // ✗
+                Status::Pass => "\u{2713}", // ✓
+                Status::Fail => "\u{2717}", // ✗
                 Status::Warn => "!",
-                Status::Skip => "\u{2014}",  // —
+                Status::Skip => "\u{2014}", // —
                 Status::Error => "E",
             };
             let dur = format!("({}ms)", r.duration_ms);
@@ -609,15 +615,13 @@ mod tests {
             context_hash: "def".into(),
             warnings: vec![],
             suppressed: vec![],
-            history: vec![
-                ValidatorResult {
-                    name: "lint".into(),
-                    status: Status::Fail,
-                    feedback: Some("missing semicolon".into()),
-                    duration_ms: 200,
-                    cost: None,
-                },
-            ],
+            history: vec![ValidatorResult {
+                name: "lint".into(),
+                status: Status::Fail,
+                feedback: Some("missing semicolon".into()),
+                duration_ms: 200,
+                cost: None,
+            }],
         };
         let human = v.to_human();
         assert!(human.contains("lint"));
@@ -966,19 +970,49 @@ mod tests {
             warnings: vec![],
             suppressed: vec![],
             history: vec![
-                ValidatorResult { name: "p".into(), status: Status::Pass, feedback: None, duration_ms: 0, cost: None },
-                ValidatorResult { name: "f".into(), status: Status::Fail, feedback: None, duration_ms: 0, cost: None },
-                ValidatorResult { name: "w".into(), status: Status::Warn, feedback: None, duration_ms: 0, cost: None },
-                ValidatorResult { name: "s".into(), status: Status::Skip, feedback: None, duration_ms: 0, cost: None },
-                ValidatorResult { name: "e".into(), status: Status::Error, feedback: None, duration_ms: 0, cost: None },
+                ValidatorResult {
+                    name: "p".into(),
+                    status: Status::Pass,
+                    feedback: None,
+                    duration_ms: 0,
+                    cost: None,
+                },
+                ValidatorResult {
+                    name: "f".into(),
+                    status: Status::Fail,
+                    feedback: None,
+                    duration_ms: 0,
+                    cost: None,
+                },
+                ValidatorResult {
+                    name: "w".into(),
+                    status: Status::Warn,
+                    feedback: None,
+                    duration_ms: 0,
+                    cost: None,
+                },
+                ValidatorResult {
+                    name: "s".into(),
+                    status: Status::Skip,
+                    feedback: None,
+                    duration_ms: 0,
+                    cost: None,
+                },
+                ValidatorResult {
+                    name: "e".into(),
+                    status: Status::Error,
+                    feedback: None,
+                    duration_ms: 0,
+                    cost: None,
+                },
             ],
         };
         let human = v.to_human();
         assert!(human.contains("\u{2713}")); // ✓ pass
         assert!(human.contains("\u{2717}")); // ✗ fail
-        assert!(human.contains("!"));        // warn
+        assert!(human.contains("!")); // warn
         assert!(human.contains("\u{2014}")); // — skip
-        assert!(human.contains("E"));        // error
+        assert!(human.contains("E")); // error
     }
 
     // ─── Verdict: to_summary edge cases ─────────────

@@ -38,7 +38,9 @@ impl std::str::FromStr for TemplateExpects {
         match s {
             "verdict" => Ok(TemplateExpects::Verdict),
             "freeform" => Ok(TemplateExpects::Freeform),
-            _ => Err(format!("'expects' must be 'verdict' or 'freeform', got '{s}'")),
+            _ => Err(format!(
+                "'expects' must be 'verdict' or 'freeform', got '{s}'"
+            )),
         }
     }
 }
@@ -51,13 +53,8 @@ pub fn parse_template(file_path: &Path) -> Result<PromptTemplate> {
         .unwrap_or("")
         .to_string();
 
-    let raw = std::fs::read_to_string(file_path).map_err(|e| {
-        BatonError::PromptError(format!(
-            "Template {}: {}",
-            file_path.display(),
-            e
-        ))
-    })?;
+    let raw = std::fs::read_to_string(file_path)
+        .map_err(|e| BatonError::PromptError(format!("Template {}: {}", file_path.display(), e)))?;
 
     parse_template_str(&raw, &name, &file_path.display().to_string())
 }
@@ -81,9 +78,7 @@ pub fn parse_template_str(raw: &str, name: &str, source: &str) -> Result<PromptT
 
         // Parse frontmatter as TOML
         let frontmatter: toml::Value = toml::from_str(frontmatter_text).map_err(|e| {
-            BatonError::PromptError(format!(
-                "Template {source}: frontmatter parse error: {e}"
-            ))
+            BatonError::PromptError(format!("Template {source}: frontmatter parse error: {e}"))
         })?;
 
         let table = frontmatter.as_table().ok_or_else(|| {
@@ -101,9 +96,9 @@ pub fn parse_template_str(raw: &str, name: &str, source: &str) -> Result<PromptT
                 ))
             })?;
 
-        let expects: TemplateExpects = expects_str.parse().map_err(|e: String| {
-            BatonError::PromptError(format!("Template {source}: {e}"))
-        })?;
+        let expects: TemplateExpects = expects_str
+            .parse()
+            .map_err(|e: String| BatonError::PromptError(format!("Template {source}: {e}")))?;
 
         let description = table
             .get("description")
@@ -222,7 +217,10 @@ Check the spec.
         let result = parse_template_str(raw, "bad", "test");
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("opening +++ without closing +++"), "Error: {err}");
+        assert!(
+            err.contains("opening +++ without closing +++"),
+            "Error: {err}"
+        );
     }
 
     #[test]
@@ -292,12 +290,7 @@ Check the spec.
     #[test]
     fn resolve_prompt_inline() {
         let dir = TempDir::new().unwrap();
-        let t = resolve_prompt_value(
-            "Check this code",
-            dir.path(),
-            dir.path(),
-        )
-        .unwrap();
+        let t = resolve_prompt_value("Check this code", dir.path(), dir.path()).unwrap();
         assert_eq!(t.body, "Check this code");
         assert_eq!(t.expects, TemplateExpects::Verdict);
     }

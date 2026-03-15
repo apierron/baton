@@ -129,13 +129,10 @@ impl RuntimeAdapter for OpenHandsAdapter {
                 ))
             })?;
 
-            let url = format!(
-                "{}/api/workspaces/{}/files",
-                self.base_url, workspace_id
-            );
+            let url = format!("{}/api/workspaces/{}/files", self.base_url, workspace_id);
 
-            let part = reqwest::blocking::multipart::Part::bytes(file_content)
-                .file_name(name.clone());
+            let part =
+                reqwest::blocking::multipart::Part::bytes(file_content).file_name(name.clone());
             let form = reqwest::blocking::multipart::Form::new().part("file", part);
 
             let response = self
@@ -176,9 +173,7 @@ impl RuntimeAdapter for OpenHandsAdapter {
             .json(&body)
             .send()
             .map_err(|e| {
-                BatonError::ValidationError(format!(
-                    "Failed to create session on runtime: {e}"
-                ))
+                BatonError::ValidationError(format!("Failed to create session on runtime: {e}"))
             })?;
 
         if !response.status().is_success() {
@@ -190,18 +185,14 @@ impl RuntimeAdapter for OpenHandsAdapter {
         }
 
         let resp_body: serde_json::Value = response.json().map_err(|e| {
-            BatonError::ValidationError(format!(
-                "Failed to parse session creation response: {e}"
-            ))
+            BatonError::ValidationError(format!("Failed to parse session creation response: {e}"))
         })?;
 
         let session_id = resp_body
             .get("session_id")
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
-                BatonError::ValidationError(
-                    "Session creation response missing 'session_id'".into(),
-                )
+                BatonError::ValidationError("Session creation response missing 'session_id'".into())
             })?
             .to_string();
 
@@ -212,10 +203,7 @@ impl RuntimeAdapter for OpenHandsAdapter {
     }
 
     fn poll_status(&self, handle: &SessionHandle) -> Result<SessionStatus> {
-        let url = format!(
-            "{}/api/sessions/{}/status",
-            self.base_url, handle.id
-        );
+        let url = format!("{}/api/sessions/{}/status", self.base_url, handle.id);
 
         let response = self
             .client
@@ -246,10 +234,7 @@ impl RuntimeAdapter for OpenHandsAdapter {
     }
 
     fn collect_result(&self, handle: &SessionHandle) -> Result<SessionResult> {
-        let url = format!(
-            "{}/api/sessions/{}/result",
-            self.base_url, handle.id
-        );
+        let url = format!("{}/api/sessions/{}/result", self.base_url, handle.id);
 
         let response = self
             .client
@@ -257,9 +242,7 @@ impl RuntimeAdapter for OpenHandsAdapter {
             .headers(self.auth_headers())
             .send()
             .map_err(|e| {
-                BatonError::ValidationError(format!(
-                    "Failed to collect session result: {e}"
-                ))
+                BatonError::ValidationError(format!("Failed to collect session result: {e}"))
             })?;
 
         if !response.status().is_success() {
@@ -304,27 +287,16 @@ impl RuntimeAdapter for OpenHandsAdapter {
         let url = format!("{}/api/sessions/{}", self.base_url, handle.id);
 
         // Idempotent: ignore errors on cancel
-        let _ = self
-            .client
-            .delete(&url)
-            .headers(self.auth_headers())
-            .send();
+        let _ = self.client.delete(&url).headers(self.auth_headers()).send();
 
         Ok(())
     }
 
     fn teardown(&self, handle: &SessionHandle) -> Result<()> {
-        let url = format!(
-            "{}/api/workspaces/{}",
-            self.base_url, handle.workspace_id
-        );
+        let url = format!("{}/api/workspaces/{}", self.base_url, handle.workspace_id);
 
         // Idempotent: ignore errors on teardown
-        let _ = self
-            .client
-            .delete(&url)
-            .headers(self.auth_headers())
-            .send();
+        let _ = self.client.delete(&url).headers(self.auth_headers()).send();
 
         Ok(())
     }

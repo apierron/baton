@@ -222,7 +222,9 @@ fn parse_context_arg(s: &str) -> Result<(String, String), String> {
 }
 
 /// Loads and parses baton.toml from an explicit path or by discovery.
-fn load_config(config_path: Option<&PathBuf>) -> baton::error::Result<(baton::config::BatonConfig, PathBuf)> {
+fn load_config(
+    config_path: Option<&PathBuf>,
+) -> baton::error::Result<(baton::config::BatonConfig, PathBuf)> {
     let config_file = match config_path {
         Some(p) => {
             if !p.exists() {
@@ -236,7 +238,10 @@ fn load_config(config_path: Option<&PathBuf>) -> baton::error::Result<(baton::co
         None => discover_config(&std::env::current_dir()?)?,
     };
 
-    let config_dir = config_file.parent().unwrap_or_else(|| std::path::Path::new(".")).to_path_buf();
+    let config_dir = config_file
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .to_path_buf();
     let toml_str = std::fs::read_to_string(&config_file)?;
     let config = parse_config(&toml_str, &config_dir)?;
     Ok((config, config_file))
@@ -280,7 +285,10 @@ fn main() {
             suppress_errors,
             suppress_all,
         ),
-        Commands::Init { minimal, prompts_only } => cmd_init(minimal, prompts_only),
+        Commands::Init {
+            minimal,
+            prompts_only,
+        } => cmd_init(minimal, prompts_only),
         Commands::List { gate, config } => cmd_list(config.as_ref(), gate.as_deref()),
         Commands::History {
             gate,
@@ -288,10 +296,20 @@ fn main() {
             artifact_hash,
             limit,
             config,
-        } => cmd_history(config.as_ref(), gate.as_deref(), status.as_deref(), artifact_hash.as_deref(), limit),
+        } => cmd_history(
+            config.as_ref(),
+            gate.as_deref(),
+            status.as_deref(),
+            artifact_hash.as_deref(),
+            limit,
+        ),
         Commands::ValidateConfig { config } => cmd_validate_config(config.as_ref()),
-        Commands::CheckProvider { name, all, config } => cmd_check_provider(config.as_ref(), name.as_deref(), all),
-        Commands::CheckRuntime { name, all, config } => cmd_check_runtime(config.as_ref(), name.as_deref(), all),
+        Commands::CheckProvider { name, all, config } => {
+            cmd_check_provider(config.as_ref(), name.as_deref(), all)
+        }
+        Commands::CheckRuntime { name, all, config } => {
+            cmd_check_runtime(config.as_ref(), name.as_deref(), all)
+        }
         Commands::Clean { dry_run, config } => cmd_clean(config.as_ref(), dry_run),
         Commands::Version { config } => cmd_version(config.as_ref()),
         Commands::Update { version, yes } => cmd_update(version, yes),
@@ -335,7 +353,11 @@ fn cmd_check(
             let available: Vec<&String> = config.gates.keys().collect();
             eprintln!(
                 "Error: Gate '{gate_name}' not found. Available gates: {}",
-                available.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                available
+                    .iter()
+                    .map(|s| s.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             );
             return 2;
         }
@@ -420,19 +442,37 @@ fn cmd_check(
         eprintln!("Dry run: validators that would execute for gate '{gate_name}':");
         for v in &gate.validators {
             let skip_reason = if let Some(ref o) = only {
-                if !o.contains(&v.name) { Some("--only") } else { None }
-            } else { None };
+                if !o.contains(&v.name) {
+                    Some("--only")
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
 
             let skip_reason = skip_reason.or_else(|| {
                 if let Some(ref s) = skip {
-                    if s.contains(&v.name) { Some("--skip") } else { None }
-                } else { None }
+                    if s.contains(&v.name) {
+                        Some("--skip")
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
             });
 
             let skip_reason = skip_reason.or_else(|| {
                 if let Some(ref t) = tags {
-                    if !v.tags.iter().any(|vt| t.contains(vt)) { Some("--tags") } else { None }
-                } else { None }
+                    if !v.tags.iter().any(|vt| t.contains(vt)) {
+                        Some("--tags")
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
             });
 
             match skip_reason {
@@ -484,7 +524,11 @@ fn cmd_check(
     // Store in history
     if options.log {
         let db_path = &config.defaults.history_db;
-        if let Err(e) = std::fs::create_dir_all(db_path.parent().unwrap_or_else(|| std::path::Path::new("."))) {
+        if let Err(e) = std::fs::create_dir_all(
+            db_path
+                .parent()
+                .unwrap_or_else(|| std::path::Path::new(".")),
+        ) {
             eprintln!("Warning: could not create history directory: {e}");
         } else {
             match history::init_db(db_path) {
@@ -584,9 +628,18 @@ blocking = true
         }
 
         let templates = [
-            ("spec-compliance.md", include_str!("../templates/spec-compliance.md")),
-            ("adversarial-review.md", include_str!("../templates/adversarial-review.md")),
-            ("doc-completeness.md", include_str!("../templates/doc-completeness.md")),
+            (
+                "spec-compliance.md",
+                include_str!("../templates/spec-compliance.md"),
+            ),
+            (
+                "adversarial-review.md",
+                include_str!("../templates/adversarial-review.md"),
+            ),
+            (
+                "doc-completeness.md",
+                include_str!("../templates/doc-completeness.md"),
+            ),
         ];
 
         for (name, content) in &templates {
@@ -630,7 +683,11 @@ fn cmd_list(config_path: Option<&PathBuf>, gate_name: Option<&str>) -> i32 {
             }
             println!("Validators:");
             for v in &gate.validators {
-                let blocking = if v.blocking { "blocking" } else { "non-blocking" };
+                let blocking = if v.blocking {
+                    "blocking"
+                } else {
+                    "non-blocking"
+                };
                 let run_if = v
                     .run_if
                     .as_ref()
@@ -641,16 +698,17 @@ fn cmd_list(config_path: Option<&PathBuf>, gate_name: Option<&str>) -> i32 {
                 } else {
                     format!(" [{}]", v.tags.join(", "))
                 };
-                println!("  - {} ({}, {blocking}){run_if}{tags}", v.name, v.validator_type_str());
+                println!(
+                    "  - {} ({}, {blocking}){run_if}{tags}",
+                    v.name,
+                    v.validator_type_str()
+                );
             }
         }
         None => {
             println!("Available gates:");
             for (name, gate) in &config.gates {
-                let desc = gate
-                    .description
-                    .as_deref()
-                    .unwrap_or("(no description)");
+                let desc = gate.description.as_deref().unwrap_or("(no description)");
                 let count = gate.validators.len();
                 println!("  {name} — {desc} ({count} validators)");
             }
@@ -745,7 +803,11 @@ fn cmd_validate_config(config_path: Option<&PathBuf>) -> i32 {
         eprintln!("Error: {e}");
     }
 
-    if validation.has_errors() { 1 } else { 0 }
+    if validation.has_errors() {
+        1
+    } else {
+        0
+    }
 }
 
 /// Tests connectivity to a single LLM provider: checks API key, tries `/v1/models`,
@@ -758,7 +820,10 @@ fn check_single_provider(name: &str, provider: &baton::config::Provider) -> bool
         match std::env::var(&provider.api_key_env) {
             Ok(key) => Some(key),
             Err(_) => {
-                eprintln!("  ERROR: API key env var '{}' is not set", provider.api_key_env);
+                eprintln!(
+                    "  ERROR: API key env var '{}' is not set",
+                    provider.api_key_env
+                );
                 return false;
             }
         }
@@ -791,7 +856,10 @@ fn check_single_provider(name: &str, provider: &baton::config::Provider) -> bool
     match models_response {
         Err(e) => {
             if e.is_timeout() {
-                eprintln!("  ERROR: Provider '{name}': connection timed out to {}", provider.api_base);
+                eprintln!(
+                    "  ERROR: Provider '{name}': connection timed out to {}",
+                    provider.api_base
+                );
             } else {
                 eprintln!("  ERROR: Cannot reach {}: {e}", provider.api_base);
             }
@@ -800,7 +868,10 @@ fn check_single_provider(name: &str, provider: &baton::config::Provider) -> bool
         Ok(resp) => {
             let status = resp.status();
             if status.as_u16() == 401 || status.as_u16() == 403 {
-                eprintln!("  ERROR: Authentication failed for provider '{name}'. Check {}.", provider.api_key_env);
+                eprintln!(
+                    "  ERROR: Authentication failed for provider '{name}'. Check {}.",
+                    provider.api_key_env
+                );
                 return false;
             }
             if status.is_success() {
@@ -818,12 +889,18 @@ fn check_single_provider(name: &str, provider: &baton::config::Provider) -> bool
                     .unwrap_or_default();
 
                 if models.iter().any(|m| m == &provider.default_model) {
-                    eprintln!("  OK: Provider '{name}': reachable, model '{}' available", provider.default_model);
+                    eprintln!(
+                        "  OK: Provider '{name}': reachable, model '{}' available",
+                        provider.default_model
+                    );
                     return true;
                 } else if models.is_empty() {
                     // Model list came back empty — fall through to test completion
                 } else {
-                    eprintln!("  WARN: Provider '{name}': reachable, but model '{}' not found", provider.default_model);
+                    eprintln!(
+                        "  WARN: Provider '{name}': reachable, but model '{}' not found",
+                        provider.default_model
+                    );
                     let display: Vec<&str> = models.iter().take(10).map(|s| s.as_str()).collect();
                     eprintln!("  Available models: {}", display.join(", "));
                     return true; // reachable, just model not found
@@ -853,9 +930,17 @@ fn check_single_provider(name: &str, provider: &baton::config::Provider) -> bool
         }
     };
 
-    match test_client.post(&completions_url).headers(headers).json(&test_body).send() {
+    match test_client
+        .post(&completions_url)
+        .headers(headers)
+        .json(&test_body)
+        .send()
+    {
         Ok(resp) if resp.status().is_success() => {
-            eprintln!("  OK: Provider '{name}': reachable, model '{}' responds", provider.default_model);
+            eprintln!(
+                "  OK: Provider '{name}': reachable, model '{}' responds",
+                provider.default_model
+            );
             true
         }
         Ok(resp) => {
@@ -893,7 +978,11 @@ fn cmd_check_provider(config_path: Option<&PathBuf>, name: Option<&str>, all: bo
                 let available: Vec<&String> = config.providers.keys().collect();
                 eprintln!(
                     "Error: Provider '{name}' not found. Available providers: {}",
-                    available.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                    available
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 );
                 return 1;
             }
@@ -911,7 +1000,11 @@ fn cmd_check_provider(config_path: Option<&PathBuf>, name: Option<&str>, all: bo
         }
     }
 
-    if any_failed { 1 } else { 0 }
+    if any_failed {
+        1
+    } else {
+        0
+    }
 }
 
 /// Checks health for one or all configured agent runtimes.
@@ -938,7 +1031,11 @@ fn cmd_check_runtime(config_path: Option<&PathBuf>, name: Option<&str>, all: boo
                 let available: Vec<&String> = config.runtimes.keys().collect();
                 eprintln!(
                     "Error: Runtime '{name}' not found. Available runtimes: {}",
-                    available.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(", ")
+                    available
+                        .iter()
+                        .map(|s| s.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 );
                 return 1;
             }
@@ -985,7 +1082,11 @@ fn cmd_check_runtime(config_path: Option<&PathBuf>, name: Option<&str>, all: boo
         }
     }
 
-    if any_failed { 1 } else { 0 }
+    if any_failed {
+        1
+    } else {
+        0
+    }
 }
 
 /// Removes stale temporary files (older than 1 hour) from the `.baton/tmp/` directory.
@@ -1099,14 +1200,20 @@ fn cmd_update(target_version: Option<String>, skip_confirm: bool) -> i32 {
 
     match method {
         "cargo" => {
-            eprintln!("This baton was installed via Cargo ({}).", exe_path.display());
+            eprintln!(
+                "This baton was installed via Cargo ({}).",
+                exe_path.display()
+            );
             eprintln!("Update it with:");
             eprintln!();
             eprintln!("  cargo install --git https://github.com/apierron/baton.git");
             return 1;
         }
         "homebrew" => {
-            eprintln!("This baton was installed via Homebrew ({}).", exe_path.display());
+            eprintln!(
+                "This baton was installed via Homebrew ({}).",
+                exe_path.display()
+            );
             eprintln!("Update it with:");
             eprintln!();
             eprintln!("  brew upgrade baton");
@@ -1140,9 +1247,7 @@ fn cmd_update(target_version: Option<String>, skip_confirm: bool) -> i32 {
             } else {
                 format!("v{v}")
             };
-            format!(
-                "https://api.github.com/repos/apierron/baton/releases/tags/{tag}"
-            )
+            format!("https://api.github.com/repos/apierron/baton/releases/tags/{tag}")
         }
         None => {
             eprintln!("Checking for updates...");
@@ -1245,9 +1350,7 @@ fn cmd_update(target_version: Option<String>, skip_confirm: bool) -> i32 {
     let download_url = match asset_url {
         Some(url) => url,
         None => {
-            eprintln!(
-                "Error: no prebuilt binary found for {target} in release {release_tag}."
-            );
+            eprintln!("Error: no prebuilt binary found for {target} in release {release_tag}.");
             eprintln!("Expected asset: {asset_name}");
             return 1;
         }
@@ -1295,7 +1398,9 @@ fn cmd_update(target_version: Option<String>, skip_confirm: bool) -> i32 {
     };
 
     // Extract binary from archive into a temp file next to the current exe
-    let exe_dir = exe_path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let exe_dir = exe_path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
     let tmp_path = exe_dir.join(".baton-update.tmp");
 
     let binary_name = if cfg!(target_os = "windows") {
@@ -1356,7 +1461,12 @@ fn cmd_update(target_version: Option<String>, skip_confirm: bool) -> i32 {
                 Err(_) => continue,
             };
             let name = file.name().to_string();
-            if name.ends_with(binary_name) || std::path::Path::new(&name).file_name().and_then(|f| f.to_str()) == Some(binary_name) {
+            if name.ends_with(binary_name)
+                || std::path::Path::new(&name)
+                    .file_name()
+                    .and_then(|f| f.to_str())
+                    == Some(binary_name)
+            {
                 let mut out = match std::fs::File::create(&tmp_path) {
                     Ok(f) => f,
                     Err(e) => {
@@ -1490,7 +1600,9 @@ fn cmd_uninstall(remove_all: bool, skip_confirm: bool) -> i32 {
         #[cfg(target_os = "windows")]
         {
             if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-                let win_bin = PathBuf::from(local_app_data).join("baton").join("baton.exe");
+                let win_bin = PathBuf::from(local_app_data)
+                    .join("baton")
+                    .join("baton.exe");
                 if win_bin.exists() {
                     if let Ok(canon) = win_bin.canonicalize() {
                         targets.push((canon, "install script"));

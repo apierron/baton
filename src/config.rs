@@ -42,12 +42,24 @@ pub struct RawDefaults {
     pub tmp_dir: String,
 }
 
-fn default_timeout() -> u64 { 300 }
-fn default_blocking() -> bool { true }
-fn default_prompts_dir() -> String { "./prompts".into() }
-fn default_log_dir() -> String { "./.baton/logs".into() }
-fn default_history_db() -> String { "./.baton/history.db".into() }
-fn default_tmp_dir() -> String { "./.baton/tmp".into() }
+fn default_timeout() -> u64 {
+    300
+}
+fn default_blocking() -> bool {
+    true
+}
+fn default_prompts_dir() -> String {
+    "./prompts".into()
+}
+fn default_log_dir() -> String {
+    "./.baton/logs".into()
+}
+fn default_history_db() -> String {
+    "./.baton/history.db".into()
+}
+fn default_tmp_dir() -> String {
+    "./.baton/tmp".into()
+}
 
 /// Raw LLM provider entry from `[providers.<name>]`.
 #[derive(Debug, Deserialize, Clone)]
@@ -75,9 +87,15 @@ pub struct RawRuntime {
     pub max_iterations: u32,
 }
 
-fn default_sandbox() -> bool { true }
-fn default_runtime_timeout() -> u64 { 600 }
-fn default_max_iterations() -> u32 { 30 }
+fn default_sandbox() -> bool {
+    true
+}
+fn default_runtime_timeout() -> u64 {
+    600
+}
+fn default_max_iterations() -> u32 {
+    30
+}
 
 /// Raw gate entry from `[gates.<name>]`.
 #[derive(Debug, Deserialize)]
@@ -376,7 +394,10 @@ pub fn parse_config(toml_str: &str, config_dir: &Path) -> Result<BatonConfig> {
 
         for raw_v in &raw_gate.validators {
             // Validate name
-            let valid_name = raw_v.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            let valid_name = raw_v
+                .name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
                 && !raw_v.name.is_empty();
             if !valid_name {
                 return Err(BatonError::ConfigError(format!(
@@ -718,13 +739,19 @@ mod tests {
     #[test]
     fn split_run_if_and() {
         let tokens = split_run_if("lint.status == pass and typecheck.status == pass");
-        assert_eq!(tokens, vec!["lint.status == pass", "and", "typecheck.status == pass"]);
+        assert_eq!(
+            tokens,
+            vec!["lint.status == pass", "and", "typecheck.status == pass"]
+        );
     }
 
     #[test]
     fn split_run_if_or() {
         let tokens = split_run_if("lint.status == fail or typecheck.status == fail");
-        assert_eq!(tokens, vec!["lint.status == fail", "or", "typecheck.status == fail"]);
+        assert_eq!(
+            tokens,
+            vec!["lint.status == fail", "or", "typecheck.status == fail"]
+        );
     }
 
     #[test]
@@ -924,7 +951,10 @@ warn_exit_codes = [0, 2]
         let result = parse_config(toml, &config_dir());
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("warn_exit_codes must not contain 0"), "Error: {err}");
+        assert!(
+            err.contains("warn_exit_codes must not contain 0"),
+            "Error: {err}"
+        );
     }
 
     // ─── Defaults ────────────────────────────────────
@@ -989,7 +1019,10 @@ type = "script"
 command = "echo ok"
 "#;
         let config = parse_config(toml, &config_dir()).unwrap();
-        assert_eq!(config.providers["default"].api_base, "https://api.example.com");
+        assert_eq!(
+            config.providers["default"].api_base,
+            "https://api.example.com"
+        );
     }
 
     // ─── Validation ──────────────────────────────────
@@ -1152,7 +1185,10 @@ blocking = true
         // Search from repo/src should stop at repo/.git and NOT find the parent baton.toml
         let result = discover_config(&nested);
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("No baton.toml found"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("No baton.toml found"));
     }
 
     #[test]
@@ -1262,7 +1298,10 @@ run_if = "llm-check.status == pass"
         assert_eq!(gate.validators[1].temperature, 0.0);
         assert_eq!(gate.validators[1].context_refs, vec!["spec"]);
         assert!(gate.context["spec"].required);
-        assert_eq!(gate.validators[2].run_if, Some("llm-check.status == pass".into()));
+        assert_eq!(
+            gate.validators[2].run_if,
+            Some("llm-check.status == pass".into())
+        );
 
         let validation = validate_config(&config);
         assert!(!validation.has_errors(), "Errors: {:?}", validation.errors);

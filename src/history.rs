@@ -149,7 +149,8 @@ pub fn query_recent(
         .prepare(&sql)
         .map_err(|e| BatonError::DatabaseError(format!("Query error: {e}")))?;
 
-    let param_refs: Vec<&dyn rusqlite::types::ToSql> = param_values.iter().map(|p| p.as_ref()).collect();
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+        param_values.iter().map(|p| p.as_ref()).collect();
 
     let rows = stmt
         .query_map(param_refs.as_slice(), |row| {
@@ -478,7 +479,8 @@ mod tests {
                 std::thread::spawn(move || {
                     let conn = init_db(&path).unwrap();
                     // WAL mode busy timeout — give concurrent writers time to retry
-                    conn.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+                    conn.busy_timeout(std::time::Duration::from_secs(5))
+                        .unwrap();
                     for j in 0..writes_per_thread {
                         let mut v = th::verdict(VerdictStatus::Pass);
                         v.gate = format!("gate-{i}");
@@ -516,7 +518,8 @@ mod tests {
 
         let writer = std::thread::spawn(move || {
             let conn = init_db(&writer_path).unwrap();
-            conn.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+            conn.busy_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
             for _ in 0..20 {
                 store_verdict(&conn, &th::verdict(VerdictStatus::Fail)).unwrap();
             }
@@ -524,7 +527,8 @@ mod tests {
 
         let reader = std::thread::spawn(move || {
             let conn = init_db(&reader_path).unwrap();
-            conn.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+            conn.busy_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
             let mut total_seen = 0;
             for _ in 0..20 {
                 let results = query_recent(&conn, 1000, None, None).unwrap();
@@ -582,7 +586,8 @@ mod tests {
 
         let conn = init_db(&db_path).unwrap();
         // Manually drop the table
-        conn.execute_batch("DROP TABLE validator_results; DROP TABLE verdicts;").unwrap();
+        conn.execute_batch("DROP TABLE validator_results; DROP TABLE verdicts;")
+            .unwrap();
         drop(conn);
 
         // Re-init should recreate the schema (CREATE IF NOT EXISTS)

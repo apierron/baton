@@ -382,5 +382,4 @@ mod tests {
         assert_eq!(v.status, Status::Fail);
         assert!(v.evidence.unwrap().contains("3.2"));
     }
-
 }

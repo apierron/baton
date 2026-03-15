@@ -96,7 +96,14 @@ fn check_pass() {
     let dir = setup_project(&toml, "hello");
 
     baton()
-        .args(["check", "--gate", "review", "--artifact", "artifact.txt", "--no-log"])
+        .args([
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+        ])
         .current_dir(dir.path())
         .assert()
         .success();
@@ -108,7 +115,14 @@ fn check_pass_json_output() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args(["check", "--gate", "review", "--artifact", "artifact.txt", "--no-log"])
+        .args([
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+        ])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -128,7 +142,14 @@ fn check_fail_exit_code_1() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args(["check", "--gate", "review", "--artifact", "artifact.txt", "--no-log"])
+        .args([
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+        ])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -146,7 +167,14 @@ fn nonzero_exit_is_fail_not_error() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args(["check", "--gate", "review", "--artifact", "artifact.txt", "--no-log"])
+        .args([
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+        ])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -169,7 +197,14 @@ fn check_multiple_validators_all_pass() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args(["check", "--gate", "review", "--artifact", "artifact.txt", "--no-log"])
+        .args([
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+        ])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -194,7 +229,14 @@ fn blocking_validator_stops_pipeline() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args(["check", "--gate", "review", "--artifact", "artifact.txt", "--no-log"])
+        .args([
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+        ])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -223,7 +265,14 @@ fn non_blocking_failure_does_not_stop_pipeline() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args(["check", "--gate", "review", "--artifact", "artifact.txt", "--no-log"])
+        .args([
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+        ])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -251,8 +300,13 @@ fn all_flag_runs_past_blocking_failure() {
 
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
-            "--no-log", "--all",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--all",
         ])
         .current_dir(dir.path())
         .output()
@@ -279,7 +333,11 @@ fn dry_run_lists_validators_and_exits_zero() {
 
     baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
             "--dry-run",
         ])
         .current_dir(dir.path())
@@ -290,7 +348,11 @@ fn dry_run_lists_validators_and_exits_zero() {
     // Dry run output goes to stderr
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
             "--dry-run",
         ])
         .current_dir(dir.path())
@@ -315,8 +377,14 @@ fn dry_run_shows_skip_reasons() {
 
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
-            "--dry-run", "--only", "v1",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--dry-run",
+            "--only",
+            "v1",
         ])
         .current_dir(dir.path())
         .output()
@@ -342,8 +410,14 @@ fn only_runs_specified_validators() {
 
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
-            "--no-log", "--only", "v1,v3",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--only",
+            "v1,v3",
         ])
         .current_dir(dir.path())
         .output()
@@ -370,8 +444,14 @@ fn skip_excludes_validators() {
 
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
-            "--no-log", "--skip", "v1",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--skip",
+            "v1",
         ])
         .current_dir(dir.path())
         .output()
@@ -398,8 +478,14 @@ fn tags_filters_validators() {
 
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
-            "--no-log", "--tags", "quick",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--tags",
+            "quick",
         ])
         .current_dir(dir.path())
         .output()
@@ -421,13 +507,20 @@ fn only_invalid_validator_exits_2() {
 
     baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
-            "--only", "nonexistent",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--only",
+            "nonexistent",
         ])
         .current_dir(dir.path())
         .assert()
         .code(2)
-        .stderr(predicate::str::contains("--only references unknown validator"));
+        .stderr(predicate::str::contains(
+            "--only references unknown validator",
+        ));
 }
 
 // ─── Stdin Artifact ──────────────────────────────────────
@@ -438,9 +531,7 @@ fn stdin_artifact() {
     let dir = setup_project(&toml, "");
 
     let output = baton()
-        .args([
-            "check", "--gate", "review", "--artifact", "-", "--no-log",
-        ])
+        .args(["check", "--gate", "review", "--artifact", "-", "--no-log"])
         .current_dir(dir.path())
         .write_stdin("stdin content here")
         .output()
@@ -473,8 +564,13 @@ fn explicit_missing_config_exits_2() {
 
     baton()
         .args([
-            "check", "--gate", "review", "--artifact", "foo.txt",
-            "--config", "nonexistent.toml",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "foo.txt",
+            "--config",
+            "nonexistent.toml",
         ])
         .current_dir(dir.path())
         .assert()
@@ -490,9 +586,7 @@ fn nonexistent_gate_exits_2() {
     let dir = setup_project(&toml, "hello");
 
     baton()
-        .args([
-            "check", "--gate", "nope", "--artifact", "artifact.txt",
-        ])
+        .args(["check", "--gate", "nope", "--artifact", "artifact.txt"])
         .current_dir(dir.path())
         .assert()
         .code(2)
@@ -509,8 +603,14 @@ fn format_json_on_stdout() {
 
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
-            "--no-log", "--format", "json",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--format",
+            "json",
         ])
         .current_dir(dir.path())
         .output()
@@ -528,8 +628,14 @@ fn format_human_on_stderr() {
 
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
-            "--no-log", "--format", "human",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--format",
+            "human",
         ])
         .current_dir(dir.path())
         .output()
@@ -550,8 +656,14 @@ fn format_summary_on_stderr() {
 
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
-            "--no-log", "--format", "summary",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--format",
+            "summary",
         ])
         .current_dir(dir.path())
         .output()
@@ -571,8 +683,14 @@ fn format_summary_fail_includes_validator_name() {
 
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
-            "--no-log", "--format", "summary",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--format",
+            "summary",
         ])
         .current_dir(dir.path())
         .output()
@@ -591,8 +709,14 @@ fn unknown_format_falls_back_to_json() {
 
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
-            "--no-log", "--format", "bogus",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--format",
+            "bogus",
         ])
         .current_dir(dir.path())
         .output()
@@ -614,7 +738,11 @@ fn no_log_skips_db_write() {
 
     baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
             "--no-log",
         ])
         .current_dir(dir.path())
@@ -622,7 +750,10 @@ fn no_log_skips_db_write() {
         .success();
 
     let db_path = dir.path().join(".baton/history.db");
-    assert!(!db_path.exists(), "history.db should not be created with --no-log");
+    assert!(
+        !db_path.exists(),
+        "history.db should not be created with --no-log"
+    );
 }
 
 #[test]
@@ -631,15 +762,16 @@ fn without_no_log_creates_db() {
     let dir = setup_project(&toml, "hello");
 
     baton()
-        .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
-        ])
+        .args(["check", "--gate", "review", "--artifact", "artifact.txt"])
         .current_dir(dir.path())
         .assert()
         .success();
 
     let db_path = dir.path().join(".baton/history.db");
-    assert!(db_path.exists(), "history.db should be created without --no-log");
+    assert!(
+        db_path.exists(),
+        "history.db should be created without --no-log"
+    );
 }
 
 // ─── --suppress-* Flags ──────────────────────────────────
@@ -669,8 +801,13 @@ warn_exit_codes = [3]
     // Without suppress: should still pass (warn doesn't fail the gate by default)
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
-            "--no-log", "--suppress-warnings",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--suppress-warnings",
         ])
         .current_dir(dir.path())
         .output()
@@ -692,8 +829,13 @@ fn suppress_errors_listed_in_verdict() {
 
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
-            "--no-log", "--suppress-errors",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--suppress-errors",
         ])
         .current_dir(dir.path())
         .output()
@@ -718,8 +860,13 @@ fn suppress_all_treats_everything_as_pass() {
 
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
-            "--no-log", "--suppress-all",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--suppress-all",
         ])
         .current_dir(dir.path())
         .output()
@@ -743,8 +890,14 @@ fn context_file_passed_to_validator() {
 
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
-            "--no-log", "--context", "spec=spec.md",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--context",
+            "spec=spec.md",
         ])
         .current_dir(dir.path())
         .output()
@@ -763,8 +916,14 @@ fn context_hash_in_verdict() {
 
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
-            "--no-log", "--context", "ref=ref.md",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--context",
+            "ref=ref.md",
         ])
         .current_dir(dir.path())
         .output()
@@ -784,7 +943,11 @@ fn artifact_hash_is_deterministic() {
 
     let output1 = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
             "--no-log",
         ])
         .current_dir(dir.path())
@@ -792,7 +955,11 @@ fn artifact_hash_is_deterministic() {
         .unwrap();
     let output2 = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
             "--no-log",
         ])
         .current_dir(dir.path())
@@ -820,8 +987,13 @@ fn explicit_config_path() {
 
     baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
-            "--no-log", "--config",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--config",
             config_dir.join("custom.toml").to_str().unwrap(),
         ])
         .current_dir(dir.path())
@@ -857,7 +1029,11 @@ tmp_dir = "./.baton/tmp"
 
     baton()
         .args([
-            "check", "--gate", "pass_gate", "--artifact", "artifact.txt",
+            "check",
+            "--gate",
+            "pass_gate",
+            "--artifact",
+            "artifact.txt",
             "--no-log",
         ])
         .current_dir(dir.path())
@@ -866,7 +1042,11 @@ tmp_dir = "./.baton/tmp"
 
     baton()
         .args([
-            "check", "--gate", "fail_gate", "--artifact", "artifact.txt",
+            "check",
+            "--gate",
+            "fail_gate",
+            "--artifact",
+            "artifact.txt",
             "--no-log",
         ])
         .current_dir(dir.path())
@@ -886,7 +1066,11 @@ fn validator_feedback_captured() {
 
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
             "--no-log",
         ])
         .current_dir(dir.path())
@@ -907,8 +1091,14 @@ fn skip_unknown_validator_warns_but_runs() {
 
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
-            "--no-log", "--skip", "nonexistent",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--skip",
+            "nonexistent",
         ])
         .current_dir(dir.path())
         .output()
@@ -933,7 +1123,11 @@ fn artifact_path_available_to_script() {
 
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
             "--no-log",
         ])
         .current_dir(dir.path())
@@ -954,7 +1148,11 @@ fn duration_tracked_in_verdict() {
 
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
             "--no-log",
         ])
         .current_dir(dir.path())
@@ -1011,7 +1209,11 @@ fn nonexistent_artifact_exits_2() {
 
     baton()
         .args([
-            "check", "--gate", "review", "--artifact", "does_not_exist.txt",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "does_not_exist.txt",
             "--no-log",
         ])
         .current_dir(dir.path())
@@ -1029,7 +1231,11 @@ fn timestamp_present_in_verdict() {
 
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
             "--no-log",
         ])
         .current_dir(dir.path())
@@ -1052,9 +1258,7 @@ fn history_records_after_check() {
 
     // Run a check with logging
     baton()
-        .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
-        ])
+        .args(["check", "--gate", "review", "--artifact", "artifact.txt"])
         .current_dir(dir.path())
         .assert()
         .success();
@@ -1084,8 +1288,14 @@ fn human_format_shows_failure_feedback() {
 
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
-            "--no-log", "--format", "human",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--format",
+            "human",
         ])
         .current_dir(dir.path())
         .output()
@@ -1106,8 +1316,14 @@ fn skip_unknown_only_warns() {
     // --skip with unknown name should warn but not error
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
-            "--no-log", "--skip", "bogus",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--skip",
+            "bogus",
         ])
         .current_dir(dir.path())
         .output()
@@ -1132,8 +1348,14 @@ fn dry_run_with_tags_filter() {
 
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
-            "--dry-run", "--tags", "ci",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--dry-run",
+            "--tags",
+            "ci",
         ])
         .current_dir(dir.path())
         .output()
@@ -1154,8 +1376,14 @@ fn all_validators_skipped_still_passes() {
 
     let output = baton()
         .args([
-            "check", "--gate", "review", "--artifact", "artifact.txt",
-            "--no-log", "--skip", "lint",
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--skip",
+            "lint",
         ])
         .current_dir(dir.path())
         .output()
