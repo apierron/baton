@@ -940,7 +940,7 @@ fn context_file_passed_to_validator() {
 fn context_file_passed_to_validator() {
     let toml = minimal_toml(
         "review",
-        &script_validator("check", "type %BATON_CONTEXT_spec% && echo PASS"),
+        &script_validator("check", "if exist %BATON_CONTEXT_spec% echo PASS"),
     );
     let dir = setup_project(&toml, "hello");
     fs::write(dir.path().join("spec.md"), "spec content").unwrap();
