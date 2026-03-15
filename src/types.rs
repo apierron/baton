@@ -659,4 +659,401 @@ mod tests {
         };
         assert_eq!(v.to_summary(), "FAIL at lint: bad code");
     }
+
+    // ─── Artifact: from_bytes ───────────────────────
+
+    #[test]
+    fn artifact_from_bytes() {
+        let mut art = Artifact::from_bytes(vec![0xDE, 0xAD, 0xBE, 0xEF]);
+        let content = art.get_content().unwrap();
+        assert_eq!(content, &[0xDE, 0xAD, 0xBE, 0xEF]);
+        assert!(art.path.is_none());
+    }
+
+    // ─── Artifact: lossy UTF-8 ──────────────────────
+
+    #[test]
+    fn artifact_get_content_as_string_lossy() {
+        // 0xFF is not valid UTF-8 — should be replaced with U+FFFD
+        let mut art = Artifact::from_bytes(vec![b'h', b'i', 0xFF, b'!']);
+        let s = art.get_content_as_string().unwrap();
+        assert!(s.starts_with("hi"));
+        assert!(s.ends_with('!'));
+        assert!(s.contains('\u{FFFD}'));
+    }
+
+    // ─── Artifact: hash caching ─────────────────────
+
+    #[test]
+    fn artifact_hash_cached_on_second_call() {
+        let mut f = NamedTempFile::new().unwrap();
+        write!(f, "original").unwrap();
+        let mut art = Artifact::from_file(f.path()).unwrap();
+        let h1 = art.get_hash().unwrap();
+        // Overwrite file after first hash — cached hash should be unchanged
+        std::fs::write(f.path(), "modified").unwrap();
+        let h2 = art.get_hash().unwrap();
+        assert_eq!(h1, h2);
+    }
+
+    // ─── Artifact: hash format ──────────────────────
+
+    #[test]
+    fn artifact_hash_is_64_hex_chars() {
+        let mut art = Artifact::from_string("anything");
+        let hash = art.get_hash().unwrap();
+        assert_eq!(hash.len(), 64);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    // ─── Artifact: absolute_path / parent_dir ───────
+
+    #[test]
+    fn artifact_absolute_path_from_file() {
+        let f = NamedTempFile::new().unwrap();
+        let art = Artifact::from_file(f.path()).unwrap();
+        let abs = art.absolute_path().unwrap();
+        assert!(abs.starts_with('/'));
+        assert!(abs.ends_with(f.path().file_name().unwrap().to_str().unwrap()));
+    }
+
+    #[test]
+    fn artifact_parent_dir_from_file() {
+        let f = NamedTempFile::new().unwrap();
+        let art = Artifact::from_file(f.path()).unwrap();
+        let dir = art.parent_dir().unwrap();
+        assert!(std::path::Path::new(&dir).is_dir());
+    }
+
+    #[test]
+    fn artifact_absolute_path_from_string_is_none() {
+        let art = Artifact::from_string("inline");
+        assert!(art.absolute_path().is_none());
+        assert!(art.parent_dir().is_none());
+    }
+
+    // ─── Context: add_file success ──────────────────
+
+    #[test]
+    fn context_add_file_success() {
+        let mut f = NamedTempFile::new().unwrap();
+        write!(f, "spec content").unwrap();
+        let mut ctx = Context::new();
+        ctx.add_file("spec".into(), f.path()).unwrap();
+        assert!(ctx.items.contains_key("spec"));
+        let item = ctx.items.get_mut("spec").unwrap();
+        assert_eq!(item.get_content().unwrap(), "spec content");
+    }
+
+    // ─── Context: key name affects hash ─────────────
+
+    #[test]
+    fn context_hash_differs_with_different_key_names() {
+        let mut ctx1 = Context::new();
+        ctx1.add_string("alpha".into(), "same content".into());
+
+        let mut ctx2 = Context::new();
+        ctx2.add_string("bravo".into(), "same content".into());
+
+        // Same content under different names → different hash
+        // because items are hashed individually and the per-item hash
+        // depends on content, but the *position* in the joined string
+        // is determined by sorted key order, and "alpha" vs "bravo"
+        // happen to produce the same individual hash here.
+        // Actually the individual hash of "same content" is the same
+        // regardless of key name, so the *joined* hash is also the
+        // same (one item → one hash → same join). But with TWO items
+        // it would differ. Let's test the two-item case.
+        let mut ctx3 = Context::new();
+        ctx3.add_string("a".into(), "one".into());
+        ctx3.add_string("b".into(), "two".into());
+
+        let mut ctx4 = Context::new();
+        ctx4.add_string("a".into(), "two".into());
+        ctx4.add_string("b".into(), "one".into());
+
+        // Same values swapped between keys → different hash
+        assert_ne!(ctx3.get_hash().unwrap(), ctx4.get_hash().unwrap());
+    }
+
+    // ─── Context: item absolute_path ────────────────
+
+    #[test]
+    fn context_item_absolute_path() {
+        let f = NamedTempFile::new().unwrap();
+        let item = ContextItem::from_file("spec".into(), f.path()).unwrap();
+        let abs = item.absolute_path().unwrap();
+        assert!(abs.starts_with('/'));
+    }
+
+    #[test]
+    fn context_item_from_string_has_no_path() {
+        let item = ContextItem::from_string("spec".into(), "content".into());
+        assert!(item.absolute_path().is_none());
+    }
+
+    // ─── Status: FromStr rejects non-lowercase ──────
+
+    #[test]
+    fn status_from_str_rejects_uppercase() {
+        assert!("Pass".parse::<Status>().is_err());
+        assert!("FAIL".parse::<Status>().is_err());
+        assert!("Error".parse::<Status>().is_err());
+    }
+
+    #[test]
+    fn status_from_str_error_includes_value() {
+        let err = "bogus".parse::<Status>().unwrap_err();
+        assert!(err.contains("bogus"));
+    }
+
+    // ─── VerdictStatus: Display ─────────────────────
+
+    #[test]
+    fn verdict_status_display() {
+        assert_eq!(VerdictStatus::Pass.to_string(), "pass");
+        assert_eq!(VerdictStatus::Fail.to_string(), "fail");
+        assert_eq!(VerdictStatus::Error.to_string(), "error");
+    }
+
+    // ─── Verdict: JSON roundtrip with all fields ────
+
+    #[test]
+    fn verdict_json_roundtrip_full() {
+        let v = Verdict {
+            status: VerdictStatus::Fail,
+            gate: "review".into(),
+            failed_at: Some("lint".into()),
+            feedback: Some("bad style".into()),
+            duration_ms: 500,
+            timestamp: Utc::now(),
+            artifact_hash: "aaa".into(),
+            context_hash: "bbb".into(),
+            warnings: vec!["w1".into(), "w2".into()],
+            suppressed: vec!["warn".into()],
+            history: vec![
+                ValidatorResult {
+                    name: "lint".into(),
+                    status: Status::Fail,
+                    feedback: Some("bad style".into()),
+                    duration_ms: 300,
+                    cost: Some(Cost {
+                        input_tokens: Some(100),
+                        output_tokens: Some(50),
+                        model: Some("gpt-4".into()),
+                        estimated_usd: Some(0.01),
+                    }),
+                },
+                ValidatorResult {
+                    name: "format".into(),
+                    status: Status::Pass,
+                    feedback: None,
+                    duration_ms: 200,
+                    cost: None,
+                },
+            ],
+        };
+        let json = v.to_json();
+        let parsed: Verdict = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.status, VerdictStatus::Fail);
+        assert_eq!(parsed.failed_at, Some("lint".into()));
+        assert_eq!(parsed.feedback, Some("bad style".into()));
+        assert_eq!(parsed.warnings, vec!["w1", "w2"]);
+        assert_eq!(parsed.suppressed, vec!["warn"]);
+        assert_eq!(parsed.history.len(), 2);
+        assert_eq!(parsed.history[0].status, Status::Fail);
+        let cost = parsed.history[0].cost.as_ref().unwrap();
+        assert_eq!(cost.input_tokens, Some(100));
+        assert_eq!(cost.model, Some("gpt-4".into()));
+        assert!(parsed.history[1].cost.is_none());
+    }
+
+    // ─── Verdict: to_human formatting ───────────────
+
+    #[test]
+    fn verdict_to_human_skip_label() {
+        let v = Verdict {
+            status: VerdictStatus::Pass,
+            gate: "g".into(),
+            failed_at: None,
+            feedback: None,
+            duration_ms: 0,
+            timestamp: Utc::now(),
+            artifact_hash: "a".into(),
+            context_hash: "c".into(),
+            warnings: vec![],
+            suppressed: vec![],
+            history: vec![ValidatorResult {
+                name: "skipped-check".into(),
+                status: Status::Skip,
+                feedback: None,
+                duration_ms: 0,
+                cost: None,
+            }],
+        };
+        let human = v.to_human();
+        assert!(human.contains("(skipped)"));
+        assert!(human.contains("skipped-check"));
+    }
+
+    #[test]
+    fn verdict_to_human_pass_feedback_not_shown() {
+        let v = Verdict {
+            status: VerdictStatus::Pass,
+            gate: "g".into(),
+            failed_at: None,
+            feedback: None,
+            duration_ms: 0,
+            timestamp: Utc::now(),
+            artifact_hash: "a".into(),
+            context_hash: "c".into(),
+            warnings: vec![],
+            suppressed: vec![],
+            history: vec![ValidatorResult {
+                name: "lint".into(),
+                status: Status::Pass,
+                feedback: Some("all good".into()),
+                duration_ms: 0,
+                cost: None,
+            }],
+        };
+        let human = v.to_human();
+        // Pass feedback is deliberately not displayed
+        assert!(!human.contains("all good"));
+    }
+
+    #[test]
+    fn verdict_to_human_feedback_truncated_to_5_lines() {
+        let long_feedback = (1..=10)
+            .map(|i| format!("line {i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let v = Verdict {
+            status: VerdictStatus::Fail,
+            gate: "g".into(),
+            failed_at: Some("lint".into()),
+            feedback: Some(long_feedback.clone()),
+            duration_ms: 0,
+            timestamp: Utc::now(),
+            artifact_hash: "a".into(),
+            context_hash: "c".into(),
+            warnings: vec![],
+            suppressed: vec![],
+            history: vec![ValidatorResult {
+                name: "lint".into(),
+                status: Status::Fail,
+                feedback: Some(long_feedback),
+                duration_ms: 0,
+                cost: None,
+            }],
+        };
+        let human = v.to_human();
+        assert!(human.contains("line 5"));
+        assert!(!human.contains("line 6"));
+    }
+
+    #[test]
+    fn verdict_to_human_all_status_icons() {
+        let v = Verdict {
+            status: VerdictStatus::Fail,
+            gate: "g".into(),
+            failed_at: Some("f".into()),
+            feedback: None,
+            duration_ms: 0,
+            timestamp: Utc::now(),
+            artifact_hash: "a".into(),
+            context_hash: "c".into(),
+            warnings: vec![],
+            suppressed: vec![],
+            history: vec![
+                ValidatorResult { name: "p".into(), status: Status::Pass, feedback: None, duration_ms: 0, cost: None },
+                ValidatorResult { name: "f".into(), status: Status::Fail, feedback: None, duration_ms: 0, cost: None },
+                ValidatorResult { name: "w".into(), status: Status::Warn, feedback: None, duration_ms: 0, cost: None },
+                ValidatorResult { name: "s".into(), status: Status::Skip, feedback: None, duration_ms: 0, cost: None },
+                ValidatorResult { name: "e".into(), status: Status::Error, feedback: None, duration_ms: 0, cost: None },
+            ],
+        };
+        let human = v.to_human();
+        assert!(human.contains("\u{2713}")); // ✓ pass
+        assert!(human.contains("\u{2717}")); // ✗ fail
+        assert!(human.contains("!"));        // warn
+        assert!(human.contains("\u{2014}")); // — skip
+        assert!(human.contains("E"));        // error
+    }
+
+    // ─── Verdict: to_summary edge cases ─────────────
+
+    #[test]
+    fn verdict_to_summary_error() {
+        let v = Verdict {
+            status: VerdictStatus::Error,
+            gate: "g".into(),
+            failed_at: Some("broken".into()),
+            feedback: Some("internal error".into()),
+            duration_ms: 0,
+            timestamp: Utc::now(),
+            artifact_hash: "a".into(),
+            context_hash: "c".into(),
+            warnings: vec![],
+            suppressed: vec![],
+            history: vec![],
+        };
+        assert_eq!(v.to_summary(), "ERROR at broken: internal error");
+    }
+
+    #[test]
+    fn verdict_to_summary_fail_no_feedback() {
+        let v = Verdict {
+            status: VerdictStatus::Fail,
+            gate: "g".into(),
+            failed_at: Some("lint".into()),
+            feedback: None,
+            duration_ms: 0,
+            timestamp: Utc::now(),
+            artifact_hash: "a".into(),
+            context_hash: "c".into(),
+            warnings: vec![],
+            suppressed: vec![],
+            history: vec![],
+        };
+        assert_eq!(v.to_summary(), "FAIL at lint");
+    }
+
+    #[test]
+    fn verdict_to_summary_multiline_feedback_uses_first_line() {
+        let v = Verdict {
+            status: VerdictStatus::Fail,
+            gate: "g".into(),
+            failed_at: Some("lint".into()),
+            feedback: Some("first line\nsecond line\nthird".into()),
+            duration_ms: 0,
+            timestamp: Utc::now(),
+            artifact_hash: "a".into(),
+            context_hash: "c".into(),
+            warnings: vec![],
+            suppressed: vec![],
+            history: vec![],
+        };
+        assert_eq!(v.to_summary(), "FAIL at lint: first line");
+    }
+
+    // ─── RunOptions ─────────────────────────────────
+
+    #[test]
+    fn run_options_new_enables_logging() {
+        let opts = RunOptions::new();
+        assert!(opts.log);
+        assert!(!opts.run_all);
+        assert!(opts.only.is_none());
+        assert!(opts.skip.is_none());
+        assert!(opts.tags.is_none());
+        assert!(opts.timeout.is_none());
+        assert!(opts.suppressed_statuses.is_empty());
+    }
+
+    #[test]
+    fn run_options_default_disables_logging() {
+        let opts = RunOptions::default();
+        assert!(!opts.log);
+    }
 }

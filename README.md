@@ -324,7 +324,57 @@ baton history --status fail
 
 ## Testing
 
-198 tests covering all implemented modules:
+198 unit tests covering all implemented modules, 46 integration tests:
+
+Files split into two sections:
+
+Module: config.rs
+Internal: split_run_if_* (4)
+Behavioral: parse/validate/discover (24)
+Notes:
+────────────────────────────────────────
+Module: verdict_parser.rs
+Internal: starts_with_keyword_*, rfind_keyword_* (8)
+Behavioral: parse_verdict (18)
+Notes:
+────────────────────────────────────────
+Module: prompt.rs
+Internal: parse_template_str, is_file_reference_* (12)
+Behavioral: resolve_prompt_*, parse_template (5)
+Notes: NOTE: parse_template_str and is_file_reference are pub but are low-level
+  helpers
+────────────────────────────────────────
+Module: placeholder.rs
+Internal: resolve_env_vars_* (7)
+Behavioral: resolve_placeholders (9)
+Notes: NOTE: resolve_env_vars is pub but is a standalone utility
+────────────────────────────────────────
+Module: exec.rs
+Internal: run_if_*, final_status_*, extract_cost_* (19)
+Behavioral: script/human/gate/LLM (48)
+Notes: NOTE: evaluate_run_if and compute_final_status are pub but are low-level
+  utilities; extract_cost is private
+────────────────────────────────────────
+Module: runtime/mod.rs
+Internal: type construction (4)
+Behavioral: create_adapter_* (3)
+Notes:
+
+Files with all tests in one category (header added, no split):
+
+┌──────────────────────┬────────────┬───────────────────────────────────────┐
+│        Module        │  Category  │                Reason                 │
+├──────────────────────┼────────────┼───────────────────────────────────────┤
+│ types.rs             │ All        │ Tests only pub types/methods          │
+│                      │ behavioral │                                       │
+├──────────────────────┼────────────┼───────────────────────────────────────┤
+│ history.rs           │ All        │ Tests only pub API                    │
+│                      │ behavioral │                                       │
+├──────────────────────┼────────────┼───────────────────────────────────────┤
+│                      │ All        │ map_openhands_status and              │
+│ runtime/openhands.rs │ internal   │ extract_cost_from_openhands are both  │
+│                      │            │ private                               │
+└──────────────────────┴────────────┴───────────────────────────────────────┘
 
 ```bash
 cargo test

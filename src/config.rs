@@ -1138,6 +1138,73 @@ blocking = true
         assert!(result.is_ok());
     }
 
+    #[test]
+    fn discover_config_stops_at_git_boundary() {
+        let dir = tempfile::tempdir().unwrap();
+        // baton.toml above the .git boundary
+        std::fs::write(dir.path().join("baton.toml"), "version = \"0.4\"").unwrap();
+        // .git in a subdirectory creates a boundary
+        let repo = dir.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        std::fs::create_dir(repo.join(".git")).unwrap();
+        let nested = repo.join("src");
+        std::fs::create_dir(&nested).unwrap();
+        // Search from repo/src should stop at repo/.git and NOT find the parent baton.toml
+        let result = discover_config(&nested);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("No baton.toml found"));
+    }
+
+    #[test]
+    fn discover_config_git_boundary_with_config_inside() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = dir.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        std::fs::create_dir(repo.join(".git")).unwrap();
+        std::fs::write(repo.join("baton.toml"), "version = \"0.4\"").unwrap();
+        let nested = repo.join("src/deep");
+        std::fs::create_dir_all(&nested).unwrap();
+        // Config is inside the .git boundary, should be found
+        let result = discover_config(&nested);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), repo.join("baton.toml"));
+    }
+
+    #[test]
+    fn discover_config_deeply_nested() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("baton.toml"), "version = \"0.4\"").unwrap();
+        let deep = dir.path().join("a/b/c/d/e");
+        std::fs::create_dir_all(&deep).unwrap();
+        let result = discover_config(&deep);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), dir.path().join("baton.toml"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn discover_config_through_symlink() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("baton.toml"), "version = \"0.4\"").unwrap();
+        let real_sub = dir.path().join("real");
+        std::fs::create_dir(&real_sub).unwrap();
+        let link = dir.path().join("linked");
+        std::os::unix::fs::symlink(&real_sub, &link).unwrap();
+        // Search from the symlinked path should still find baton.toml
+        let result = discover_config(&link);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn discover_config_error_message_includes_start_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".git")).unwrap();
+        let result = discover_config(dir.path());
+        assert!(result.is_err());
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains(&dir.path().display().to_string()));
+    }
+
     // ─── Full config with all features ───────────────
 
     #[test]

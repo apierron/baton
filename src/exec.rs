@@ -761,14 +761,27 @@ fn execute_llm_session(
         env: BTreeMap::new(),
     };
 
+    drive_session(&validator.name, adapter.as_ref(), session_config, timeout_seconds)
+}
+
+/// Core session orchestration: create → poll → collect → teardown → parse verdict.
+///
+/// Extracted from `execute_llm_session` so the lifecycle logic can be tested
+/// independently of config resolution and adapter construction.
+fn drive_session(
+    name: &str,
+    adapter: &dyn runtime::RuntimeAdapter,
+    session_config: SessionConfig,
+    timeout_seconds: u64,
+) -> ValidatorResult {
     let handle = match adapter.create_session(session_config) {
         Ok(h) => h,
         Err(e) => {
             return ValidatorResult {
-                name: validator.name.clone(),
+                name: name.into(),
                 status: Status::Error,
                 feedback: Some(format!(
-                    "[baton] Failed to create session on runtime '{runtime_name}': {e}"
+                    "[baton] Failed to create session: {e}"
                 )),
                 duration_ms: 0,
                 cost: None,
@@ -785,7 +798,7 @@ fn execute_llm_session(
             let _ = adapter.cancel(&handle);
             let _ = adapter.teardown(&handle);
             return ValidatorResult {
-                name: validator.name.clone(),
+                name: name.into(),
                 status: Status::Error,
                 feedback: Some(format!(
                     "[baton] Agent session timed out after {timeout_seconds} seconds"
@@ -810,7 +823,7 @@ fn execute_llm_session(
                 let _ = adapter.cancel(&handle);
                 let _ = adapter.teardown(&handle);
                 return ValidatorResult {
-                    name: validator.name.clone(),
+                    name: name.into(),
                     status: Status::Error,
                     feedback: Some(format!("[baton] Error polling session: {e}")),
                     duration_ms: 0,
@@ -826,7 +839,7 @@ fn execute_llm_session(
         Err(e) => {
             let _ = adapter.teardown(&handle);
             return ValidatorResult {
-                name: validator.name.clone(),
+                name: name.into(),
                 status: Status::Error,
                 feedback: Some(format!("[baton] Error collecting session result: {e}")),
                 duration_ms: 0,
@@ -843,7 +856,7 @@ fn execute_llm_session(
         SessionStatus::Completed => {}
         SessionStatus::TimedOut => {
             return ValidatorResult {
-                name: validator.name.clone(),
+                name: name.into(),
                 status: Status::Error,
                 feedback: Some(format!(
                     "[baton] Agent session timed out after {timeout_seconds} seconds"
@@ -854,7 +867,7 @@ fn execute_llm_session(
         }
         SessionStatus::Failed => {
             return ValidatorResult {
-                name: validator.name.clone(),
+                name: name.into(),
                 status: Status::Error,
                 feedback: Some("[baton] Agent session ended with status 'failed'".into()),
                 duration_ms: 0,
@@ -863,7 +876,7 @@ fn execute_llm_session(
         }
         SessionStatus::Cancelled => {
             return ValidatorResult {
-                name: validator.name.clone(),
+                name: name.into(),
                 status: Status::Error,
                 feedback: Some("[baton] Agent session ended with status 'cancelled'".into()),
                 duration_ms: 0,
@@ -873,7 +886,7 @@ fn execute_llm_session(
         SessionStatus::Running => {
             // Should not happen after polling exits, but handle defensively
             return ValidatorResult {
-                name: validator.name.clone(),
+                name: name.into(),
                 status: Status::Error,
                 feedback: Some(
                     "[baton] Agent produced no verdict.".into(),
@@ -887,7 +900,7 @@ fn execute_llm_session(
     // Check for empty output
     if session_result.output.trim().is_empty() {
         return ValidatorResult {
-            name: validator.name.clone(),
+            name: name.into(),
             status: Status::Error,
             feedback: Some(
                 "[baton] Agent session completed but output contained no PASS/FAIL/WARN verdict."
@@ -901,7 +914,7 @@ fn execute_llm_session(
     // Parse verdict from agent output
     let parsed = parse_verdict(&session_result.output);
     ValidatorResult {
-        name: validator.name.clone(),
+        name: name.into(),
         status: parsed.status,
         feedback: parsed.evidence,
         duration_ms: 0,
@@ -2296,6 +2309,160 @@ mod tests {
         let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
         assert_eq!(result.status, Status::Error);
         assert!(result.feedback.as_ref().unwrap().contains("not defined"));
+    }
+
+    // ─── drive_session orchestration tests ───────────────
+
+    use crate::test_helpers::MockRuntimeAdapter;
+
+    fn test_session_config() -> crate::runtime::SessionConfig {
+        MockRuntimeAdapter::dummy_session_config()
+    }
+
+    #[test]
+    fn session_completes_pass() {
+        let mock = MockRuntimeAdapter::completing("PASS — looks good");
+        let result = drive_session("v", &mock, test_session_config(), 30);
+        assert_eq!(result.status, Status::Pass);
+        assert_eq!(mock.teardown_count(), 1);
+    }
+
+    #[test]
+    fn session_completes_fail() {
+        let mock = MockRuntimeAdapter::completing("FAIL — missing tests");
+        let result = drive_session("v", &mock, test_session_config(), 30);
+        assert_eq!(result.status, Status::Fail);
+        assert!(result.feedback.as_ref().unwrap().contains("missing tests"));
+    }
+
+    #[test]
+    fn session_completes_warn() {
+        let mock = MockRuntimeAdapter::completing("WARN minor style issue");
+        let result = drive_session("v", &mock, test_session_config(), 30);
+        assert_eq!(result.status, Status::Warn);
+    }
+
+    #[test]
+    fn session_unparseable_output() {
+        let mock = MockRuntimeAdapter::completing("I think the code is fine maybe");
+        let result = drive_session("v", &mock, test_session_config(), 30);
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("Could not parse"));
+    }
+
+    #[test]
+    fn session_empty_output() {
+        let mock = MockRuntimeAdapter::completing("");
+        let result = drive_session("v", &mock, test_session_config(), 30);
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("no PASS/FAIL/WARN"));
+    }
+
+    #[test]
+    fn session_failed_status() {
+        let mock = MockRuntimeAdapter::failing();
+        let result = drive_session("v", &mock, test_session_config(), 30);
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("'failed'"));
+        assert_eq!(mock.teardown_count(), 1);
+    }
+
+    #[test]
+    fn session_timed_out_status() {
+        let mock = MockRuntimeAdapter::failing()
+            .with_terminal_status(SessionStatus::TimedOut);
+        let result = drive_session("v", &mock, test_session_config(), 30);
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("timed out"));
+    }
+
+    #[test]
+    fn session_cancelled_status() {
+        let mock = MockRuntimeAdapter::failing()
+            .with_terminal_status(SessionStatus::Cancelled);
+        let result = drive_session("v", &mock, test_session_config(), 30);
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("'cancelled'"));
+    }
+
+    #[test]
+    fn session_create_error() {
+        let mock = MockRuntimeAdapter::completing("PASS")
+            .with_create_error("connection refused");
+        let result = drive_session("v", &mock, test_session_config(), 30);
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("connection refused"));
+        // No teardown since session was never created
+        assert_eq!(mock.teardown_count(), 0);
+    }
+
+    #[test]
+    fn session_collect_error_tears_down() {
+        let mock = MockRuntimeAdapter::completing("PASS")
+            .with_collect_error("network timeout");
+        let result = drive_session("v", &mock, test_session_config(), 30);
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("network timeout"));
+        assert_eq!(mock.teardown_count(), 1);
+    }
+
+    #[test]
+    fn session_cost_propagated() {
+        let cost = Cost {
+            input_tokens: Some(1000),
+            output_tokens: Some(200),
+            model: Some("claude-sonnet".into()),
+            estimated_usd: Some(0.005),
+        };
+        let mock = MockRuntimeAdapter::completing("PASS").with_cost(cost);
+        let result = drive_session("v", &mock, test_session_config(), 30);
+        assert_eq!(result.status, Status::Pass);
+        let c = result.cost.unwrap();
+        assert_eq!(c.input_tokens, Some(1000));
+        assert_eq!(c.output_tokens, Some(200));
+        assert_eq!(c.model, Some("claude-sonnet".into()));
+    }
+
+    #[test]
+    fn session_cost_on_failure() {
+        let cost = Cost {
+            input_tokens: Some(500),
+            output_tokens: Some(100),
+            model: Some("test".into()),
+            estimated_usd: None,
+        };
+        let mock = MockRuntimeAdapter::failing().with_cost(cost);
+        let result = drive_session("v", &mock, test_session_config(), 30);
+        assert_eq!(result.status, Status::Error);
+        // Cost should still be present even on failure
+        assert!(result.cost.is_some());
+        assert_eq!(result.cost.unwrap().input_tokens, Some(500));
+    }
+
+    #[test]
+    fn session_teardown_always_called_on_success() {
+        let mock = MockRuntimeAdapter::completing("PASS");
+        let _ = drive_session("v", &mock, test_session_config(), 30);
+        assert_eq!(mock.teardown_count(), 1);
+        assert_eq!(mock.cancel_count(), 0);
+    }
+
+    #[test]
+    fn session_validator_name_propagated() {
+        let mock = MockRuntimeAdapter::completing("PASS");
+        let result = drive_session("my-validator", &mock, test_session_config(), 30);
+        assert_eq!(result.name, "my-validator");
+    }
+
+    #[test]
+    fn session_timeout_cancels_and_tears_down() {
+        // Mock returns Running forever; timeout_seconds=1 triggers after first poll+sleep
+        let mock = MockRuntimeAdapter::hanging();
+        let result = drive_session("v", &mock, test_session_config(), 1);
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("timed out"));
+        assert_eq!(mock.cancel_count(), 1);
+        assert_eq!(mock.teardown_count(), 1);
     }
 
 }

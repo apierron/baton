@@ -372,4 +372,400 @@ mod tests {
         let results = query_recent(&conn2, 10, None, None).unwrap();
         assert_eq!(results.len(), 1);
     }
+
+    // ─── Empty DB queries ────────────────────────────
+
+    #[test]
+    fn query_recent_empty_db() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = init_db(&db_path).unwrap();
+
+        let results = query_recent(&conn, 10, None, None).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn query_by_artifact_empty_db() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = init_db(&db_path).unwrap();
+
+        let results = query_by_artifact(&conn, "abc123").unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn query_recent_empty_db_with_limit_zero() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = init_db(&db_path).unwrap();
+
+        store_verdict(&conn, &th::verdict(VerdictStatus::Pass)).unwrap();
+
+        let results = query_recent(&conn, 0, None, None).unwrap();
+        assert!(results.is_empty());
+    }
+
+    // ─── Filters that match nothing ──────────────────
+
+    #[test]
+    fn query_by_gate_no_match() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = init_db(&db_path).unwrap();
+
+        store_verdict(&conn, &th::verdict(VerdictStatus::Pass)).unwrap();
+
+        let results = query_recent(&conn, 10, Some("nonexistent-gate"), None).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn query_by_status_no_match() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = init_db(&db_path).unwrap();
+
+        store_verdict(&conn, &th::verdict(VerdictStatus::Pass)).unwrap();
+
+        let results = query_recent(&conn, 10, None, Some("error")).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn query_by_gate_and_status_no_match() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = init_db(&db_path).unwrap();
+
+        store_verdict(&conn, &th::verdict(VerdictStatus::Pass)).unwrap();
+
+        // Gate matches but status doesn't
+        let results = query_recent(&conn, 10, Some("test-gate"), Some("fail")).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn query_by_artifact_no_match() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = init_db(&db_path).unwrap();
+
+        store_verdict(&conn, &th::verdict(VerdictStatus::Pass)).unwrap();
+
+        let results = query_by_artifact(&conn, "ffffffffffffffff").unwrap();
+        assert!(results.is_empty());
+    }
+
+    // ─── Concurrent writes ───────────────────────────
+
+    #[test]
+    fn concurrent_writes_via_separate_connections() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        // Init the DB once
+        let conn = init_db(&db_path).unwrap();
+        drop(conn);
+
+        let n_threads = 8;
+        let writes_per_thread = 10;
+
+        let handles: Vec<_> = (0..n_threads)
+            .map(|i| {
+                let path = db_path.clone();
+                std::thread::spawn(move || {
+                    let conn = init_db(&path).unwrap();
+                    // WAL mode busy timeout — give concurrent writers time to retry
+                    conn.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+                    for j in 0..writes_per_thread {
+                        let mut v = th::verdict(VerdictStatus::Pass);
+                        v.gate = format!("gate-{i}");
+                        v.artifact_hash = format!("hash-{i}-{j}");
+                        store_verdict(&conn, &v).unwrap();
+                    }
+                })
+            })
+            .collect();
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        // Verify all writes landed
+        let conn = init_db(&db_path).unwrap();
+        let results = query_recent(&conn, 1000, None, None).unwrap();
+        assert_eq!(results.len(), n_threads * writes_per_thread);
+    }
+
+    #[test]
+    fn concurrent_read_write() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        let conn = init_db(&db_path).unwrap();
+        // Seed with some data
+        for _ in 0..5 {
+            store_verdict(&conn, &th::verdict(VerdictStatus::Pass)).unwrap();
+        }
+        drop(conn);
+
+        let writer_path = db_path.clone();
+        let reader_path = db_path.clone();
+
+        let writer = std::thread::spawn(move || {
+            let conn = init_db(&writer_path).unwrap();
+            conn.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+            for _ in 0..20 {
+                store_verdict(&conn, &th::verdict(VerdictStatus::Fail)).unwrap();
+            }
+        });
+
+        let reader = std::thread::spawn(move || {
+            let conn = init_db(&reader_path).unwrap();
+            conn.busy_timeout(std::time::Duration::from_secs(5)).unwrap();
+            let mut total_seen = 0;
+            for _ in 0..20 {
+                let results = query_recent(&conn, 1000, None, None).unwrap();
+                total_seen = total_seen.max(results.len());
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            // Reader should always see a consistent snapshot (>= 5 initial rows)
+            assert!(total_seen >= 5);
+        });
+
+        writer.join().unwrap();
+        reader.join().unwrap();
+
+        // Final count should be 25
+        let conn = init_db(&db_path).unwrap();
+        let results = query_recent(&conn, 1000, None, None).unwrap();
+        assert_eq!(results.len(), 25);
+    }
+
+    // ─── DB corruption recovery ──────────────────────
+
+    #[test]
+    fn corrupted_db_file_returns_error() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        // Write garbage to the file
+        std::fs::write(&db_path, b"this is not a sqlite database at all").unwrap();
+
+        let result = init_db(&db_path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn truncated_db_file_returns_error() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        // Create a valid DB, then truncate it
+        let conn = init_db(&db_path).unwrap();
+        store_verdict(&conn, &th::verdict(VerdictStatus::Pass)).unwrap();
+        drop(conn);
+
+        // Truncate to a few bytes — corrupts the header
+        std::fs::write(&db_path, &b"SQLite format 3\0"[..10]).unwrap();
+
+        let result = init_db(&db_path);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn missing_tables_after_manual_drop() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        let conn = init_db(&db_path).unwrap();
+        // Manually drop the table
+        conn.execute_batch("DROP TABLE validator_results; DROP TABLE verdicts;").unwrap();
+        drop(conn);
+
+        // Re-init should recreate the schema (CREATE IF NOT EXISTS)
+        let conn = init_db(&db_path).unwrap();
+        store_verdict(&conn, &th::verdict(VerdictStatus::Pass)).unwrap();
+        let results = query_recent(&conn, 10, None, None).unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn zero_byte_db_file() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+
+        // Create a zero-byte file — SQLite treats this as a new database
+        std::fs::write(&db_path, b"").unwrap();
+
+        let conn = init_db(&db_path).unwrap();
+        store_verdict(&conn, &th::verdict(VerdictStatus::Pass)).unwrap();
+        let results = query_recent(&conn, 10, None, None).unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    // ─── Unique IDs ──────────────────────────────────
+
+    #[test]
+    fn store_verdict_returns_unique_ids() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = init_db(&db_path).unwrap();
+
+        let id1 = store_verdict(&conn, &th::verdict(VerdictStatus::Pass)).unwrap();
+        let id2 = store_verdict(&conn, &th::verdict(VerdictStatus::Pass)).unwrap();
+        assert_ne!(id1, id2);
+        assert!(!id1.is_empty());
+        assert!(!id2.is_empty());
+    }
+
+    // ─── Query ordering ─────────────────────────────
+
+    #[test]
+    fn query_recent_returns_newest_first() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = init_db(&db_path).unwrap();
+
+        // Insert three verdicts with distinct timestamps
+        for gate_name in &["first", "second", "third"] {
+            let mut v = th::verdict(VerdictStatus::Pass);
+            v.gate = gate_name.to_string();
+            // Advance timestamp slightly to ensure ordering
+            v.timestamp = chrono::Utc::now();
+            store_verdict(&conn, &v).unwrap();
+            // Sleep 10ms so timestamps are distinct
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        let results = query_recent(&conn, 10, None, None).unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].gate, "third");
+        assert_eq!(results[1].gate, "second");
+        assert_eq!(results[2].gate, "first");
+    }
+
+    // ─── Validator results FK linkage ────────────────
+
+    #[test]
+    fn validator_results_linked_to_verdict() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = init_db(&db_path).unwrap();
+
+        let verdict = th::verdict(VerdictStatus::Pass);
+        let verdict_id = store_verdict(&conn, &verdict).unwrap();
+
+        // Count validator_results rows linked to this verdict
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM validator_results WHERE verdict_id = ?1",
+                params![verdict_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, verdict.history.len() as i64);
+    }
+
+    #[test]
+    fn multiple_validator_results_stored() {
+        use crate::types::{Cost, Status, ValidatorResult};
+
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = init_db(&db_path).unwrap();
+
+        let mut v = th::verdict(VerdictStatus::Fail);
+        v.history = vec![
+            ValidatorResult {
+                name: "lint".into(),
+                status: Status::Pass,
+                feedback: None,
+                duration_ms: 10,
+                cost: None,
+            },
+            ValidatorResult {
+                name: "typecheck".into(),
+                status: Status::Fail,
+                feedback: Some("type error".into()),
+                duration_ms: 20,
+                cost: Some(Cost {
+                    input_tokens: Some(500),
+                    output_tokens: Some(100),
+                    model: Some("test-model".into()),
+                    estimated_usd: Some(0.005),
+                }),
+            },
+            ValidatorResult {
+                name: "format".into(),
+                status: Status::Skip,
+                feedback: None,
+                duration_ms: 0,
+                cost: None,
+            },
+        ];
+
+        let verdict_id = store_verdict(&conn, &v).unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM validator_results WHERE verdict_id = ?1",
+                params![verdict_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 3);
+
+        // Verify the typecheck row has cost data
+        let (feedback, tokens): (Option<String>, Option<i64>) = conn
+            .query_row(
+                "SELECT feedback, input_tokens FROM validator_results WHERE verdict_id = ?1 AND name = 'typecheck'",
+                params![verdict_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(feedback, Some("type error".into()));
+        assert_eq!(tokens, Some(500));
+    }
+
+    // ─── WAL mode ────────────────────────────────────
+
+    #[test]
+    fn wal_mode_enabled() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = init_db(&db_path).unwrap();
+
+        let mode: String = conn
+            .pragma_query_value(None, "journal_mode", |row| row.get(0))
+            .unwrap();
+        assert_eq!(mode.to_lowercase(), "wal");
+    }
+
+    // ─── verdict_json column ─────────────────────────
+
+    #[test]
+    fn verdict_json_column_is_parseable() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = init_db(&db_path).unwrap();
+
+        let verdict = th::verdict(VerdictStatus::Pass);
+        let verdict_id = store_verdict(&conn, &verdict).unwrap();
+
+        let json_str: String = conn
+            .query_row(
+                "SELECT verdict_json FROM verdicts WHERE id = ?1",
+                params![verdict_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        // The stored JSON should deserialize back to a valid Verdict
+        let parsed: crate::types::Verdict = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(parsed.status, VerdictStatus::Pass);
+        assert_eq!(parsed.gate, "test-gate");
+    }
 }

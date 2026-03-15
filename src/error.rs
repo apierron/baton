@@ -43,6 +43,9 @@ pub enum BatonError {
 
     #[error("Database error: {0}")]
     DatabaseError(String),
+
+    #[error("Runtime error: {0}")]
+    RuntimeError(String),
 }
 
 /// Convenience alias for `Result<T, BatonError>`.

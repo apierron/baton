@@ -282,6 +282,86 @@ mod tests {
         std::env::remove_var("BATON_TEST_VAR2");
     }
 
+    #[test]
+    fn env_var_nested_dollar_brace_in_value() {
+        // Value containing ${ should be emitted literally
+        std::env::set_var("BATON_TEST_NESTED", "has ${INNER} in it");
+        let result = resolve_env_vars("prefix_${BATON_TEST_NESTED}_suffix").unwrap();
+        assert_eq!(result, "prefix_has ${INNER} in it_suffix");
+        std::env::remove_var("BATON_TEST_NESTED");
+    }
+
+    #[test]
+    fn env_var_empty_value() {
+        // Empty string is a valid value — not the same as unset
+        std::env::set_var("BATON_TEST_EMPTY", "");
+        let result = resolve_env_vars("before_${BATON_TEST_EMPTY}_after").unwrap();
+        assert_eq!(result, "before__after");
+        std::env::remove_var("BATON_TEST_EMPTY");
+    }
+
+    #[test]
+    fn env_var_empty_value_does_not_use_default() {
+        // Empty string is set — should NOT fall through to default
+        std::env::set_var("BATON_TEST_EMPTY2", "");
+        let result = resolve_env_vars("${BATON_TEST_EMPTY2:-fallback}").unwrap();
+        assert_eq!(result, "");
+        std::env::remove_var("BATON_TEST_EMPTY2");
+    }
+
+    #[test]
+    fn env_var_special_chars_in_value() {
+        std::env::set_var("BATON_TEST_SPECIAL", "a=b&c;d\"e'f\\g\nh");
+        let result = resolve_env_vars("${BATON_TEST_SPECIAL}").unwrap();
+        assert_eq!(result, "a=b&c;d\"e'f\\g\nh");
+        std::env::remove_var("BATON_TEST_SPECIAL");
+    }
+
+    #[test]
+    fn env_var_unclosed_brace_literal() {
+        // Unclosed ${ should be left as literal text, not error
+        let result = resolve_env_vars("before ${UNCLOSED after").unwrap();
+        assert_eq!(result, "before ${UNCLOSED after");
+    }
+
+    #[test]
+    fn env_var_multiple_in_one_string() {
+        std::env::set_var("BATON_TEST_A", "alpha");
+        std::env::set_var("BATON_TEST_B", "beta");
+        let result = resolve_env_vars("${BATON_TEST_A}_${BATON_TEST_B}").unwrap();
+        assert_eq!(result, "alpha_beta");
+        std::env::remove_var("BATON_TEST_A");
+        std::env::remove_var("BATON_TEST_B");
+    }
+
+    #[test]
+    fn env_var_default_with_special_chars() {
+        std::env::remove_var("BATON_UNSET_SPEC");
+        let result = resolve_env_vars("${BATON_UNSET_SPEC:-http://localhost:8080/path}").unwrap();
+        assert_eq!(result, "http://localhost:8080/path");
+    }
+
+    #[test]
+    fn env_var_default_containing_colon() {
+        // The :- delimiter only matches the first occurrence
+        std::env::remove_var("BATON_UNSET_COLON");
+        let result = resolve_env_vars("${BATON_UNSET_COLON:-key:-value}").unwrap();
+        assert_eq!(result, "key:-value");
+    }
+
+    #[test]
+    fn env_var_adjacent_dollar_signs() {
+        // $$ not followed by { is literal
+        let result = resolve_env_vars("cost is $$100").unwrap();
+        assert_eq!(result, "cost is $$100");
+    }
+
+    #[test]
+    fn env_var_dollar_at_end() {
+        let result = resolve_env_vars("trailing $").unwrap();
+        assert_eq!(result, "trailing $");
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // Behavioral contract tests
     // ═══════════════════════════════════════════════════════════════

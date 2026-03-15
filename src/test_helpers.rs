@@ -4,9 +4,12 @@
 //! and a builder for `ValidatorConfig` to reduce boilerplate across test modules.
 
 use crate::config::*;
+use crate::error::{BatonError, Result};
+use crate::runtime::*;
 use crate::types::*;
 use chrono::Utc;
 use std::collections::BTreeMap;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 // ─── ValidatorResult factories ──────────────────────────
 
@@ -335,5 +338,174 @@ pub fn verdict(status: VerdictStatus) -> Verdict {
                 estimated_usd: Some(0.001),
             }),
         }],
+    }
+}
+
+// ─── MockRuntimeAdapter ─────────────────────────────────
+
+/// Configurable mock for testing session orchestration without HTTP.
+///
+/// Use the constructors to set up common scenarios:
+/// - `MockRuntimeAdapter::completing("PASS")` — immediate completion
+/// - `MockRuntimeAdapter::completing_after(3, "PASS")` — 3 polls then done
+/// - `MockRuntimeAdapter::failing()` — session fails immediately
+///
+/// Chain `.with_cost()`, `.with_create_error()`, `.with_collect_error()`
+/// for additional configuration. Use counter methods to verify cleanup.
+#[derive(Debug)]
+pub struct MockRuntimeAdapter {
+    terminal_status: SessionStatus,
+    output: String,
+    cost: Option<Cost>,
+    polls_before_done: u32,
+    create_error: Option<String>,
+    collect_error: Option<String>,
+    poll_count: AtomicU32,
+    teardown_count: AtomicU32,
+    cancel_count: AtomicU32,
+}
+
+impl MockRuntimeAdapter {
+    /// Session completes immediately (0 polls) with the given output.
+    pub fn completing(output: &str) -> Self {
+        Self {
+            terminal_status: SessionStatus::Completed,
+            output: output.into(),
+            cost: None,
+            polls_before_done: 0,
+            create_error: None,
+            collect_error: None,
+            poll_count: AtomicU32::new(0),
+            teardown_count: AtomicU32::new(0),
+            cancel_count: AtomicU32::new(0),
+        }
+    }
+
+    /// Session returns Running for `n` polls, then transitions to Completed.
+    pub fn completing_after(n: u32, output: &str) -> Self {
+        Self {
+            polls_before_done: n,
+            ..Self::completing(output)
+        }
+    }
+
+    /// Session transitions to Failed immediately.
+    pub fn failing() -> Self {
+        Self {
+            terminal_status: SessionStatus::Failed,
+            output: String::new(),
+            cost: None,
+            polls_before_done: 0,
+            create_error: None,
+            collect_error: None,
+            poll_count: AtomicU32::new(0),
+            teardown_count: AtomicU32::new(0),
+            cancel_count: AtomicU32::new(0),
+        }
+    }
+
+    /// Session transitions to the given terminal status immediately.
+    pub fn with_terminal_status(mut self, status: SessionStatus) -> Self {
+        self.terminal_status = status;
+        self
+    }
+
+    pub fn with_cost(mut self, cost: Cost) -> Self {
+        self.cost = Some(cost);
+        self
+    }
+
+    pub fn with_create_error(mut self, msg: &str) -> Self {
+        self.create_error = Some(msg.into());
+        self
+    }
+
+    pub fn with_collect_error(mut self, msg: &str) -> Self {
+        self.collect_error = Some(msg.into());
+        self
+    }
+
+    /// Returns Running forever (use with a short timeout to test timeout path).
+    pub fn hanging() -> Self {
+        Self {
+            polls_before_done: u32::MAX,
+            ..Self::completing("")
+        }
+    }
+
+    pub fn teardown_count(&self) -> u32 {
+        self.teardown_count.load(Ordering::SeqCst)
+    }
+
+    pub fn cancel_count(&self) -> u32 {
+        self.cancel_count.load(Ordering::SeqCst)
+    }
+
+    pub fn poll_count(&self) -> u32 {
+        self.poll_count.load(Ordering::SeqCst)
+    }
+
+    pub fn dummy_session_config() -> SessionConfig {
+        SessionConfig {
+            task: "test task".into(),
+            files: BTreeMap::new(),
+            model: "test-model".into(),
+            sandbox: false,
+            max_iterations: 10,
+            timeout_seconds: 30,
+            env: BTreeMap::new(),
+        }
+    }
+}
+
+impl RuntimeAdapter for MockRuntimeAdapter {
+    fn health_check(&self) -> Result<HealthResult> {
+        Ok(HealthResult {
+            reachable: true,
+            version: Some("mock".into()),
+            models: None,
+            message: None,
+        })
+    }
+
+    fn create_session(&self, _config: SessionConfig) -> Result<SessionHandle> {
+        if let Some(ref msg) = self.create_error {
+            return Err(BatonError::RuntimeError(msg.clone()));
+        }
+        Ok(SessionHandle {
+            id: "mock-session-1".into(),
+            workspace_id: "mock-ws-1".into(),
+        })
+    }
+
+    fn poll_status(&self, _handle: &SessionHandle) -> Result<SessionStatus> {
+        let count = self.poll_count.fetch_add(1, Ordering::SeqCst);
+        if count < self.polls_before_done {
+            Ok(SessionStatus::Running)
+        } else {
+            Ok(self.terminal_status.clone())
+        }
+    }
+
+    fn collect_result(&self, _handle: &SessionHandle) -> Result<SessionResult> {
+        if let Some(ref msg) = self.collect_error {
+            return Err(BatonError::RuntimeError(msg.clone()));
+        }
+        Ok(SessionResult {
+            status: self.terminal_status.clone(),
+            output: self.output.clone(),
+            raw_log: String::new(),
+            cost: self.cost.clone(),
+        })
+    }
+
+    fn cancel(&self, _handle: &SessionHandle) -> Result<()> {
+        self.cancel_count.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+
+    fn teardown(&self, _handle: &SessionHandle) -> Result<()> {
+        self.teardown_count.fetch_add(1, Ordering::SeqCst);
+        Ok(())
     }
 }
