@@ -193,6 +193,65 @@ pub fn parse_verdict(text: &str) -> ParsedVerdict {
 mod tests {
     use super::*;
 
+    // ═══════════════════════════════════════════════════════════════
+    // Internal implementation tests
+    // ═══════════════════════════════════════════════════════════════
+
+    // ─── starts_with_keyword ────────────────────────
+
+    #[test]
+    fn starts_with_keyword_exact() {
+        assert!(starts_with_keyword("PASS", "PASS"));
+    }
+
+    #[test]
+    fn starts_with_keyword_followed_by_space() {
+        assert!(starts_with_keyword("PASS all good", "PASS"));
+    }
+
+    #[test]
+    fn starts_with_keyword_followed_by_punct() {
+        assert!(starts_with_keyword("PASS.", "PASS"));
+        assert!(starts_with_keyword("FAIL:", "FAIL"));
+        assert!(starts_with_keyword("WARN — issue", "WARN"));
+    }
+
+    #[test]
+    fn starts_with_keyword_followed_by_alpha() {
+        assert!(!starts_with_keyword("PASSWORD", "PASS"));
+        assert!(!starts_with_keyword("FAILING", "FAIL"));
+        assert!(!starts_with_keyword("WARNING", "WARN"));
+    }
+
+    // ─── rfind_keyword ──────────────────────────────
+
+    #[test]
+    fn rfind_keyword_basic() {
+        assert_eq!(rfind_keyword("PASS", "PASS"), Some(0));
+        assert_eq!(rfind_keyword("result: PASS", "PASS"), Some(8));
+    }
+
+    #[test]
+    fn rfind_keyword_word_boundary() {
+        assert_eq!(rfind_keyword("PASSWORD", "PASS"), None);
+        assert_eq!(rfind_keyword("BYPASS", "PASS"), None);
+    }
+
+    #[test]
+    fn rfind_keyword_multiple_occurrences() {
+        let text = "first PASS then another PASS";
+        assert_eq!(rfind_keyword(text, "PASS"), Some(24));
+    }
+
+    #[test]
+    fn rfind_keyword_not_found() {
+        assert_eq!(rfind_keyword("no verdict here", "PASS"), None);
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Behavioral contract tests
+    // ═══════════════════════════════════════════════════════════════
+
     #[test]
     fn first_line_pass() {
         let v = parse_verdict("PASS");
@@ -324,52 +383,4 @@ mod tests {
         assert!(v.evidence.unwrap().contains("3.2"));
     }
 
-    // ─── Helper function tests ───────────────────────
-
-    #[test]
-    fn starts_with_keyword_exact() {
-        assert!(starts_with_keyword("PASS", "PASS"));
-    }
-
-    #[test]
-    fn starts_with_keyword_followed_by_space() {
-        assert!(starts_with_keyword("PASS all good", "PASS"));
-    }
-
-    #[test]
-    fn starts_with_keyword_followed_by_punct() {
-        assert!(starts_with_keyword("PASS.", "PASS"));
-        assert!(starts_with_keyword("FAIL:", "FAIL"));
-        assert!(starts_with_keyword("WARN — issue", "WARN"));
-    }
-
-    #[test]
-    fn starts_with_keyword_followed_by_alpha() {
-        assert!(!starts_with_keyword("PASSWORD", "PASS"));
-        assert!(!starts_with_keyword("FAILING", "FAIL"));
-        assert!(!starts_with_keyword("WARNING", "WARN"));
-    }
-
-    #[test]
-    fn rfind_keyword_basic() {
-        assert_eq!(rfind_keyword("PASS", "PASS"), Some(0));
-        assert_eq!(rfind_keyword("result: PASS", "PASS"), Some(8));
-    }
-
-    #[test]
-    fn rfind_keyword_word_boundary() {
-        assert_eq!(rfind_keyword("PASSWORD", "PASS"), None);
-        assert_eq!(rfind_keyword("BYPASS", "PASS"), None);
-    }
-
-    #[test]
-    fn rfind_keyword_multiple_occurrences() {
-        let text = "first PASS then another PASS";
-        assert_eq!(rfind_keyword(text, "PASS"), Some(24));
-    }
-
-    #[test]
-    fn rfind_keyword_not_found() {
-        assert_eq!(rfind_keyword("no verdict here", "PASS"), None);
-    }
 }

@@ -181,6 +181,13 @@ mod tests {
     use std::io::Write;
     use tempfile::TempDir;
 
+    // ═══════════════════════════════════════════════════════════════
+    // Internal implementation tests
+    // NOTE: parse_template_str and is_file_reference are pub but are
+    //       low-level helpers; the public entry points are
+    //       parse_template and resolve_prompt_value.
+    // ═══════════════════════════════════════════════════════════════
+
     #[test]
     fn parse_template_with_frontmatter() {
         let raw = r#"+++
@@ -277,6 +284,10 @@ Check the spec.
         assert!(!is_file_reference("spec-compliance"));
         assert!(!is_file_reference("Just review this code"));
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Behavioral contract tests
+    // ═══════════════════════════════════════════════════════════════
 
     #[test]
     fn resolve_prompt_inline() {

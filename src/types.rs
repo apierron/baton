@@ -417,6 +417,11 @@ mod tests {
     use std::io::Write;
     use tempfile::NamedTempFile;
 
+    // ═══════════════════════════════════════════════════════════════
+    // Behavioral contract tests
+    // (all tests in this module exercise public types and methods)
+    // ═══════════════════════════════════════════════════════════════
+
     // ─── Artifact tests ──────────────────────────────
 
     #[test]

@@ -222,50 +222,15 @@ pub struct VerdictSummary {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Cost, Status, ValidatorResult, VerdictStatus};
-    use chrono::Utc;
+    use crate::test_helpers as th;
+    use crate::types::VerdictStatus;
     use tempfile::TempDir;
 
-    fn make_verdict(status: VerdictStatus) -> Verdict {
-        Verdict {
-            status,
-            gate: "test-gate".into(),
-            failed_at: if status != VerdictStatus::Pass {
-                Some("lint".into())
-            } else {
-                None
-            },
-            feedback: if status != VerdictStatus::Pass {
-                Some("something failed".into())
-            } else {
-                None
-            },
-            duration_ms: 100,
-            timestamp: Utc::now(),
-            artifact_hash: "abc123".into(),
-            context_hash: "def456".into(),
-            warnings: vec![],
-            suppressed: vec![],
-            history: vec![
-                ValidatorResult {
-                    name: "lint".into(),
-                    status: if status == VerdictStatus::Pass {
-                        Status::Pass
-                    } else {
-                        Status::Fail
-                    },
-                    feedback: None,
-                    duration_ms: 50,
-                    cost: Some(Cost {
-                        input_tokens: Some(100),
-                        output_tokens: Some(50),
-                        model: Some("test-model".into()),
-                        estimated_usd: Some(0.001),
-                    }),
-                },
-            ],
-        }
-    }
+    // ═══════════════════════════════════════════════════════════════
+    // Behavioral contract tests
+    // (all tests in this module exercise public API: init_db,
+    //  store_verdict, query_recent, query_by_artifact)
+    // ═══════════════════════════════════════════════════════════════
 
     #[test]
     fn init_db_creates_schema() {
@@ -299,7 +264,7 @@ mod tests {
         let db_path = dir.path().join("test.db");
         let conn = init_db(&db_path).unwrap();
 
-        let verdict = make_verdict(VerdictStatus::Pass);
+        let verdict = th::verdict(VerdictStatus::Pass);
         let id = store_verdict(&conn, &verdict).unwrap();
         assert!(!id.is_empty());
 
@@ -315,10 +280,10 @@ mod tests {
         let db_path = dir.path().join("test.db");
         let conn = init_db(&db_path).unwrap();
 
-        let v1 = make_verdict(VerdictStatus::Pass);
+        let v1 = th::verdict(VerdictStatus::Pass);
         store_verdict(&conn, &v1).unwrap();
 
-        let mut v2 = make_verdict(VerdictStatus::Fail);
+        let mut v2 = th::verdict(VerdictStatus::Fail);
         v2.gate = "other-gate".into();
         store_verdict(&conn, &v2).unwrap();
 
@@ -333,8 +298,8 @@ mod tests {
         let db_path = dir.path().join("test.db");
         let conn = init_db(&db_path).unwrap();
 
-        store_verdict(&conn, &make_verdict(VerdictStatus::Pass)).unwrap();
-        store_verdict(&conn, &make_verdict(VerdictStatus::Fail)).unwrap();
+        store_verdict(&conn, &th::verdict(VerdictStatus::Pass)).unwrap();
+        store_verdict(&conn, &th::verdict(VerdictStatus::Fail)).unwrap();
 
         let results = query_recent(&conn, 10, None, Some("fail")).unwrap();
         assert_eq!(results.len(), 1);
@@ -347,7 +312,7 @@ mod tests {
         let db_path = dir.path().join("test.db");
         let conn = init_db(&db_path).unwrap();
 
-        store_verdict(&conn, &make_verdict(VerdictStatus::Pass)).unwrap();
+        store_verdict(&conn, &th::verdict(VerdictStatus::Pass)).unwrap();
 
         let results = query_by_artifact(&conn, "abc123").unwrap();
         assert_eq!(results.len(), 1);
@@ -362,7 +327,7 @@ mod tests {
         let db_path = dir.path().join("test.db");
         let conn = init_db(&db_path).unwrap();
 
-        let verdict = make_verdict(VerdictStatus::Pass);
+        let verdict = th::verdict(VerdictStatus::Pass);
         let verdict_id = store_verdict(&conn, &verdict).unwrap();
 
         // Verify cost data was stored
@@ -386,7 +351,7 @@ mod tests {
         let conn = init_db(&db_path).unwrap();
 
         for _ in 0..5 {
-            store_verdict(&conn, &make_verdict(VerdictStatus::Pass)).unwrap();
+            store_verdict(&conn, &th::verdict(VerdictStatus::Pass)).unwrap();
         }
 
         let results = query_recent(&conn, 3, None, None).unwrap();
@@ -400,7 +365,7 @@ mod tests {
 
         // Init twice should work
         let conn1 = init_db(&db_path).unwrap();
-        store_verdict(&conn1, &make_verdict(VerdictStatus::Pass)).unwrap();
+        store_verdict(&conn1, &th::verdict(VerdictStatus::Pass)).unwrap();
         drop(conn1);
 
         let conn2 = init_db(&db_path).unwrap();

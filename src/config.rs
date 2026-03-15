@@ -703,6 +703,49 @@ mod tests {
         PathBuf::from("/tmp/test")
     }
 
+    // ═══════════════════════════════════════════════════════════════
+    // Internal implementation tests
+    // ═══════════════════════════════════════════════════════════════
+
+    // ─── split_run_if ────────────────────────────────
+
+    #[test]
+    fn split_run_if_simple() {
+        let tokens = split_run_if("lint.status == pass");
+        assert_eq!(tokens, vec!["lint.status == pass"]);
+    }
+
+    #[test]
+    fn split_run_if_and() {
+        let tokens = split_run_if("lint.status == pass and typecheck.status == pass");
+        assert_eq!(tokens, vec!["lint.status == pass", "and", "typecheck.status == pass"]);
+    }
+
+    #[test]
+    fn split_run_if_or() {
+        let tokens = split_run_if("lint.status == fail or typecheck.status == fail");
+        assert_eq!(tokens, vec!["lint.status == fail", "or", "typecheck.status == fail"]);
+    }
+
+    #[test]
+    fn split_run_if_mixed() {
+        let tokens = split_run_if("a.status == pass and b.status == pass or c.status == pass");
+        assert_eq!(
+            tokens,
+            vec![
+                "a.status == pass",
+                "and",
+                "b.status == pass",
+                "or",
+                "c.status == pass"
+            ]
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Behavioral contract tests
+    // ═══════════════════════════════════════════════════════════════
+
     // ─── Basic parsing ───────────────────────────────
 
     #[test]
@@ -1065,41 +1108,6 @@ blocking = true
         let validation = validate_config(&config);
         assert!(!validation.warnings.is_empty());
         assert!(validation.warnings[0].contains("blocking has no effect"));
-    }
-
-    // ─── split_run_if ────────────────────────────────
-
-    #[test]
-    fn split_run_if_simple() {
-        let tokens = split_run_if("lint.status == pass");
-        assert_eq!(tokens, vec!["lint.status == pass"]);
-    }
-
-    #[test]
-    fn split_run_if_and() {
-        let tokens = split_run_if("lint.status == pass and typecheck.status == pass");
-        assert_eq!(tokens, vec!["lint.status == pass", "and", "typecheck.status == pass"]);
-    }
-
-    #[test]
-    fn split_run_if_or() {
-        let tokens = split_run_if("lint.status == fail or typecheck.status == fail");
-        assert_eq!(tokens, vec!["lint.status == fail", "or", "typecheck.status == fail"]);
-    }
-
-    #[test]
-    fn split_run_if_mixed() {
-        let tokens = split_run_if("a.status == pass and b.status == pass or c.status == pass");
-        assert_eq!(
-            tokens,
-            vec![
-                "a.status == pass",
-                "and",
-                "b.status == pass",
-                "or",
-                "c.status == pass"
-            ]
-        );
     }
 
     // ─── Config discovery ────────────────────────────

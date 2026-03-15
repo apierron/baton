@@ -222,193 +222,15 @@ pub fn resolve_env_vars(input: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::Status;
+    use crate::test_helpers as th;
 
-    fn make_artifact() -> Artifact {
-        Artifact::from_string("hello world")
-    }
+    // ═══════════════════════════════════════════════════════════════
+    // Internal implementation tests
+    // NOTE: resolve_env_vars is pub but is a standalone utility;
+    //       resolve_placeholders is the primary entry point.
+    // ═══════════════════════════════════════════════════════════════
 
-    fn make_context() -> Context {
-        let mut ctx = Context::new();
-        ctx.add_string("spec".into(), "requirement: do things".into());
-        ctx
-    }
-
-    fn make_prior_results() -> BTreeMap<String, ValidatorResult> {
-        let mut map = BTreeMap::new();
-        map.insert(
-            "lint".into(),
-            ValidatorResult {
-                name: "lint".into(),
-                status: Status::Pass,
-                feedback: None,
-                duration_ms: 50,
-                cost: None,
-            },
-        );
-        map.insert(
-            "typecheck".into(),
-            ValidatorResult {
-                name: "typecheck".into(),
-                status: Status::Fail,
-                feedback: Some("type error on line 5".into()),
-                duration_ms: 200,
-                cost: None,
-            },
-        );
-        map
-    }
-
-    #[test]
-    fn resolve_artifact_content() {
-        let mut art = make_artifact();
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-        let mut warns = ResolutionWarnings::new();
-        let result = resolve_placeholders(
-            "Content: {artifact_content}",
-            &mut art,
-            &mut ctx,
-            &prior,
-            &mut warns,
-        );
-        assert_eq!(result, "Content: hello world");
-        assert!(warns.warnings.is_empty());
-    }
-
-    #[test]
-    fn resolve_context_content() {
-        let mut art = make_artifact();
-        let mut ctx = make_context();
-        let prior = BTreeMap::new();
-        let mut warns = ResolutionWarnings::new();
-        let result = resolve_placeholders(
-            "Spec: {context.spec.content}",
-            &mut art,
-            &mut ctx,
-            &prior,
-            &mut warns,
-        );
-        assert_eq!(result, "Spec: requirement: do things");
-    }
-
-    #[test]
-    fn resolve_verdict_status() {
-        let mut art = make_artifact();
-        let mut ctx = Context::new();
-        let prior = make_prior_results();
-        let mut warns = ResolutionWarnings::new();
-        let result = resolve_placeholders(
-            "Lint: {verdict.lint.status}, TC: {verdict.typecheck.status}",
-            &mut art,
-            &mut ctx,
-            &prior,
-            &mut warns,
-        );
-        assert_eq!(result, "Lint: pass, TC: fail");
-    }
-
-    #[test]
-    fn resolve_verdict_feedback() {
-        let mut art = make_artifact();
-        let mut ctx = Context::new();
-        let prior = make_prior_results();
-        let mut warns = ResolutionWarnings::new();
-        let result = resolve_placeholders(
-            "Feedback: {verdict.typecheck.feedback}",
-            &mut art,
-            &mut ctx,
-            &prior,
-            &mut warns,
-        );
-        assert_eq!(result, "Feedback: type error on line 5");
-    }
-
-    #[test]
-    fn resolve_missing_context_warns() {
-        let mut art = make_artifact();
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-        let mut warns = ResolutionWarnings::new();
-        let result = resolve_placeholders(
-            "Missing: {context.nonexistent.content}",
-            &mut art,
-            &mut ctx,
-            &prior,
-            &mut warns,
-        );
-        assert_eq!(result, "Missing: ");
-        assert_eq!(warns.warnings.len(), 1);
-        assert!(warns.warnings[0].contains("nonexistent"));
-    }
-
-    #[test]
-    fn resolve_unrecognized_placeholder() {
-        let mut art = make_artifact();
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-        let mut warns = ResolutionWarnings::new();
-        let result = resolve_placeholders(
-            "Bad: {typo}",
-            &mut art,
-            &mut ctx,
-            &prior,
-            &mut warns,
-        );
-        assert_eq!(result, "Bad: {typo}");
-        assert_eq!(warns.warnings.len(), 1);
-    }
-
-    #[test]
-    fn resolve_verdict_for_nonexistent_validator() {
-        let mut art = make_artifact();
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-        let mut warns = ResolutionWarnings::new();
-        let result = resolve_placeholders(
-            "Status: {verdict.nonexistent.status}",
-            &mut art,
-            &mut ctx,
-            &prior,
-            &mut warns,
-        );
-        assert_eq!(result, "Status: skip");
-    }
-
-    #[test]
-    fn no_placeholders_unchanged() {
-        let mut art = make_artifact();
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-        let mut warns = ResolutionWarnings::new();
-        let result = resolve_placeholders(
-            "No placeholders here.",
-            &mut art,
-            &mut ctx,
-            &prior,
-            &mut warns,
-        );
-        assert_eq!(result, "No placeholders here.");
-        assert!(warns.warnings.is_empty());
-    }
-
-    #[test]
-    fn unclosed_brace_left_literal() {
-        let mut art = make_artifact();
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-        let mut warns = ResolutionWarnings::new();
-        let result = resolve_placeholders(
-            "Unclosed {brace",
-            &mut art,
-            &mut ctx,
-            &prior,
-            &mut warns,
-        );
-        assert_eq!(result, "Unclosed {brace");
-    }
-
-    // ─── Env var interpolation tests ────────────────
+    // ─── Env var interpolation ──────────────────────
 
     #[test]
     fn env_var_set() {
@@ -459,4 +281,159 @@ mod tests {
         assert_eq!(result, "actual");
         std::env::remove_var("BATON_TEST_VAR2");
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Behavioral contract tests
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn resolve_artifact_content() {
+        let mut art = Artifact::from_string("hello world");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let mut warns = ResolutionWarnings::new();
+        let result = resolve_placeholders(
+            "Content: {artifact_content}",
+            &mut art,
+            &mut ctx,
+            &prior,
+            &mut warns,
+        );
+        assert_eq!(result, "Content: hello world");
+        assert!(warns.warnings.is_empty());
+    }
+
+    #[test]
+    fn resolve_context_content() {
+        let mut art = Artifact::from_string("hello world");
+        let mut ctx = Context::new();
+        ctx.add_string("spec".into(), "requirement: do things".into());
+        let prior = BTreeMap::new();
+        let mut warns = ResolutionWarnings::new();
+        let result = resolve_placeholders(
+            "Spec: {context.spec.content}",
+            &mut art,
+            &mut ctx,
+            &prior,
+            &mut warns,
+        );
+        assert_eq!(result, "Spec: requirement: do things");
+    }
+
+    #[test]
+    fn resolve_verdict_status() {
+        let mut art = Artifact::from_string("hello world");
+        let mut ctx = Context::new();
+        let prior = th::prior_results_detailed();
+        let mut warns = ResolutionWarnings::new();
+        let result = resolve_placeholders(
+            "Lint: {verdict.lint.status}, TC: {verdict.typecheck.status}",
+            &mut art,
+            &mut ctx,
+            &prior,
+            &mut warns,
+        );
+        assert_eq!(result, "Lint: pass, TC: fail");
+    }
+
+    #[test]
+    fn resolve_verdict_feedback() {
+        let mut art = Artifact::from_string("hello world");
+        let mut ctx = Context::new();
+        let prior = th::prior_results_detailed();
+        let mut warns = ResolutionWarnings::new();
+        let result = resolve_placeholders(
+            "Feedback: {verdict.typecheck.feedback}",
+            &mut art,
+            &mut ctx,
+            &prior,
+            &mut warns,
+        );
+        assert_eq!(result, "Feedback: type error on line 5");
+    }
+
+    #[test]
+    fn resolve_missing_context_warns() {
+        let mut art = Artifact::from_string("hello world");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let mut warns = ResolutionWarnings::new();
+        let result = resolve_placeholders(
+            "Missing: {context.nonexistent.content}",
+            &mut art,
+            &mut ctx,
+            &prior,
+            &mut warns,
+        );
+        assert_eq!(result, "Missing: ");
+        assert_eq!(warns.warnings.len(), 1);
+        assert!(warns.warnings[0].contains("nonexistent"));
+    }
+
+    #[test]
+    fn resolve_unrecognized_placeholder() {
+        let mut art = Artifact::from_string("hello world");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let mut warns = ResolutionWarnings::new();
+        let result = resolve_placeholders(
+            "Bad: {typo}",
+            &mut art,
+            &mut ctx,
+            &prior,
+            &mut warns,
+        );
+        assert_eq!(result, "Bad: {typo}");
+        assert_eq!(warns.warnings.len(), 1);
+    }
+
+    #[test]
+    fn resolve_verdict_for_nonexistent_validator() {
+        let mut art = Artifact::from_string("hello world");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let mut warns = ResolutionWarnings::new();
+        let result = resolve_placeholders(
+            "Status: {verdict.nonexistent.status}",
+            &mut art,
+            &mut ctx,
+            &prior,
+            &mut warns,
+        );
+        assert_eq!(result, "Status: skip");
+    }
+
+    #[test]
+    fn no_placeholders_unchanged() {
+        let mut art = Artifact::from_string("hello world");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let mut warns = ResolutionWarnings::new();
+        let result = resolve_placeholders(
+            "No placeholders here.",
+            &mut art,
+            &mut ctx,
+            &prior,
+            &mut warns,
+        );
+        assert_eq!(result, "No placeholders here.");
+        assert!(warns.warnings.is_empty());
+    }
+
+    #[test]
+    fn unclosed_brace_left_literal() {
+        let mut art = Artifact::from_string("hello world");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let mut warns = ResolutionWarnings::new();
+        let result = resolve_placeholders(
+            "Unclosed {brace",
+            &mut art,
+            &mut ctx,
+            &prior,
+            &mut warns,
+        );
+        assert_eq!(result, "Unclosed {brace");
+    }
+
 }

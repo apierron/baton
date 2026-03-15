@@ -110,54 +110,9 @@ pub fn create_adapter(
 mod tests {
     use super::*;
 
-    // ─── Adapter creation ───────────────────────────────
-
-    #[test]
-    fn create_adapter_unknown_type() {
-        let config = crate::config::Runtime {
-            runtime_type: "unknown".into(),
-            base_url: "http://localhost".into(),
-            api_key_env: None,
-            default_model: None,
-            sandbox: true,
-            timeout_seconds: 600,
-            max_iterations: 30,
-        };
-        let result = create_adapter("test", &config);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("Unknown runtime type"), "Error: {err}");
-    }
-
-    #[test]
-    fn create_openhands_adapter_no_auth() {
-        let config = crate::config::Runtime {
-            runtime_type: "openhands".into(),
-            base_url: "http://localhost:3000".into(),
-            api_key_env: None,
-            default_model: Some("test-model".into()),
-            sandbox: true,
-            timeout_seconds: 600,
-            max_iterations: 30,
-        };
-        let result = create_adapter("test", &config);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn create_openhands_adapter_empty_auth() {
-        let config = crate::config::Runtime {
-            runtime_type: "openhands".into(),
-            base_url: "http://localhost:3000/".into(),
-            api_key_env: Some("".into()),
-            default_model: None,
-            sandbox: false,
-            timeout_seconds: 300,
-            max_iterations: 10,
-        };
-        let result = create_adapter("test", &config);
-        assert!(result.is_ok());
-    }
+    // ═══════════════════════════════════════════════════════════════
+    // Internal implementation tests
+    // ═══════════════════════════════════════════════════════════════
 
     // ─── Shared type construction ───────────────────────
 
@@ -218,5 +173,58 @@ mod tests {
         };
         assert!(result.reachable);
         assert_eq!(result.version, Some("1.0".into()));
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Behavioral contract tests
+    // ═══════════════════════════════════════════════════════════════
+
+    // ─── Adapter creation ───────────────────────────────
+
+    #[test]
+    fn create_adapter_unknown_type() {
+        let config = crate::config::Runtime {
+            runtime_type: "unknown".into(),
+            base_url: "http://localhost".into(),
+            api_key_env: None,
+            default_model: None,
+            sandbox: true,
+            timeout_seconds: 600,
+            max_iterations: 30,
+        };
+        let result = create_adapter("test", &config);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Unknown runtime type"), "Error: {err}");
+    }
+
+    #[test]
+    fn create_openhands_adapter_no_auth() {
+        let config = crate::config::Runtime {
+            runtime_type: "openhands".into(),
+            base_url: "http://localhost:3000".into(),
+            api_key_env: None,
+            default_model: Some("test-model".into()),
+            sandbox: true,
+            timeout_seconds: 600,
+            max_iterations: 30,
+        };
+        let result = create_adapter("test", &config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn create_openhands_adapter_empty_auth() {
+        let config = crate::config::Runtime {
+            runtime_type: "openhands".into(),
+            base_url: "http://localhost:3000/".into(),
+            api_key_env: Some("".into()),
+            default_model: None,
+            sandbox: false,
+            timeout_seconds: 300,
+            max_iterations: 10,
+        };
+        let result = create_adapter("test", &config);
+        assert!(result.is_ok());
     }
 }

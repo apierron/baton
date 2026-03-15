@@ -370,6 +370,11 @@ fn extract_cost_from_openhands(body: &serde_json::Value) -> Option<Cost> {
 mod tests {
     use super::*;
 
+    // ═══════════════════════════════════════════════════════════════
+    // Internal implementation tests
+    // (all tests in this module exercise private helpers)
+    // ═══════════════════════════════════════════════════════════════
+
     // ─── SessionStatus mapping ──────────────────────────
 
     #[test]

@@ -25,3 +25,6 @@ pub mod prompt;
 pub mod runtime;
 pub mod types;
 pub mod verdict_parser;
+
+#[cfg(test)]
+pub mod test_helpers;

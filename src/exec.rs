@@ -1117,50 +1117,32 @@ pub fn run_gate(
 mod tests {
     use super::*;
     use crate::config::*;
+    use crate::test_helpers::{self as th, ValidatorBuilder};
     use tempfile::TempDir;
+
+    // ═══════════════════════════════════════════════════════════════
+    // Internal implementation tests
+    // NOTE: evaluate_run_if and compute_final_status are pub but are
+    //       low-level utilities used by run_gate. extract_cost is private.
+    // ═══════════════════════════════════════════════════════════════
 
     // ─── run_if evaluation ───────────────────────────
 
-    fn make_results() -> BTreeMap<String, ValidatorResult> {
-        let mut map = BTreeMap::new();
-        map.insert(
-            "lint".into(),
-            ValidatorResult {
-                name: "lint".into(),
-                status: Status::Pass,
-                feedback: None,
-                duration_ms: 0,
-                cost: None,
-            },
-        );
-        map.insert(
-            "typecheck".into(),
-            ValidatorResult {
-                name: "typecheck".into(),
-                status: Status::Fail,
-                feedback: Some("error".into()),
-                duration_ms: 0,
-                cost: None,
-            },
-        );
-        map
-    }
-
     #[test]
     fn run_if_simple_pass() {
-        let results = make_results();
+        let results = th::prior_results();
         assert!(evaluate_run_if("lint.status == pass", &results).unwrap());
     }
 
     #[test]
     fn run_if_simple_fail() {
-        let results = make_results();
+        let results = th::prior_results();
         assert!(!evaluate_run_if("lint.status == fail", &results).unwrap());
     }
 
     #[test]
     fn run_if_and_both_true() {
-        let results = make_results();
+        let results = th::prior_results();
         assert!(!evaluate_run_if(
             "lint.status == pass and typecheck.status == pass",
             &results
@@ -1170,7 +1152,7 @@ mod tests {
 
     #[test]
     fn run_if_or_one_true() {
-        let results = make_results();
+        let results = th::prior_results();
         assert!(evaluate_run_if(
             "lint.status == fail or typecheck.status == fail",
             &results
@@ -1182,9 +1164,9 @@ mod tests {
     fn run_if_left_to_right_no_precedence() {
         // "a or b and c" → "(a or b) and c"
         let mut results = BTreeMap::new();
-        results.insert("a".into(), ValidatorResult { name: "a".into(), status: Status::Pass, feedback: None, duration_ms: 0, cost: None });
-        results.insert("b".into(), ValidatorResult { name: "b".into(), status: Status::Fail, feedback: None, duration_ms: 0, cost: None });
-        results.insert("c".into(), ValidatorResult { name: "c".into(), status: Status::Fail, feedback: None, duration_ms: 0, cost: None });
+        results.insert("a".into(), th::result("a", Status::Pass));
+        results.insert("b".into(), th::result("b", Status::Fail));
+        results.insert("c".into(), th::result("c", Status::Fail));
 
         // a.pass or b.pass → true or false → true
         // true and c.pass → true and false → false
@@ -1199,16 +1181,7 @@ mod tests {
     #[test]
     fn run_if_skipped_validator() {
         let mut results = BTreeMap::new();
-        results.insert(
-            "a".into(),
-            ValidatorResult {
-                name: "a".into(),
-                status: Status::Skip,
-                feedback: None,
-                duration_ms: 0,
-                cost: None,
-            },
-        );
+        results.insert("a".into(), th::result("a", Status::Skip));
         assert!(evaluate_run_if("a.status == skip", &results).unwrap());
     }
 
@@ -1230,8 +1203,8 @@ mod tests {
     #[test]
     fn final_status_all_pass() {
         let results = vec![
-            ValidatorResult { name: "a".into(), status: Status::Pass, feedback: None, duration_ms: 0, cost: None },
-            ValidatorResult { name: "b".into(), status: Status::Pass, feedback: None, duration_ms: 0, cost: None },
+            th::result("a", Status::Pass),
+            th::result("b", Status::Pass),
         ];
         assert_eq!(compute_final_status(&results, &[]), VerdictStatus::Pass);
     }
@@ -1239,8 +1212,8 @@ mod tests {
     #[test]
     fn final_status_with_warn() {
         let results = vec![
-            ValidatorResult { name: "a".into(), status: Status::Pass, feedback: None, duration_ms: 0, cost: None },
-            ValidatorResult { name: "b".into(), status: Status::Warn, feedback: None, duration_ms: 0, cost: None },
+            th::result("a", Status::Pass),
+            th::result("b", Status::Warn),
         ];
         assert_eq!(compute_final_status(&results, &[]), VerdictStatus::Pass);
     }
@@ -1248,8 +1221,8 @@ mod tests {
     #[test]
     fn final_status_with_fail() {
         let results = vec![
-            ValidatorResult { name: "a".into(), status: Status::Pass, feedback: None, duration_ms: 0, cost: None },
-            ValidatorResult { name: "b".into(), status: Status::Fail, feedback: None, duration_ms: 0, cost: None },
+            th::result("a", Status::Pass),
+            th::result("b", Status::Fail),
         ];
         assert_eq!(compute_final_status(&results, &[]), VerdictStatus::Fail);
     }
@@ -1257,8 +1230,8 @@ mod tests {
     #[test]
     fn final_status_error_beats_fail() {
         let results = vec![
-            ValidatorResult { name: "a".into(), status: Status::Fail, feedback: None, duration_ms: 0, cost: None },
-            ValidatorResult { name: "b".into(), status: Status::Error, feedback: None, duration_ms: 0, cost: None },
+            th::result("a", Status::Fail),
+            th::result("b", Status::Error),
         ];
         assert_eq!(compute_final_status(&results, &[]), VerdictStatus::Error);
     }
@@ -1266,8 +1239,8 @@ mod tests {
     #[test]
     fn final_status_skip_ignored() {
         let results = vec![
-            ValidatorResult { name: "a".into(), status: Status::Skip, feedback: None, duration_ms: 0, cost: None },
-            ValidatorResult { name: "b".into(), status: Status::Pass, feedback: None, duration_ms: 0, cost: None },
+            th::result("a", Status::Skip),
+            th::result("b", Status::Pass),
         ];
         assert_eq!(compute_final_status(&results, &[]), VerdictStatus::Pass);
     }
@@ -1275,8 +1248,8 @@ mod tests {
     #[test]
     fn final_status_suppress_errors() {
         let results = vec![
-            ValidatorResult { name: "a".into(), status: Status::Error, feedback: None, duration_ms: 0, cost: None },
-            ValidatorResult { name: "b".into(), status: Status::Fail, feedback: None, duration_ms: 0, cost: None },
+            th::result("a", Status::Error),
+            th::result("b", Status::Fail),
         ];
         assert_eq!(
             compute_final_status(&results, &[Status::Error]),
@@ -1287,8 +1260,8 @@ mod tests {
     #[test]
     fn final_status_suppress_all() {
         let results = vec![
-            ValidatorResult { name: "a".into(), status: Status::Error, feedback: None, duration_ms: 0, cost: None },
-            ValidatorResult { name: "b".into(), status: Status::Fail, feedback: None, duration_ms: 0, cost: None },
+            th::result("a", Status::Error),
+            th::result("b", Status::Fail),
         ];
         assert_eq!(
             compute_final_status(&results, &[Status::Error, Status::Fail, Status::Warn]),
@@ -1296,1127 +1269,7 @@ mod tests {
         );
     }
 
-    // ─── Script validator tests ──────────────────────
-
-    fn make_script_validator(name: &str, command: &str) -> ValidatorConfig {
-        ValidatorConfig {
-            name: name.into(),
-            validator_type: ValidatorType::Script,
-            blocking: true,
-            run_if: None,
-            timeout_seconds: 300,
-            tags: vec![],
-            command: Some(command.into()),
-            warn_exit_codes: vec![],
-            working_dir: None,
-            env: BTreeMap::new(),
-            mode: LlmMode::Completion,
-            provider: "default".into(),
-            model: None,
-            prompt: None,
-            context_refs: vec![],
-            temperature: 0.0,
-            response_format: ResponseFormat::Verdict,
-            max_tokens: None,
-            system_prompt: None,
-            runtime: None,
-            sandbox: None,
-            max_iterations: None,
-        }
-    }
-
-    #[test]
-    fn script_exit_0_pass() {
-        let v = make_script_validator("test", "exit 0");
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
-        assert_eq!(result.status, Status::Pass);
-    }
-
-    #[test]
-    fn script_exit_1_fail() {
-        let v = make_script_validator("test", "exit 1");
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
-        assert_eq!(result.status, Status::Fail);
-    }
-
-    #[test]
-    fn script_exit_with_warn_code() {
-        let mut v = make_script_validator("test", "echo 'warning message' && exit 2");
-        v.warn_exit_codes = vec![2];
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
-        assert_eq!(result.status, Status::Warn);
-        assert!(result.feedback.as_ref().unwrap().contains("warning message"));
-    }
-
-    #[test]
-    fn script_exit_2_without_warn_codes_is_fail() {
-        let v = make_script_validator("test", "exit 2");
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
-        assert_eq!(result.status, Status::Fail);
-    }
-
-    #[test]
-    fn script_no_output_fail_feedback() {
-        let v = make_script_validator("test", "exit 1");
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
-        assert_eq!(result.status, Status::Fail);
-        assert!(result.feedback.as_ref().unwrap().contains("no output"));
-    }
-
-    #[test]
-    fn script_with_stderr_feedback() {
-        let v = make_script_validator("test", "echo 'error detail' >&2 && exit 1");
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
-        assert_eq!(result.status, Status::Fail);
-        assert!(result.feedback.as_ref().unwrap().contains("error detail"));
-    }
-
-    #[test]
-    fn script_placeholder_resolution() {
-        let dir = TempDir::new().unwrap();
-        let art_path = dir.path().join("test.txt");
-        std::fs::write(&art_path, "hello").unwrap();
-
-        let v = make_script_validator("test", "cat {artifact}");
-        let mut art = Artifact::from_file(&art_path).unwrap();
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
-        assert_eq!(result.status, Status::Pass);
-    }
-
-    // ─── Human validator tests ───────────────────────
-
-    #[test]
-    fn human_validator_fails_with_prompt() {
-        let mut v = make_script_validator("human", "");
-        v.validator_type = ValidatorType::Human;
-        v.prompt = Some("Please review this change.".into());
-        v.command = None;
-
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
-        assert_eq!(result.status, Status::Fail);
-        assert!(result.feedback.as_ref().unwrap().contains("[human-review-requested]"));
-        assert!(result.feedback.as_ref().unwrap().contains("Please review"));
-    }
-
-    // ─── Gate run tests ──────────────────────────────
-
-    fn make_test_config(gate: GateConfig) -> BatonConfig {
-        let mut gates = BTreeMap::new();
-        gates.insert(gate.name.clone(), gate);
-        BatonConfig {
-            version: "0.4".into(),
-            defaults: Defaults {
-                timeout_seconds: 300,
-                blocking: true,
-                prompts_dir: "/tmp/prompts".into(),
-                log_dir: "/tmp/logs".into(),
-                history_db: "/tmp/history.db".into(),
-                tmp_dir: "/tmp/tmp".into(),
-            },
-            providers: BTreeMap::new(),
-            runtimes: BTreeMap::new(),
-            gates,
-            config_dir: "/tmp".into(),
-        }
-    }
-
-    fn make_gate(name: &str, validators: Vec<ValidatorConfig>) -> GateConfig {
-        GateConfig {
-            name: name.into(),
-            description: None,
-            context: BTreeMap::new(),
-            validators,
-        }
-    }
-
-    #[test]
-    fn gate_all_pass() {
-        let gate = make_gate(
-            "test",
-            vec![
-                make_script_validator("a", "exit 0"),
-                make_script_validator("b", "exit 0"),
-                make_script_validator("c", "exit 0"),
-            ],
-        );
-        let config = make_test_config(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let opts = RunOptions::new();
-
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
-        assert_eq!(verdict.status, VerdictStatus::Pass);
-        assert_eq!(verdict.history.len(), 3);
-    }
-
-    #[test]
-    fn gate_first_fail_blocks() {
-        let gate = make_gate(
-            "test",
-            vec![
-                make_script_validator("a", "exit 0"),
-                make_script_validator("b", "exit 1"),
-                make_script_validator("c", "exit 0"),
-            ],
-        );
-        let config = make_test_config(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let opts = RunOptions::new();
-
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
-        assert_eq!(verdict.status, VerdictStatus::Fail);
-        assert_eq!(verdict.failed_at, Some("b".into()));
-        // c should not have run
-        assert_eq!(verdict.history.len(), 2);
-    }
-
-    #[test]
-    fn gate_non_blocking_failure_passes() {
-        let mut fail_v = make_script_validator("b", "exit 1");
-        fail_v.blocking = false;
-
-        let gate = make_gate(
-            "test",
-            vec![
-                make_script_validator("a", "exit 0"),
-                fail_v,
-                make_script_validator("c", "exit 0"),
-            ],
-        );
-        let config = make_test_config(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let opts = RunOptions::new();
-
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
-        assert_eq!(verdict.status, VerdictStatus::Pass);
-        // All 3 ran
-        assert_eq!(verdict.history.len(), 3);
-    }
-
-    #[test]
-    fn gate_all_mode_runs_everything() {
-        let gate = make_gate(
-            "test",
-            vec![
-                make_script_validator("a", "exit 0"),
-                make_script_validator("b", "exit 1"),
-                make_script_validator("c", "exit 0"),
-            ],
-        );
-        let config = make_test_config(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let mut opts = RunOptions::new();
-        opts.run_all = true;
-
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
-        assert_eq!(verdict.status, VerdictStatus::Fail);
-        assert_eq!(verdict.history.len(), 3);
-    }
-
-    #[test]
-    fn gate_all_mode_non_blocking_failure_counts() {
-        let mut fail_v = make_script_validator("b", "exit 1");
-        fail_v.blocking = false;
-
-        let gate = make_gate(
-            "test",
-            vec![
-                make_script_validator("a", "exit 0"),
-                fail_v,
-                make_script_validator("c", "exit 0"),
-            ],
-        );
-        let config = make_test_config(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let mut opts = RunOptions::new();
-        opts.run_all = true;
-
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
-        assert_eq!(verdict.status, VerdictStatus::Fail);
-    }
-
-    #[test]
-    fn gate_conditional_skip() {
-        let mut cond_v = make_script_validator("b", "exit 0");
-        cond_v.run_if = Some("a.status == pass".into());
-
-        let gate = make_gate(
-            "test",
-            vec![
-                make_script_validator("a", "exit 1"),
-                cond_v,
-            ],
-        );
-        let config = make_test_config(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let mut opts = RunOptions::new();
-        opts.run_all = true;
-
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
-        // b should be skipped because a failed
-        let b_result = verdict.history.iter().find(|r| r.name == "b").unwrap();
-        assert_eq!(b_result.status, Status::Skip);
-    }
-
-    #[test]
-    fn gate_warn_from_script() {
-        let mut v = make_script_validator("check", "exit 2");
-        v.warn_exit_codes = vec![2];
-
-        let gate = make_gate("test", vec![v]);
-        let config = make_test_config(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let opts = RunOptions::new();
-
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
-        assert_eq!(verdict.status, VerdictStatus::Pass);
-        assert_eq!(verdict.warnings, vec!["check"]);
-    }
-
-    #[test]
-    fn gate_only_filter() {
-        let gate = make_gate(
-            "test",
-            vec![
-                make_script_validator("a", "exit 0"),
-                make_script_validator("b", "exit 0"),
-                make_script_validator("c", "exit 0"),
-            ],
-        );
-        let config = make_test_config(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let mut opts = RunOptions::new();
-        opts.only = Some(vec!["b".into()]);
-
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
-        let b_result = verdict.history.iter().find(|r| r.name == "b").unwrap();
-        assert_eq!(b_result.status, Status::Pass);
-        let a_result = verdict.history.iter().find(|r| r.name == "a").unwrap();
-        assert_eq!(a_result.status, Status::Skip);
-    }
-
-    #[test]
-    fn gate_skip_filter() {
-        let gate = make_gate(
-            "test",
-            vec![
-                make_script_validator("a", "exit 0"),
-                make_script_validator("b", "exit 0"),
-            ],
-        );
-        let config = make_test_config(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let mut opts = RunOptions::new();
-        opts.skip = Some(vec!["a".into()]);
-
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
-        let a_result = verdict.history.iter().find(|r| r.name == "a").unwrap();
-        assert_eq!(a_result.status, Status::Skip);
-    }
-
-    #[test]
-    fn gate_tags_filter() {
-        let mut v1 = make_script_validator("fast", "exit 0");
-        v1.tags = vec!["quick".into()];
-        let mut v2 = make_script_validator("slow", "exit 0");
-        v2.tags = vec!["deep".into()];
-
-        let gate = make_gate("test", vec![v1, v2]);
-        let config = make_test_config(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let mut opts = RunOptions::new();
-        opts.tags = Some(vec!["quick".into()]);
-
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
-        let fast = verdict.history.iter().find(|r| r.name == "fast").unwrap();
-        assert_eq!(fast.status, Status::Pass);
-        let slow = verdict.history.iter().find(|r| r.name == "slow").unwrap();
-        assert_eq!(slow.status, Status::Skip);
-    }
-
-    #[test]
-    fn gate_suppress_errors() {
-        let gate = make_gate(
-            "test",
-            vec![
-                make_script_validator("a", "exit 0"),
-                // This will fail, not error, but let's test with a validator that errors
-                make_script_validator("b", "exit 1"),
-            ],
-        );
-        let config = make_test_config(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let mut opts = RunOptions::new();
-        opts.suppressed_statuses = vec![Status::Fail];
-
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
-        // Fail is suppressed, so pipeline continues and gate passes
-        assert_eq!(verdict.status, VerdictStatus::Pass);
-        // But history still records the true status
-        let b_result = verdict.history.iter().find(|r| r.name == "b").unwrap();
-        assert_eq!(b_result.status, Status::Fail);
-    }
-
-    #[test]
-    fn gate_required_context_missing() {
-        let mut gate = make_gate("test", vec![make_script_validator("a", "exit 0")]);
-        gate.context.insert(
-            "spec".into(),
-            ContextSlot {
-                description: None,
-                required: true,
-            },
-        );
-        let config = make_test_config(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let opts = RunOptions::new();
-
-        let result = run_gate(&gate, &config, &mut art, &mut ctx, &opts);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("Missing required context"));
-    }
-
-    #[test]
-    fn gate_error_vs_fail_in_all_mode() {
-        // Use a command that will error (nonexistent working dir)
-        let mut err_v = make_script_validator("error-v", "exit 0");
-        err_v.working_dir = Some("/nonexistent/dir".into());
-
-        let gate = make_gate(
-            "test",
-            vec![
-                make_script_validator("fail-v", "exit 1"),
-                err_v,
-            ],
-        );
-        let config = make_test_config(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let mut opts = RunOptions::new();
-        opts.run_all = true;
-
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
-        // Error takes precedence over fail
-        assert_eq!(verdict.status, VerdictStatus::Error);
-    }
-
-    #[test]
-    fn gate_suppress_errors_with_all_mode() {
-        let mut err_v = make_script_validator("error-v", "exit 0");
-        err_v.working_dir = Some("/nonexistent/dir".into());
-
-        let gate = make_gate(
-            "test",
-            vec![
-                make_script_validator("fail-v", "exit 1"),
-                err_v,
-            ],
-        );
-        let config = make_test_config(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let mut opts = RunOptions::new();
-        opts.run_all = true;
-        opts.suppressed_statuses = vec![Status::Error];
-
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
-        // Error suppressed, fail remains
-        assert_eq!(verdict.status, VerdictStatus::Fail);
-    }
-
-    #[test]
-    fn gate_suppress_all_in_all_mode() {
-        let mut err_v = make_script_validator("error-v", "exit 0");
-        err_v.working_dir = Some("/nonexistent/dir".into());
-
-        let gate = make_gate(
-            "test",
-            vec![
-                make_script_validator("fail-v", "exit 1"),
-                err_v,
-            ],
-        );
-        let config = make_test_config(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let mut opts = RunOptions::new();
-        opts.run_all = true;
-        opts.suppressed_statuses = vec![Status::Error, Status::Fail, Status::Warn];
-
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
-        assert_eq!(verdict.status, VerdictStatus::Pass);
-    }
-
-    // ─── LLM completion validator tests ─────────────────
-
-    use std::io::{Read, Write};
-    use std::net::TcpListener;
-
-    /// Start a mock HTTP server that returns a fixed response body.
-    /// Returns (port, join_handle). The server handles exactly one request.
-    fn start_mock_server(status_code: u16, response_body: &str) -> (u16, std::thread::JoinHandle<String>) {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let body = response_body.to_string();
-
-        let handle = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut buf = [0u8; 4096];
-            let n = stream.read(&mut buf).unwrap();
-            let request = String::from_utf8_lossy(&buf[..n]).to_string();
-
-            let response = format!(
-                "HTTP/1.1 {status_code} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                body.len(),
-                body
-            );
-            stream.write_all(response.as_bytes()).unwrap();
-            stream.flush().unwrap();
-            request
-        });
-
-        (port, handle)
-    }
-
-    fn make_llm_validator(name: &str, prompt: &str) -> ValidatorConfig {
-        ValidatorConfig {
-            name: name.into(),
-            validator_type: ValidatorType::Llm,
-            blocking: true,
-            run_if: None,
-            timeout_seconds: 30,
-            tags: vec![],
-            command: None,
-            warn_exit_codes: vec![],
-            working_dir: None,
-            env: BTreeMap::new(),
-            mode: LlmMode::Completion,
-            provider: "default".into(),
-            model: Some("test-model".into()),
-            prompt: Some(prompt.into()),
-            context_refs: vec![],
-            temperature: 0.0,
-            response_format: ResponseFormat::Verdict,
-            max_tokens: Some(4096),
-            system_prompt: None,
-            runtime: None,
-            sandbox: None,
-            max_iterations: None,
-        }
-    }
-
-    fn make_config_with_provider(api_base: &str) -> BatonConfig {
-        let mut providers = BTreeMap::new();
-        providers.insert(
-            "default".into(),
-            Provider {
-                api_base: api_base.into(),
-                api_key_env: "".into(), // no auth for tests
-                default_model: "test-model".into(),
-            },
-        );
-
-        let mut gates = BTreeMap::new();
-        gates.insert(
-            "test".into(),
-            GateConfig {
-                name: "test".into(),
-                description: None,
-                context: BTreeMap::new(),
-                validators: vec![],
-            },
-        );
-
-        BatonConfig {
-            version: "0.4".into(),
-            defaults: Defaults {
-                timeout_seconds: 300,
-                blocking: true,
-                prompts_dir: "/tmp/prompts".into(),
-                log_dir: "/tmp/logs".into(),
-                history_db: "/tmp/history.db".into(),
-                tmp_dir: "/tmp/tmp".into(),
-            },
-            providers,
-            runtimes: BTreeMap::new(),
-            gates,
-            config_dir: "/tmp".into(),
-        }
-    }
-
-    #[test]
-    fn llm_completion_pass_verdict() {
-        let response = serde_json::json!({
-            "choices": [{
-                "message": {
-                    "content": "PASS — code looks good"
-                }
-            }],
-            "usage": {
-                "prompt_tokens": 100,
-                "completion_tokens": 20
-            }
-        });
-
-        let (port, handle) = start_mock_server(200, &response.to_string());
-        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
-
-        let v = make_llm_validator("llm-check", "Review this code");
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
-        assert_eq!(result.status, Status::Pass);
-        assert!(result.cost.is_some());
-        let cost = result.cost.unwrap();
-        assert_eq!(cost.input_tokens, Some(100));
-        assert_eq!(cost.output_tokens, Some(20));
-        assert_eq!(cost.model, Some("test-model".into()));
-
-        // Verify the request was sent
-        let request = handle.join().unwrap();
-        assert!(request.contains("POST"));
-        assert!(request.contains("/v1/chat/completions"));
-    }
-
-    #[test]
-    fn llm_completion_fail_verdict() {
-        let response = serde_json::json!({
-            "choices": [{
-                "message": {
-                    "content": "FAIL — missing error handling in function parse()"
-                }
-            }],
-            "usage": {
-                "prompt_tokens": 150,
-                "completion_tokens": 30
-            }
-        });
-
-        let (port, handle) = start_mock_server(200, &response.to_string());
-        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
-
-        let v = make_llm_validator("llm-check", "Review this code");
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
-        assert_eq!(result.status, Status::Fail);
-        assert!(result.feedback.as_ref().unwrap().contains("missing error handling"));
-
-        handle.join().unwrap();
-    }
-
-    #[test]
-    fn llm_completion_warn_verdict() {
-        let response = serde_json::json!({
-            "choices": [{
-                "message": {
-                    "content": "WARN minor style issue"
-                }
-            }]
-        });
-
-        let (port, handle) = start_mock_server(200, &response.to_string());
-        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
-
-        let v = make_llm_validator("llm-check", "Review this");
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
-        assert_eq!(result.status, Status::Warn);
-
-        handle.join().unwrap();
-    }
-
-    #[test]
-    fn llm_completion_unparseable_verdict() {
-        let response = serde_json::json!({
-            "choices": [{
-                "message": {
-                    "content": "I reviewed the code but I'm not sure what to say about it."
-                }
-            }]
-        });
-
-        let (port, handle) = start_mock_server(200, &response.to_string());
-        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
-
-        let v = make_llm_validator("llm-check", "Review this");
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
-        assert_eq!(result.status, Status::Error);
-        assert!(result.feedback.as_ref().unwrap().contains("Could not parse verdict"));
-
-        handle.join().unwrap();
-    }
-
-    #[test]
-    fn llm_completion_empty_response() {
-        let response = serde_json::json!({
-            "choices": [{
-                "message": {
-                    "content": ""
-                }
-            }]
-        });
-
-        let (port, handle) = start_mock_server(200, &response.to_string());
-        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
-
-        let v = make_llm_validator("llm-check", "Review this");
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
-        assert_eq!(result.status, Status::Error);
-        assert!(result.feedback.as_ref().unwrap().contains("empty or malformed"));
-
-        handle.join().unwrap();
-    }
-
-    #[test]
-    fn llm_completion_http_401() {
-        let (port, handle) = start_mock_server(401, r#"{"error": "unauthorized"}"#);
-        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
-
-        let v = make_llm_validator("llm-check", "Review this");
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
-        assert_eq!(result.status, Status::Error);
-        assert!(result.feedback.as_ref().unwrap().contains("Authentication failed"));
-
-        handle.join().unwrap();
-    }
-
-    #[test]
-    fn llm_completion_http_404() {
-        let (port, handle) = start_mock_server(404, r#"{"error": "model not found"}"#);
-        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
-
-        let v = make_llm_validator("llm-check", "Review this");
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
-        assert_eq!(result.status, Status::Error);
-        assert!(result.feedback.as_ref().unwrap().contains("Model"));
-        assert!(result.feedback.as_ref().unwrap().contains("not found"));
-
-        handle.join().unwrap();
-    }
-
-    #[test]
-    fn llm_completion_http_429() {
-        let (port, handle) = start_mock_server(429, r#"{"error": "rate limited"}"#);
-        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
-
-        let v = make_llm_validator("llm-check", "Review this");
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
-        assert_eq!(result.status, Status::Error);
-        assert!(result.feedback.as_ref().unwrap().contains("Rate limited"));
-
-        handle.join().unwrap();
-    }
-
-    #[test]
-    fn llm_completion_http_500() {
-        let (port, handle) = start_mock_server(500, r#"{"error": "internal error"}"#);
-        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
-
-        let v = make_llm_validator("llm-check", "Review this");
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
-        assert_eq!(result.status, Status::Error);
-        assert!(result.feedback.as_ref().unwrap().contains("HTTP 500"));
-
-        handle.join().unwrap();
-    }
-
-    #[test]
-    fn llm_completion_unreachable_provider() {
-        let config = make_config_with_provider("http://127.0.0.1:1");
-        let v = make_llm_validator("llm-check", "Review this");
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
-        assert_eq!(result.status, Status::Error);
-        assert!(result.feedback.as_ref().unwrap().contains("Cannot reach provider"));
-    }
-
-    #[test]
-    fn llm_completion_missing_provider() {
-        let config = make_config_with_provider("http://localhost");
-        let mut v = make_llm_validator("llm-check", "Review this");
-        v.provider = "nonexistent".into();
-
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
-        assert_eq!(result.status, Status::Error);
-        assert!(result.feedback.as_ref().unwrap().contains("not defined"));
-    }
-
-    #[test]
-    fn llm_completion_no_config() {
-        let v = make_llm_validator("llm-check", "Review this");
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
-        assert_eq!(result.status, Status::Error);
-        assert!(result.feedback.as_ref().unwrap().contains("requires config"));
-    }
-
-    #[test]
-    fn llm_completion_freeform_returns_warn() {
-        let response = serde_json::json!({
-            "choices": [{
-                "message": {
-                    "content": "The code could use better variable names."
-                }
-            }]
-        });
-
-        let (port, handle) = start_mock_server(200, &response.to_string());
-        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
-
-        let mut v = make_llm_validator("llm-check", "Review this");
-        v.response_format = ResponseFormat::Freeform;
-
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
-        assert_eq!(result.status, Status::Warn);
-        assert!(result.feedback.as_ref().unwrap().contains("variable names"));
-
-        handle.join().unwrap();
-    }
-
-    #[test]
-    fn llm_completion_with_system_prompt() {
-        let response = serde_json::json!({
-            "choices": [{
-                "message": {
-                    "content": "PASS"
-                }
-            }]
-        });
-
-        let (port, handle) = start_mock_server(200, &response.to_string());
-        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
-
-        let mut v = make_llm_validator("llm-check", "Review this");
-        v.system_prompt = Some("You are a code reviewer.".into());
-
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
-        assert_eq!(result.status, Status::Pass);
-
-        // Verify system message was sent
-        let request = handle.join().unwrap();
-        assert!(request.contains("system"));
-        assert!(request.contains("code reviewer"));
-    }
-
-    #[test]
-    fn llm_completion_with_placeholders() {
-        let response = serde_json::json!({
-            "choices": [{
-                "message": {
-                    "content": "PASS"
-                }
-            }]
-        });
-
-        let (port, handle) = start_mock_server(200, &response.to_string());
-        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
-
-        let v = make_llm_validator("llm-check", "Review: {artifact_content}");
-
-        let mut art = Artifact::from_string("def hello(): pass");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
-        assert_eq!(result.status, Status::Pass);
-
-        // Verify placeholder was resolved in the request
-        let request = handle.join().unwrap();
-        assert!(request.contains("def hello()"));
-    }
-
-    #[test]
-    fn llm_completion_cost_tracking() {
-        let response = serde_json::json!({
-            "choices": [{
-                "message": {
-                    "content": "PASS"
-                }
-            }],
-            "usage": {
-                "prompt_tokens": 500,
-                "completion_tokens": 100
-            }
-        });
-
-        let (port, handle) = start_mock_server(200, &response.to_string());
-        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
-
-        let v = make_llm_validator("llm-check", "Review this");
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
-        assert!(result.cost.is_some());
-        let cost = result.cost.unwrap();
-        assert_eq!(cost.input_tokens, Some(500));
-        assert_eq!(cost.output_tokens, Some(100));
-        assert_eq!(cost.model, Some("test-model".into()));
-
-        handle.join().unwrap();
-    }
-
-    #[test]
-    fn llm_completion_no_usage_in_response() {
-        let response = serde_json::json!({
-            "choices": [{
-                "message": {
-                    "content": "PASS"
-                }
-            }]
-        });
-
-        let (port, handle) = start_mock_server(200, &response.to_string());
-        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
-
-        let v = make_llm_validator("llm-check", "Review this");
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
-        assert_eq!(result.status, Status::Pass);
-        assert!(result.cost.is_none());
-
-        handle.join().unwrap();
-    }
-
-    #[test]
-    fn llm_completion_uses_default_model() {
-        let response = serde_json::json!({
-            "choices": [{
-                "message": {
-                    "content": "PASS"
-                }
-            }],
-            "usage": {
-                "prompt_tokens": 50,
-                "completion_tokens": 10
-            }
-        });
-
-        let (port, handle) = start_mock_server(200, &response.to_string());
-        let config = make_config_with_provider(&format!("http://127.0.0.1:{port}"));
-
-        let mut v = make_llm_validator("llm-check", "Review this");
-        v.model = None; // Should use provider default
-
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
-        assert_eq!(result.status, Status::Pass);
-        // Cost should reflect the provider's default model
-        let cost = result.cost.unwrap();
-        assert_eq!(cost.model, Some("test-model".into()));
-
-        let request = handle.join().unwrap();
-        assert!(request.contains("test-model"));
-    }
-
-    #[test]
-    fn llm_completion_in_gate_run() {
-        let response = serde_json::json!({
-            "choices": [{
-                "message": {
-                    "content": "PASS"
-                }
-            }]
-        });
-
-        let (port, handle) = start_mock_server(200, &response.to_string());
-        let api_base = format!("http://127.0.0.1:{port}");
-
-        let v = make_llm_validator("llm-check", "Review this");
-        let gate = make_gate("test", vec![v]);
-
-        let mut config = make_config_with_provider(&api_base);
-        config.gates.insert("test".into(), gate.clone());
-
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let opts = RunOptions::new();
-
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
-        assert_eq!(verdict.status, VerdictStatus::Pass);
-        assert_eq!(verdict.history.len(), 1);
-        assert_eq!(verdict.history[0].status, Status::Pass);
-
-        handle.join().unwrap();
-    }
-
-    #[test]
-    fn llm_completion_fail_blocks_gate() {
-        let response = serde_json::json!({
-            "choices": [{
-                "message": {
-                    "content": "FAIL — missing tests"
-                }
-            }]
-        });
-
-        let (port, handle) = start_mock_server(200, &response.to_string());
-        let api_base = format!("http://127.0.0.1:{port}");
-
-        let v = make_llm_validator("llm-check", "Review this");
-        let gate = make_gate(
-            "test",
-            vec![v, make_script_validator("after", "exit 0")],
-        );
-
-        let mut config = make_config_with_provider(&api_base);
-        config.gates.insert("test".into(), gate.clone());
-
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let opts = RunOptions::new();
-
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
-        assert_eq!(verdict.status, VerdictStatus::Fail);
-        assert_eq!(verdict.failed_at, Some("llm-check".into()));
-        // After validator should not have run (blocking)
-        assert_eq!(verdict.history.len(), 1);
-
-        handle.join().unwrap();
-    }
-
-    // ─── LLM session validator tests ────────────────────
-
-    #[test]
-    fn llm_session_no_config() {
-        let mut v = make_llm_validator("session-check", "Review this");
-        v.mode = LlmMode::Session;
-        v.runtime = Some("openhands".into());
-
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
-        assert_eq!(result.status, Status::Error);
-        assert!(result.feedback.as_ref().unwrap().contains("requires config"));
-    }
-
-    #[test]
-    fn llm_session_missing_runtime() {
-        let config = make_config_with_provider("http://localhost");
-        let mut v = make_llm_validator("session-check", "Review this");
-        v.mode = LlmMode::Session;
-        v.runtime = None;
-
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
-        assert_eq!(result.status, Status::Error);
-        assert!(result.feedback.as_ref().unwrap().contains("runtime"));
-    }
-
-    #[test]
-    fn llm_session_undefined_runtime() {
-        let config = make_config_with_provider("http://localhost");
-        let mut v = make_llm_validator("session-check", "Review this");
-        v.mode = LlmMode::Session;
-        v.runtime = Some("nonexistent".into());
-
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let prior = BTreeMap::new();
-
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
-        assert_eq!(result.status, Status::Error);
-        assert!(result.feedback.as_ref().unwrap().contains("not defined"));
-    }
-
-    // ─── extract_cost tests ─────────────────────────────
+    // ─── extract_cost ─────────────────────────────────
 
     #[test]
     fn extract_cost_full_usage() {
@@ -2460,4 +1313,989 @@ mod tests {
         assert_eq!(cost.input_tokens, Some(100));
         assert_eq!(cost.output_tokens, None);
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Behavioral contract tests
+    // ═══════════════════════════════════════════════════════════════
+
+    // ─── Script validator tests ──────────────────────
+
+    #[test]
+    fn script_exit_0_pass() {
+        let v = ValidatorBuilder::script("test", "exit 0").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        assert_eq!(result.status, Status::Pass);
+    }
+
+    #[test]
+    fn script_exit_1_fail() {
+        let v = ValidatorBuilder::script("test", "exit 1").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        assert_eq!(result.status, Status::Fail);
+    }
+
+    #[test]
+    fn script_exit_with_warn_code() {
+        let v = ValidatorBuilder::script("test", "echo 'warning message' && exit 2")
+            .warn_exit_codes(vec![2])
+            .build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        assert_eq!(result.status, Status::Warn);
+        assert!(result.feedback.as_ref().unwrap().contains("warning message"));
+    }
+
+    #[test]
+    fn script_exit_2_without_warn_codes_is_fail() {
+        let v = ValidatorBuilder::script("test", "exit 2").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        assert_eq!(result.status, Status::Fail);
+    }
+
+    #[test]
+    fn script_no_output_fail_feedback() {
+        let v = ValidatorBuilder::script("test", "exit 1").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        assert_eq!(result.status, Status::Fail);
+        assert!(result.feedback.as_ref().unwrap().contains("no output"));
+    }
+
+    #[test]
+    fn script_with_stderr_feedback() {
+        let v = ValidatorBuilder::script("test", "echo 'error detail' >&2 && exit 1").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        assert_eq!(result.status, Status::Fail);
+        assert!(result.feedback.as_ref().unwrap().contains("error detail"));
+    }
+
+    #[test]
+    fn script_placeholder_resolution() {
+        let dir = TempDir::new().unwrap();
+        let art_path = dir.path().join("test.txt");
+        std::fs::write(&art_path, "hello").unwrap();
+
+        let v = ValidatorBuilder::script("test", "cat {artifact}").build();
+        let mut art = Artifact::from_file(&art_path).unwrap();
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        assert_eq!(result.status, Status::Pass);
+    }
+
+    // ─── Human validator tests ───────────────────────
+
+    #[test]
+    fn human_validator_fails_with_prompt() {
+        let v = ValidatorBuilder::human("human", "Please review this change.").build();
+
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        assert_eq!(result.status, Status::Fail);
+        assert!(result.feedback.as_ref().unwrap().contains("[human-review-requested]"));
+        assert!(result.feedback.as_ref().unwrap().contains("Please review"));
+    }
+
+    // ─── Gate run tests ──────────────────────────────
+
+    #[test]
+    fn gate_all_pass() {
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("a", "exit 0").build(),
+                ValidatorBuilder::script("b", "exit 0").build(),
+                ValidatorBuilder::script("c", "exit 0").build(),
+            ],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let opts = RunOptions::new();
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        assert_eq!(verdict.status, VerdictStatus::Pass);
+        assert_eq!(verdict.history.len(), 3);
+    }
+
+    #[test]
+    fn gate_first_fail_blocks() {
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("a", "exit 0").build(),
+                ValidatorBuilder::script("b", "exit 1").build(),
+                ValidatorBuilder::script("c", "exit 0").build(),
+            ],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let opts = RunOptions::new();
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        assert_eq!(verdict.status, VerdictStatus::Fail);
+        assert_eq!(verdict.failed_at, Some("b".into()));
+        // c should not have run
+        assert_eq!(verdict.history.len(), 2);
+    }
+
+    #[test]
+    fn gate_non_blocking_failure_passes() {
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("a", "exit 0").build(),
+                ValidatorBuilder::script("b", "exit 1").blocking(false).build(),
+                ValidatorBuilder::script("c", "exit 0").build(),
+            ],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let opts = RunOptions::new();
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        assert_eq!(verdict.status, VerdictStatus::Pass);
+        // All 3 ran
+        assert_eq!(verdict.history.len(), 3);
+    }
+
+    #[test]
+    fn gate_all_mode_runs_everything() {
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("a", "exit 0").build(),
+                ValidatorBuilder::script("b", "exit 1").build(),
+                ValidatorBuilder::script("c", "exit 0").build(),
+            ],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let mut opts = RunOptions::new();
+        opts.run_all = true;
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        assert_eq!(verdict.status, VerdictStatus::Fail);
+        assert_eq!(verdict.history.len(), 3);
+    }
+
+    #[test]
+    fn gate_all_mode_non_blocking_failure_counts() {
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("a", "exit 0").build(),
+                ValidatorBuilder::script("b", "exit 1").blocking(false).build(),
+                ValidatorBuilder::script("c", "exit 0").build(),
+            ],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let mut opts = RunOptions::new();
+        opts.run_all = true;
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        assert_eq!(verdict.status, VerdictStatus::Fail);
+    }
+
+    #[test]
+    fn gate_conditional_skip() {
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("a", "exit 1").build(),
+                ValidatorBuilder::script("b", "exit 0").run_if("a.status == pass").build(),
+            ],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let mut opts = RunOptions::new();
+        opts.run_all = true;
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        // b should be skipped because a failed
+        let b_result = verdict.history.iter().find(|r| r.name == "b").unwrap();
+        assert_eq!(b_result.status, Status::Skip);
+    }
+
+    #[test]
+    fn gate_warn_from_script() {
+        let gate = th::gate("test", vec![
+            ValidatorBuilder::script("check", "exit 2").warn_exit_codes(vec![2]).build(),
+        ]);
+        let config = th::config_for_gate(gate.clone());
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let opts = RunOptions::new();
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        assert_eq!(verdict.status, VerdictStatus::Pass);
+        assert_eq!(verdict.warnings, vec!["check"]);
+    }
+
+    #[test]
+    fn gate_only_filter() {
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("a", "exit 0").build(),
+                ValidatorBuilder::script("b", "exit 0").build(),
+                ValidatorBuilder::script("c", "exit 0").build(),
+            ],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let mut opts = RunOptions::new();
+        opts.only = Some(vec!["b".into()]);
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        let b_result = verdict.history.iter().find(|r| r.name == "b").unwrap();
+        assert_eq!(b_result.status, Status::Pass);
+        let a_result = verdict.history.iter().find(|r| r.name == "a").unwrap();
+        assert_eq!(a_result.status, Status::Skip);
+    }
+
+    #[test]
+    fn gate_skip_filter() {
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("a", "exit 0").build(),
+                ValidatorBuilder::script("b", "exit 0").build(),
+            ],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let mut opts = RunOptions::new();
+        opts.skip = Some(vec!["a".into()]);
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        let a_result = verdict.history.iter().find(|r| r.name == "a").unwrap();
+        assert_eq!(a_result.status, Status::Skip);
+    }
+
+    #[test]
+    fn gate_tags_filter() {
+        let gate = th::gate("test", vec![
+            ValidatorBuilder::script("fast", "exit 0").tags(vec!["quick"]).build(),
+            ValidatorBuilder::script("slow", "exit 0").tags(vec!["deep"]).build(),
+        ]);
+        let config = th::config_for_gate(gate.clone());
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let mut opts = RunOptions::new();
+        opts.tags = Some(vec!["quick".into()]);
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        let fast = verdict.history.iter().find(|r| r.name == "fast").unwrap();
+        assert_eq!(fast.status, Status::Pass);
+        let slow = verdict.history.iter().find(|r| r.name == "slow").unwrap();
+        assert_eq!(slow.status, Status::Skip);
+    }
+
+    #[test]
+    fn gate_suppress_errors() {
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("a", "exit 0").build(),
+                // This will fail, not error, but let's test with a validator that errors
+                ValidatorBuilder::script("b", "exit 1").build(),
+            ],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let mut opts = RunOptions::new();
+        opts.suppressed_statuses = vec![Status::Fail];
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        // Fail is suppressed, so pipeline continues and gate passes
+        assert_eq!(verdict.status, VerdictStatus::Pass);
+        // But history still records the true status
+        let b_result = verdict.history.iter().find(|r| r.name == "b").unwrap();
+        assert_eq!(b_result.status, Status::Fail);
+    }
+
+    #[test]
+    fn gate_required_context_missing() {
+        let mut gate = th::gate("test", vec![ValidatorBuilder::script("a", "exit 0").build()]);
+        gate.context.insert(
+            "spec".into(),
+            ContextSlot {
+                description: None,
+                required: true,
+            },
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let opts = RunOptions::new();
+
+        let result = run_gate(&gate, &config, &mut art, &mut ctx, &opts);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Missing required context"));
+    }
+
+    #[test]
+    fn gate_error_vs_fail_in_all_mode() {
+        // Use a command that will error (nonexistent working dir)
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("fail-v", "exit 1").build(),
+                ValidatorBuilder::script("error-v", "exit 0").working_dir("/nonexistent/dir").build(),
+            ],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let mut opts = RunOptions::new();
+        opts.run_all = true;
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        // Error takes precedence over fail
+        assert_eq!(verdict.status, VerdictStatus::Error);
+    }
+
+    #[test]
+    fn gate_suppress_errors_with_all_mode() {
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("fail-v", "exit 1").build(),
+                ValidatorBuilder::script("error-v", "exit 0").working_dir("/nonexistent/dir").build(),
+            ],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let mut opts = RunOptions::new();
+        opts.run_all = true;
+        opts.suppressed_statuses = vec![Status::Error];
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        // Error suppressed, fail remains
+        assert_eq!(verdict.status, VerdictStatus::Fail);
+    }
+
+    #[test]
+    fn gate_suppress_all_in_all_mode() {
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("fail-v", "exit 1").build(),
+                ValidatorBuilder::script("error-v", "exit 0").working_dir("/nonexistent/dir").build(),
+            ],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let mut opts = RunOptions::new();
+        opts.run_all = true;
+        opts.suppressed_statuses = vec![Status::Error, Status::Fail, Status::Warn];
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        assert_eq!(verdict.status, VerdictStatus::Pass);
+    }
+
+    // ─── LLM completion validator tests ─────────────────
+
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    /// Start a mock HTTP server that returns a fixed response body.
+    /// Returns (port, join_handle). The server handles exactly one request.
+    fn start_mock_server(status_code: u16, response_body: &str) -> (u16, std::thread::JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let body = response_body.to_string();
+
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let n = stream.read(&mut buf).unwrap();
+            let request = String::from_utf8_lossy(&buf[..n]).to_string();
+
+            let response = format!(
+                "HTTP/1.1 {status_code} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+            stream.flush().unwrap();
+            request
+        });
+
+        (port, handle)
+    }
+
+
+    #[test]
+    fn llm_completion_pass_verdict() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "PASS — code looks good"
+                }
+            }],
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 20
+            }
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = ValidatorBuilder::llm("llm-check", "Review this code").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Pass);
+        assert!(result.cost.is_some());
+        let cost = result.cost.unwrap();
+        assert_eq!(cost.input_tokens, Some(100));
+        assert_eq!(cost.output_tokens, Some(20));
+        assert_eq!(cost.model, Some("test-model".into()));
+
+        // Verify the request was sent
+        let request = handle.join().unwrap();
+        assert!(request.contains("POST"));
+        assert!(request.contains("/v1/chat/completions"));
+    }
+
+    #[test]
+    fn llm_completion_fail_verdict() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "FAIL — missing error handling in function parse()"
+                }
+            }],
+            "usage": {
+                "prompt_tokens": 150,
+                "completion_tokens": 30
+            }
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = ValidatorBuilder::llm("llm-check", "Review this code").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Fail);
+        assert!(result.feedback.as_ref().unwrap().contains("missing error handling"));
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn llm_completion_warn_verdict() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "WARN minor style issue"
+                }
+            }]
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = ValidatorBuilder::llm("llm-check", "Review this").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Warn);
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn llm_completion_unparseable_verdict() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "I reviewed the code but I'm not sure what to say about it."
+                }
+            }]
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = ValidatorBuilder::llm("llm-check", "Review this").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("Could not parse verdict"));
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn llm_completion_empty_response() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": ""
+                }
+            }]
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = ValidatorBuilder::llm("llm-check", "Review this").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("empty or malformed"));
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn llm_completion_http_401() {
+        let (port, handle) = start_mock_server(401, r#"{"error": "unauthorized"}"#);
+        let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = ValidatorBuilder::llm("llm-check", "Review this").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("Authentication failed"));
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn llm_completion_http_404() {
+        let (port, handle) = start_mock_server(404, r#"{"error": "model not found"}"#);
+        let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = ValidatorBuilder::llm("llm-check", "Review this").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("Model"));
+        assert!(result.feedback.as_ref().unwrap().contains("not found"));
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn llm_completion_http_429() {
+        let (port, handle) = start_mock_server(429, r#"{"error": "rate limited"}"#);
+        let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = ValidatorBuilder::llm("llm-check", "Review this").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("Rate limited"));
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn llm_completion_http_500() {
+        let (port, handle) = start_mock_server(500, r#"{"error": "internal error"}"#);
+        let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = ValidatorBuilder::llm("llm-check", "Review this").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("HTTP 500"));
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn llm_completion_unreachable_provider() {
+        let config = th::config_with_provider("http://127.0.0.1:1");
+        let v = ValidatorBuilder::llm("llm-check", "Review this").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("Cannot reach provider"));
+    }
+
+    #[test]
+    fn llm_completion_missing_provider() {
+        let config = th::config_with_provider("http://localhost");
+        let v = ValidatorBuilder::llm("llm-check", "Review this").provider("nonexistent").build();
+
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("not defined"));
+    }
+
+    #[test]
+    fn llm_completion_no_config() {
+        let v = ValidatorBuilder::llm("llm-check", "Review this").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("requires config"));
+    }
+
+    #[test]
+    fn llm_completion_freeform_returns_warn() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "The code could use better variable names."
+                }
+            }]
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = ValidatorBuilder::llm("llm-check", "Review this")
+            .response_format(ResponseFormat::Freeform)
+            .build();
+
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Warn);
+        assert!(result.feedback.as_ref().unwrap().contains("variable names"));
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn llm_completion_with_system_prompt() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "PASS"
+                }
+            }]
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = ValidatorBuilder::llm("llm-check", "Review this")
+            .system_prompt("You are a code reviewer.")
+            .build();
+
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Pass);
+
+        // Verify system message was sent
+        let request = handle.join().unwrap();
+        assert!(request.contains("system"));
+        assert!(request.contains("code reviewer"));
+    }
+
+    #[test]
+    fn llm_completion_with_placeholders() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "PASS"
+                }
+            }]
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = ValidatorBuilder::llm("llm-check", "Review: {artifact_content}").build();
+
+        let mut art = Artifact::from_string("def hello(): pass");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Pass);
+
+        // Verify placeholder was resolved in the request
+        let request = handle.join().unwrap();
+        assert!(request.contains("def hello()"));
+    }
+
+    #[test]
+    fn llm_completion_cost_tracking() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "PASS"
+                }
+            }],
+            "usage": {
+                "prompt_tokens": 500,
+                "completion_tokens": 100
+            }
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = ValidatorBuilder::llm("llm-check", "Review this").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert!(result.cost.is_some());
+        let cost = result.cost.unwrap();
+        assert_eq!(cost.input_tokens, Some(500));
+        assert_eq!(cost.output_tokens, Some(100));
+        assert_eq!(cost.model, Some("test-model".into()));
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn llm_completion_no_usage_in_response() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "PASS"
+                }
+            }]
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = ValidatorBuilder::llm("llm-check", "Review this").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Pass);
+        assert!(result.cost.is_none());
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn llm_completion_uses_default_model() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "PASS"
+                }
+            }],
+            "usage": {
+                "prompt_tokens": 50,
+                "completion_tokens": 10
+            }
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = ValidatorBuilder::llm("llm-check", "Review this")
+            .no_model() // Should use provider default
+            .build();
+
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Pass);
+        // Cost should reflect the provider's default model
+        let cost = result.cost.unwrap();
+        assert_eq!(cost.model, Some("test-model".into()));
+
+        let request = handle.join().unwrap();
+        assert!(request.contains("test-model"));
+    }
+
+    #[test]
+    fn llm_completion_in_gate_run() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "PASS"
+                }
+            }]
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let api_base = format!("http://127.0.0.1:{port}");
+
+        let v = ValidatorBuilder::llm("llm-check", "Review this").build();
+        let gate = th::gate("test", vec![v]);
+
+        let mut config = th::config_with_provider(&api_base);
+        config.gates.insert("test".into(), gate.clone());
+
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let opts = RunOptions::new();
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        assert_eq!(verdict.status, VerdictStatus::Pass);
+        assert_eq!(verdict.history.len(), 1);
+        assert_eq!(verdict.history[0].status, Status::Pass);
+
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn llm_completion_fail_blocks_gate() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "FAIL — missing tests"
+                }
+            }]
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let api_base = format!("http://127.0.0.1:{port}");
+
+        let v = ValidatorBuilder::llm("llm-check", "Review this").build();
+        let gate = th::gate(
+            "test",
+            vec![v, ValidatorBuilder::script("after", "exit 0").build()],
+        );
+
+        let mut config = th::config_with_provider(&api_base);
+        config.gates.insert("test".into(), gate.clone());
+
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let opts = RunOptions::new();
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        assert_eq!(verdict.status, VerdictStatus::Fail);
+        assert_eq!(verdict.failed_at, Some("llm-check".into()));
+        // After validator should not have run (blocking)
+        assert_eq!(verdict.history.len(), 1);
+
+        handle.join().unwrap();
+    }
+
+    // ─── LLM session validator tests ────────────────────
+
+    #[test]
+    fn llm_session_no_config() {
+        let v = ValidatorBuilder::llm("session-check", "Review this")
+            .mode(LlmMode::Session)
+            .runtime("openhands")
+            .build();
+
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("requires config"));
+    }
+
+    #[test]
+    fn llm_session_missing_runtime() {
+        let config = th::config_with_provider("http://localhost");
+        let v = ValidatorBuilder::llm("session-check", "Review this")
+            .mode(LlmMode::Session)
+            .build();
+
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("runtime"));
+    }
+
+    #[test]
+    fn llm_session_undefined_runtime() {
+        let config = th::config_with_provider("http://localhost");
+        let v = ValidatorBuilder::llm("session-check", "Review this")
+            .mode(LlmMode::Session)
+            .runtime("nonexistent")
+            .build();
+
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("not defined"));
+    }
+
 }
