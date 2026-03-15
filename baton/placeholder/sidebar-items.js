@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["resolve_env_vars","resolve_placeholders"],"struct":["ResolutionWarnings"]};

@@ -1,0 +1,9 @@
+(function() {
+    const implementors = Object.fromEntries([["baton",[["impl <a class=\"trait\" href=\"https://docs.rs/serde_core/1.0.228/serde_core/ser/trait.Serialize.html\" title=\"trait serde_core::ser::Serialize\">Serialize</a> for <a class=\"enum\" href=\"baton/types/enum.Status.html\" title=\"enum baton::types::Status\">Status</a>",0],["impl <a class=\"trait\" href=\"https://docs.rs/serde_core/1.0.228/serde_core/ser/trait.Serialize.html\" title=\"trait serde_core::ser::Serialize\">Serialize</a> for <a class=\"enum\" href=\"baton/types/enum.VerdictStatus.html\" title=\"enum baton::types::VerdictStatus\">VerdictStatus</a>",0],["impl <a class=\"trait\" href=\"https://docs.rs/serde_core/1.0.228/serde_core/ser/trait.Serialize.html\" title=\"trait serde_core::ser::Serialize\">Serialize</a> for <a class=\"struct\" href=\"baton/types/struct.Cost.html\" title=\"struct baton::types::Cost\">Cost</a>",0],["impl <a class=\"trait\" href=\"https://docs.rs/serde_core/1.0.228/serde_core/ser/trait.Serialize.html\" title=\"trait serde_core::ser::Serialize\">Serialize</a> for <a class=\"struct\" href=\"baton/types/struct.ValidatorResult.html\" title=\"struct baton::types::ValidatorResult\">ValidatorResult</a>",0],["impl <a class=\"trait\" href=\"https://docs.rs/serde_core/1.0.228/serde_core/ser/trait.Serialize.html\" title=\"trait serde_core::ser::Serialize\">Serialize</a> for <a class=\"struct\" href=\"baton/types/struct.Verdict.html\" title=\"struct baton::types::Verdict\">Verdict</a>",0]]]]);
+    if (window.register_implementors) {
+        window.register_implementors(implementors);
+    } else {
+        window.pending_implementors = implementors;
+    }
+})()
+//{"start":59,"fragment_lengths":[1444]}

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["init_db","query_by_artifact","query_recent","store_verdict"],"struct":["VerdictSummary"]};
