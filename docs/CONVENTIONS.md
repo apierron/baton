@@ -36,7 +36,7 @@ Serde default functions (`fn default_timeout() -> u64 { 300 }`) live immediately
 
 - Tests for `config.rs` live in `config.rs`, not in a separate `tests/` directory.
 - Integration tests (testing the compiled binary) use `assert_cmd` and live in `tests/`.
-- Test helper functions are defined inside `mod tests`, not extracted to a shared test utils module — unless three or more test modules need them.
+- Shared test helpers live in `src/test_helpers.rs` (`#[cfg(test)]` gated, `pub mod` in `lib.rs`). This module provides `ValidatorBuilder`, result/gate/config factories, and `MockRuntimeAdapter`. Import as `use crate::test_helpers as th;`. If a helper is only needed by one module, keep it local to that module's `mod tests`.
 
 ## Placeholder Resolution Is Lazy
 

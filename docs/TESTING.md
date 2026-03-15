@@ -108,16 +108,16 @@ For new features, cover:
 
 | Module | Tests |
 | ------ | ----- |
-| types | 20 |
+| types | 44 |
 | verdict_parser | 26 |
 | prompt | 17 |
-| placeholder | 16 |
-| config | 28 |
-| exec | 65 |
-| history | 8 |
+| placeholder | 26 |
+| config | 33 |
+| exec | 80 |
+| history | 27 |
 | runtime | 18 |
-| cli (integration) | 46 |
-| **Total** | **244** |
+| cli (integration) | 49 |
+| **Total** | **320** |
 
 ## Spec Files & Coverage Gaps
 
