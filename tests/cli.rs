@@ -137,8 +137,34 @@ fn check_pass_json_output() {
 }
 
 #[test]
+#[cfg(not(windows))]
 fn check_fail_exit_code_1() {
     let toml = minimal_toml("review", &script_validator("lint", "echo FAIL; exit 1"));
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args([
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    assert_eq!(verdict["status"], "fail");
+    assert_eq!(verdict["failed_at"], "lint");
+}
+
+#[test]
+#[cfg(windows)]
+fn check_fail_exit_code_1() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo FAIL & exit /b 1"));
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
@@ -880,10 +906,41 @@ fn suppress_all_treats_everything_as_pass() {
 // ─── Context ─────────────────────────────────────────────
 
 #[test]
+#[cfg(not(windows))]
 fn context_file_passed_to_validator() {
     let toml = minimal_toml(
         "review",
         &script_validator("check", "cat $BATON_CONTEXT_spec && echo PASS"),
+    );
+    let dir = setup_project(&toml, "hello");
+    fs::write(dir.path().join("spec.md"), "spec content").unwrap();
+
+    let output = baton()
+        .args([
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--context",
+            "spec=spec.md",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    assert_eq!(verdict["status"], "pass");
+}
+
+#[test]
+#[cfg(windows)]
+fn context_file_passed_to_validator() {
+    let toml = minimal_toml(
+        "review",
+        &script_validator("check", "type %BATON_CONTEXT_spec% && echo PASS"),
     );
     let dir = setup_project(&toml, "hello");
     fs::write(dir.path().join("spec.md"), "spec content").unwrap();
@@ -1114,10 +1171,38 @@ fn skip_unknown_validator_warns_but_runs() {
 // ─── Artifact via Environment Variable ──────────────────
 
 #[test]
+#[cfg(not(windows))]
 fn artifact_path_available_to_script() {
     let toml = minimal_toml(
         "review",
         &script_validator("check", "test -f $BATON_ARTIFACT && echo PASS"),
+    );
+    let dir = setup_project(&toml, "hello world");
+
+    let output = baton()
+        .args([
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    assert_eq!(verdict["status"], "pass");
+}
+
+#[test]
+#[cfg(windows)]
+fn artifact_path_available_to_script() {
+    let toml = minimal_toml(
+        "review",
+        &script_validator("check", "if exist %BATON_ARTIFACT% echo PASS"),
     );
     let dir = setup_project(&toml, "hello world");
 
