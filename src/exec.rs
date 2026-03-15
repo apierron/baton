@@ -155,10 +155,16 @@ fn execute_script_validator(
     }
 
     // Spawn process
-    let mut cmd = Command::new("sh");
-    cmd.arg("-c")
-        .arg(&resolved_command)
-        .current_dir(&working_dir);
+    let mut cmd = if cfg!(windows) {
+        let mut c = Command::new("cmd");
+        c.arg("/C").arg(&resolved_command);
+        c
+    } else {
+        let mut c = Command::new("sh");
+        c.arg("-c").arg(&resolved_command);
+        c
+    };
+    cmd.current_dir(&working_dir);
 
     // Add env vars
     for (k, v) in &validator.env {
