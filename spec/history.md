@@ -61,7 +61,7 @@ SPEC-HI-ID-004: validator-results-table-created
 
 SPEC-HI-ID-005: six-indexes-created
   init_db creates six indexes: idx_verdicts_gate (gate), idx_verdicts_status (status), idx_verdicts_artifact (artifact_hash), idx_verdicts_context (context_hash), idx_verdicts_timestamp (timestamp) on the verdicts table, and idx_vresults_verdict (verdict_id) on the validator_results table. All use IF NOT EXISTS.
-  test: UNTESTED (index existence is not directly verified; schema test only checks table existence)
+  test: history::tests::index_existence_after_init_db
 
 SPEC-HI-ID-006: schema-creation-failure-returns-error
   If the CREATE TABLE / CREATE INDEX batch fails, init_db returns Err(BatonError::DatabaseError) with "Failed to create schema".
@@ -107,11 +107,11 @@ SPEC-HI-SV-002: verdict-row-inserted
 
 SPEC-HI-SV-003: warnings-serialized-as-json
   The verdict's warnings Vec is serialized to a JSON array string and stored in the warnings_json column. An empty Vec serializes to "[]".
-  test: UNTESTED (no test directly inspects the warnings_json column)
+  test: history::tests::warnings_json_column_stores_warnings
 
 SPEC-HI-SV-004: suppressed-serialized-as-json
   The verdict's suppressed Vec is serialized to a JSON array string and stored in the suppressed_json column. An empty Vec serializes to "[]".
-  test: UNTESTED (no test directly inspects the suppressed_json column)
+  test: history::tests::suppressed_json_column_stores_suppressed
 
 SPEC-HI-SV-005: verdict-json-stored
   The full verdict is serialized via `verdict.to_json()` and stored in the verdict_json column. This column contains enough information to reconstruct the complete Verdict struct.
@@ -133,7 +133,7 @@ SPEC-HI-SV-008: cost-fields-from-some
 
 SPEC-HI-SV-009: cost-fields-null-when-none
   When a ValidatorResult has `cost: None`, all four cost columns (input_tokens, output_tokens, model, estimated_usd) are stored as NULL.
-  test: UNTESTED (no test specifically checks that NULL is stored for cost-less results; the multiple_validator_results_stored test has a no-cost row but doesn't assert NULL)
+  test: history::tests::null_cost_columns_when_cost_is_none
 
 The cost extraction uses a match on `&result.cost` that maps `None` to a tuple of four `None` values. This ensures each Option field inside Cost is mapped individually — a Cost struct where `input_tokens` is Some but `model` is None will store the tokens but leave model as NULL.
 
@@ -229,7 +229,7 @@ SPEC-HI-QA-001: filters-by-artifact-hash
 
 SPEC-HI-QA-002: ordered-by-timestamp-desc
   Results are ordered by timestamp DESC (newest first).
-  test: UNTESTED (no test inserts multiple verdicts with the same artifact_hash and asserts order)
+  test: history::tests::query_by_artifact_ordering_newest_first
 
 SPEC-HI-QA-003: no-match-returns-empty-vec
   When no verdicts have the given artifact_hash, query_by_artifact returns Ok(Vec::new()), not an error.
@@ -243,7 +243,7 @@ SPEC-HI-QA-004: returns-verdict-summary
 
 SPEC-HI-QA-005: no-limit
   query_by_artifact has no limit parameter. All matching rows are returned. This is intentional — artifact-level queries are expected to return a small number of results (one per gate run against that artifact version).
-  test: UNTESTED (no test inserts many rows with the same artifact hash and verifies all are returned)
+  test: history::tests::query_by_artifact_returns_all_rows
 
 SPEC-HI-QA-006: prepare-failure-returns-error
   If the SQL statement cannot be prepared, returns Err(BatonError::DatabaseError) with "Query error".
@@ -265,7 +265,7 @@ SPEC-HI-VS-001: fields
 
 SPEC-HI-VS-002: derives-debug-clone
   VerdictSummary derives Debug and Clone.
-  test: UNTESTED (not directly exercised, but required for practical use)
+  test: history::tests::verdict_summary_debug_and_clone
 
 ---
 

@@ -50,7 +50,7 @@ SPEC-PH-RP-001: unclosed-brace-left-literal
 
 SPEC-PH-RP-002: nested-braces-depth-tracked
   `find_closing_brace` increments depth on `{` and decrements on `}`, returning the position where depth reaches zero. This means `{a{b}c}` matches the outermost braces, extracting `a{b}c` as the placeholder content. The inner braces are part of the placeholder name and will likely result in an unrecognized placeholder warning.
-  test: UNTESTED
+  test: placeholder::tests::nested_braces_extracted_as_single_placeholder
 
 SPEC-PH-RP-003: no-placeholders-passthrough
   A template with no `{` characters is returned unchanged with no warnings.
@@ -64,12 +64,12 @@ SPEC-PH-RP-004: multiple-placeholders-in-one-template
 
 SPEC-PH-RP-010: artifact-resolves-to-absolute-path
   `{artifact}` resolves to the absolute path of the artifact file via `artifact.absolute_path()`. When the artifact is from_string (no file path), `absolute_path()` returns None, and the placeholder resolves to an empty string.
-  test: UNTESTED (file-backed case)
-  test: UNTESTED (from_string yields empty — implicit in content tests but never asserted for `{artifact}`)
+  test: placeholder::tests::artifact_file_backed_resolves_to_path
+  test: placeholder::tests::artifact_from_string_resolves_to_empty
 
 SPEC-PH-RP-011: artifact-dir-resolves-to-parent
   `{artifact_dir}` resolves to the parent directory of the artifact file via `artifact.parent_dir()`. When the artifact is from_string, resolves to an empty string.
-  test: UNTESTED
+  test: placeholder::tests::artifact_dir_resolves_to_parent
 
 SPEC-PH-RP-012: artifact-content-resolves-to-inline-content
   `{artifact_content}` resolves to the artifact's content as a lossy UTF-8 string via `artifact.get_content_as_string()`. This triggers lazy content loading for file-backed artifacts. If content loading fails, resolves to an empty string (via `unwrap_or_default`). For from_string artifacts, returns the string content directly.
@@ -81,8 +81,8 @@ Context placeholder names are extracted by stripping the `context.` prefix. The 
 
 SPEC-PH-RP-020: context-path-resolves-to-absolute-path
   `{context.<name>}` resolves to the absolute path of the named context item via `item.absolute_path()`. For string-content context items (no file path), `absolute_path()` returns None, resolving to an empty string.
-  test: UNTESTED (file-backed context path)
-  test: UNTESTED (string context path yields empty)
+  test: placeholder::tests::context_file_backed_resolves_to_path
+  test: placeholder::tests::context_string_resolves_to_empty_path
 
 SPEC-PH-RP-021: context-content-resolves-to-inline-content
   `{context.<name>.content}` resolves to the content of the named context item via `item.get_content()`. This triggers lazy loading for file-backed items. Returns the content as a string.
@@ -114,11 +114,11 @@ SPEC-PH-RP-032: verdict-feedback-resolves-to-feedback-string
 
 SPEC-PH-RP-033: missing-verdict-feedback-returns-empty
   When `{verdict.<name>.feedback}` references a validator not in `prior_results`, the placeholder resolves to an empty string. No warning is produced. This mirrors the "skip" default for status — a validator that didn't run has no feedback.
-  test: UNTESTED (nonexistent validator feedback specifically)
+  test: placeholder::tests::nonexistent_validator_feedback_is_empty
 
 SPEC-PH-RP-034: unrecognized-verdict-subpath-warns
   When a `verdict.` placeholder has a suffix other than `.status` or `.feedback` (e.g., `{verdict.lint.duration}`), the placeholder resolves to an empty string and a warning is produced. The warning identifies the unrecognized sub-path.
-  test: UNTESTED
+  test: placeholder::tests::unrecognized_verdict_sub_path_warns
 
 ### resolve_placeholders: unrecognized and malformed placeholders
 
@@ -128,7 +128,7 @@ SPEC-PH-RP-040: unrecognized-placeholder-left-as-literal
 
 SPEC-PH-RP-041: warnings-accumulate-across-placeholders
   Multiple resolution warnings from different placeholders in the same template are all collected in the `ResolutionWarnings` struct. The caller receives the full list.
-  test: UNTESTED (multiple warnings in one call)
+  test: placeholder::tests::multiple_warnings_in_one_call
 
 ---
 

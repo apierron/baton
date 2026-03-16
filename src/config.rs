@@ -1306,4 +1306,414 @@ run_if = "llm-check.status == pass"
         let validation = validate_config(&config);
         assert!(!validation.has_errors(), "Errors: {:?}", validation.errors);
     }
+
+    // ─── Spec coverage (UNTESTED) ──────────────────────
+
+    #[test]
+    fn malformed_toml_returns_error() {
+        let result = parse_config("not valid {toml", Path::new("."));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn prompts_dir_default() {
+        let toml = r#"
+version = "0.4"
+[defaults]
+[gates.test]
+[[gates.test.validators]]
+name = "check"
+type = "script"
+command = "echo ok"
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        let prompts_dir = config.defaults.prompts_dir.to_string_lossy();
+        assert!(prompts_dir.contains("/prompts"), "Got: {prompts_dir}");
+        assert!(
+            config.defaults.prompts_dir.is_absolute(),
+            "Expected absolute path, got: {prompts_dir}"
+        );
+    }
+
+    #[test]
+    fn log_dir_default() {
+        let toml = r#"
+version = "0.4"
+[defaults]
+[gates.test]
+[[gates.test.validators]]
+name = "check"
+type = "script"
+command = "echo ok"
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        let log_dir = config.defaults.log_dir.to_string_lossy();
+        assert!(log_dir.contains(".baton/logs"), "Got: {log_dir}");
+    }
+
+    #[test]
+    fn history_db_default() {
+        let toml = r#"
+version = "0.4"
+[defaults]
+[gates.test]
+[[gates.test.validators]]
+name = "check"
+type = "script"
+command = "echo ok"
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        let history_db = config.defaults.history_db.to_string_lossy();
+        assert!(
+            history_db.contains(".baton/history.db"),
+            "Got: {history_db}"
+        );
+    }
+
+    #[test]
+    fn tmp_dir_default() {
+        let toml = r#"
+version = "0.4"
+[defaults]
+[gates.test]
+[[gates.test.validators]]
+name = "check"
+type = "script"
+command = "echo ok"
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        let tmp_dir = config.defaults.tmp_dir.to_string_lossy();
+        assert!(tmp_dir.contains(".baton/tmp"), "Got: {tmp_dir}");
+    }
+
+    #[test]
+    fn path_resolution_with_config_dir() {
+        let toml = r#"
+version = "0.4"
+[gates.test]
+[[gates.test.validators]]
+name = "check"
+type = "script"
+command = "echo ok"
+"#;
+        let config = parse_config(toml, Path::new("/custom/dir")).unwrap();
+        assert!(
+            config.defaults.prompts_dir.starts_with("/custom/dir"),
+            "prompts_dir: {:?}",
+            config.defaults.prompts_dir
+        );
+        assert!(
+            config.defaults.log_dir.starts_with("/custom/dir"),
+            "log_dir: {:?}",
+            config.defaults.log_dir
+        );
+        assert!(
+            config.defaults.history_db.starts_with("/custom/dir"),
+            "history_db: {:?}",
+            config.defaults.history_db
+        );
+        assert!(
+            config.defaults.tmp_dir.starts_with("/custom/dir"),
+            "tmp_dir: {:?}",
+            config.defaults.tmp_dir
+        );
+    }
+
+    #[test]
+    fn runtime_defaults() {
+        let toml = r#"
+version = "0.4"
+[runtimes.test]
+type = "openhands"
+base_url = "http://localhost"
+
+[gates.g]
+[[gates.g.validators]]
+name = "check"
+type = "script"
+command = "echo ok"
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        let rt = &config.runtimes["test"];
+        assert!(rt.sandbox);
+        assert_eq!(rt.timeout_seconds, 600);
+        assert_eq!(rt.max_iterations, 30);
+    }
+
+    #[test]
+    fn runtime_fields_stored_verbatim() {
+        let toml = r#"
+version = "0.4"
+[runtimes.custom]
+type = "openhands"
+base_url = "http://example.com:3000"
+sandbox = false
+timeout_seconds = 1200
+max_iterations = 50
+api_key_env = "MY_KEY"
+default_model = "gpt-4"
+
+[gates.g]
+[[gates.g.validators]]
+name = "check"
+type = "script"
+command = "echo ok"
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        let rt = &config.runtimes["custom"];
+        assert_eq!(rt.runtime_type, "openhands");
+        assert_eq!(rt.base_url, "http://example.com:3000");
+        assert!(!rt.sandbox);
+        assert_eq!(rt.timeout_seconds, 1200);
+        assert_eq!(rt.max_iterations, 50);
+        assert_eq!(rt.api_key_env, Some("MY_KEY".into()));
+        assert_eq!(rt.default_model, Some("gpt-4".into()));
+    }
+
+    #[test]
+    fn invalid_mode_string() {
+        let toml = r#"
+version = "0.4"
+[gates.test]
+[[gates.test.validators]]
+name = "check"
+type = "llm"
+prompt = "Review"
+mode = "invalid"
+"#;
+        let result = parse_config(toml, &config_dir());
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("invalid mode"), "Error: {err}");
+    }
+
+    #[test]
+    fn invalid_response_format() {
+        let toml = r#"
+version = "0.4"
+[gates.test]
+[[gates.test.validators]]
+name = "check"
+type = "llm"
+prompt = "Review"
+response_format = "invalid"
+"#;
+        let result = parse_config(toml, &config_dir());
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("invalid response_format"), "Error: {err}");
+    }
+
+    #[test]
+    fn default_provider() {
+        let toml = r#"
+version = "0.4"
+[gates.gate]
+[[gates.gate.validators]]
+name = "check"
+type = "llm"
+prompt = "Review"
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        assert_eq!(config.gates["gate"].validators[0].provider, "default");
+    }
+
+    #[test]
+    fn config_dir_stored() {
+        let toml = r#"
+version = "0.4"
+[gates.test]
+[[gates.test.validators]]
+name = "check"
+type = "script"
+command = "echo ok"
+"#;
+        let config = parse_config(toml, Path::new("/my/project")).unwrap();
+        assert_eq!(config.config_dir, PathBuf::from("/my/project"));
+    }
+
+    #[test]
+    fn duplicate_name_across_gates_is_ok() {
+        let toml = r#"
+version = "0.4"
+[gates.alpha]
+[[gates.alpha.validators]]
+name = "lint"
+type = "script"
+command = "echo ok"
+
+[gates.beta]
+[[gates.beta.validators]]
+name = "lint"
+type = "script"
+command = "echo ok"
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        assert_eq!(config.gates["alpha"].validators[0].name, "lint");
+        assert_eq!(config.gates["beta"].validators[0].name, "lint");
+    }
+
+    #[test]
+    fn empty_validator_name() {
+        let toml = r#"
+version = "0.4"
+[gates.test]
+[[gates.test.validators]]
+name = ""
+type = "script"
+command = "echo ok"
+"#;
+        let result = parse_config(toml, &config_dir());
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("invalid characters"), "Error: {err}");
+    }
+
+    #[test]
+    fn self_referencing_run_if() {
+        let toml = r#"
+version = "0.4"
+[gates.test]
+[[gates.test.validators]]
+name = "a"
+type = "script"
+command = "echo ok"
+run_if = "a.status == pass"
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        let validation = validate_config(&config);
+        assert!(validation.has_errors());
+        assert!(
+            validation.errors[0].contains("later in the pipeline"),
+            "Error: {}",
+            validation.errors[0]
+        );
+    }
+
+    #[test]
+    fn undefined_non_default_provider() {
+        let toml = r#"
+version = "0.4"
+[gates.test]
+[[gates.test.validators]]
+name = "check"
+type = "llm"
+prompt = "Review"
+provider = "nonexistent"
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        let validation = validate_config(&config);
+        assert!(validation.has_errors());
+        assert!(
+            validation.errors[0].contains("nonexistent"),
+            "Error: {}",
+            validation.errors[0]
+        );
+    }
+
+    #[test]
+    fn undefined_runtime_reference() {
+        let toml = r#"
+version = "0.4"
+[gates.test]
+[[gates.test.validators]]
+name = "check"
+type = "llm"
+prompt = "Review"
+mode = "session"
+runtime = "nonexistent"
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        let validation = validate_config(&config);
+        assert!(validation.has_errors());
+        let has_runtime_err = validation
+            .errors
+            .iter()
+            .any(|e| e.contains("not defined in [runtimes]"));
+        assert!(has_runtime_err, "Errors: {:?}", validation.errors);
+    }
+
+    #[test]
+    fn script_validator_with_provider_not_flagged() {
+        let toml = r#"
+version = "0.4"
+[gates.test]
+[[gates.test.validators]]
+name = "check"
+type = "script"
+command = "echo ok"
+provider = "nonexistent"
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        let validation = validate_config(&config);
+        assert!(
+            !validation.has_errors(),
+            "Unexpected errors: {:?}",
+            validation.errors
+        );
+    }
+
+    #[test]
+    fn api_key_env_validation() {
+        let toml = r#"
+version = "0.4"
+[providers.myprovider]
+api_base = "https://api.example.com"
+api_key_env = "BATON_TEST_NONEXISTENT_VAR_XYZ"
+default_model = "test-model"
+
+[gates.test]
+[[gates.test.validators]]
+name = "check"
+type = "script"
+command = "echo ok"
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        let validation = validate_config(&config);
+        assert!(validation.has_errors());
+        let err = validation.errors.join(" ");
+        assert!(err.contains("myprovider"), "Error: {err}");
+        assert!(
+            err.contains("BATON_TEST_NONEXISTENT_VAR_XYZ"),
+            "Error: {err}"
+        );
+    }
+
+    #[test]
+    fn multiple_simultaneous_validation_errors() {
+        let toml = r#"
+version = "0.4"
+[gates.test]
+[[gates.test.validators]]
+name = "a"
+type = "llm"
+prompt = "Review"
+provider = "nonexistent"
+mode = "session"
+runtime = "also-nonexistent"
+context_refs = ["undefined-ctx"]
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        let validation = validate_config(&config);
+        assert!(
+            validation.errors.len() > 1,
+            "Expected multiple errors, got: {:?}",
+            validation.errors
+        );
+    }
+
+    #[test]
+    fn whitespace_in_run_if() {
+        let tokens = split_run_if("  a.status == pass  and  b.status == fail  ");
+        assert_eq!(tokens, vec!["a.status == pass", "and", "b.status == fail"]);
+    }
+
+    #[test]
+    fn names_containing_and_or() {
+        let tokens = split_run_if("command.status == pass and mentor.status == fail");
+        assert_eq!(
+            tokens,
+            vec!["command.status == pass", "and", "mentor.status == fail"]
+        );
+    }
 }

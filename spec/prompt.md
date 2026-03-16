@@ -64,11 +64,11 @@ SPEC-PR-PS-002: missing-closing-delimiter-is-error
 
 SPEC-PR-PS-003: frontmatter-parsed-as-toml
   The text between the opening and closing `+++` delimiters is trimmed and parsed as a TOML document. If TOML parsing fails, returns Err(PromptError) with "frontmatter parse error" and the TOML parser's error message.
-  test: UNTESTED (TOML syntax errors in frontmatter)
+  test: prompt::tests::toml_syntax_error_in_frontmatter
 
 SPEC-PR-PS-004: frontmatter-must-be-toml-table
   The parsed TOML value must be a table (key-value pairs at the top level). If the frontmatter parses as a non-table TOML value (e.g., a bare string or array), returns Err(PromptError) with "frontmatter must be a TOML table".
-  test: UNTESTED (non-table TOML frontmatter)
+  test: prompt::tests::non_table_toml_frontmatter
 
 In practice, TOML's top-level parsing nearly always produces a table, so SPEC-PR-PS-004 is defensive. It guards against edge cases where the frontmatter might be a bare value, which the toml crate could theoretically accept.
 
@@ -108,13 +108,14 @@ SPEC-PR-PS-011: empty-body-is-error
 
 SPEC-PR-PS-012: empty-body-without-frontmatter-is-error
   A raw string that is empty or contains only whitespace (no frontmatter) is also rejected with "prompt body is empty". The empty-body check applies uniformly regardless of whether frontmatter was present.
-  test: UNTESTED (empty string without frontmatter)
+  test: prompt::tests::empty_string_without_frontmatter
+  test: prompt::tests::whitespace_only_without_frontmatter
 
 ### parse_template_str: extra frontmatter fields
 
 SPEC-PR-PS-013: unknown-frontmatter-fields-ignored
   Frontmatter fields other than 'expects' and 'description' are silently ignored. The parser does not reject unknown keys. This allows forward compatibility with future frontmatter fields.
-  test: UNTESTED
+  test: prompt::tests::unknown_frontmatter_fields_ignored
 
 ---
 
@@ -124,11 +125,11 @@ Display and FromStr implementations for the expected response format enum.
 
 SPEC-PR-TE-001: display-verdict
   TemplateExpects::Verdict displays as "verdict".
-  test: UNTESTED (Display impl)
+  test: prompt::tests::template_expects_verdict_display
 
 SPEC-PR-TE-002: display-freeform
   TemplateExpects::Freeform displays as "freeform".
-  test: UNTESTED (Display impl)
+  test: prompt::tests::template_expects_freeform_display
 
 SPEC-PR-TE-003: fromstr-verdict
   Parsing "verdict" produces TemplateExpects::Verdict.
@@ -172,7 +173,7 @@ SPEC-PR-FR-005: no-extension-not-recognized
 
 SPEC-PR-FR-006: extension-check-is-suffix-match
   The extension check uses ends_with, not path-based extension extraction. This means "readme.md" matches, but so does a string like "use file.md" (a sentence ending in .md). In practice this is not a problem because prompt values in baton.toml are either obvious filenames or multi-word sentences that do not end in recognized extensions.
-  test: UNTESTED (suffix-match edge case)
+  test: prompt::tests::is_file_reference_suffix_match_edge_cases
 
 ---
 
@@ -190,8 +191,7 @@ SPEC-PR-RP-001: prompts-dir-searched-first
 
 SPEC-PR-RP-002: config-dir-fallback
   If the file is not found in prompts_dir, resolve_prompt_value tries the prompt value as a path. If the prompt value is a relative path, it is resolved relative to config_dir. If it is an absolute path, it is used directly. If found, the file is parsed via parse_template.
-  test: UNTESTED (config_dir fallback, relative path)
-  test: UNTESTED (config_dir fallback, absolute path)
+  test: prompt::tests::resolve_prompt_config_dir_fallback
 
 The two-stage search (prompts_dir then config_dir) supports the convention of keeping prompt templates in a dedicated prompts/ directory while allowing escape hatches for templates stored elsewhere.
 
@@ -201,7 +201,7 @@ SPEC-PR-RP-003: file-not-found-error
 
 SPEC-PR-RP-004: file-parse-errors-propagated
   If the file is found but fails to parse (invalid frontmatter, empty body, etc.), the parse error from parse_template is propagated unchanged. The search path is not retried on parse failure.
-  test: UNTESTED (found file with invalid content)
+  test: prompt::tests::resolve_prompt_file_with_invalid_frontmatter
 
 ### resolve_prompt_value: inline prompt
 
@@ -215,4 +215,4 @@ SPEC-PR-RP-006: inline-prompt-defaults-to-verdict
 
 SPEC-PR-RP-007: inline-prompt-name-is-inline
   Inline prompts always have name "inline" regardless of content. This distinguishes them from file-backed templates in logging and error messages.
-  test: UNTESTED (inline name assertion)
+  test: prompt::tests::resolve_prompt_inline_name_is_inline

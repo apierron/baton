@@ -382,4 +382,74 @@ mod tests {
         assert_eq!(v.status, Status::Fail);
         assert!(v.evidence.unwrap().contains("3.2"));
     }
+
+    // ─── Spec coverage (UNTESTED) ──────────────────────
+
+    #[test]
+    fn whitespace_only_input() {
+        let v = parse_verdict("   \n  \n  ");
+        assert_eq!(v.status, Status::Error);
+        assert_eq!(
+            v.evidence,
+            Some("[baton] Validator produced empty output".into())
+        );
+    }
+
+    #[test]
+    fn lowercase_pass_on_first_line() {
+        let v = parse_verdict("pass\nLooks good");
+        assert_eq!(v.status, Status::Pass);
+        assert_eq!(v.evidence, None);
+    }
+
+    #[test]
+    fn fail_with_no_remaining_lines() {
+        let v = parse_verdict("FAIL");
+        assert_eq!(v.status, Status::Fail);
+        assert_eq!(v.evidence, None);
+    }
+
+    #[test]
+    fn warn_with_no_remaining_lines() {
+        let v = parse_verdict("WARN");
+        assert_eq!(v.status, Status::Warn);
+        assert_eq!(v.evidence, None);
+    }
+
+    #[test]
+    fn warn_pass2_winner_with_evidence() {
+        let v = parse_verdict("The code has issues\nWARN: minor style problem");
+        assert_eq!(v.status, Status::Warn);
+        assert_eq!(v.evidence, Some(": minor style problem".into()));
+    }
+
+    #[test]
+    fn fail_at_end_no_text_after() {
+        let v = parse_verdict("The review shows FAIL");
+        assert_eq!(v.status, Status::Fail);
+        let ev = v.evidence.unwrap();
+        assert_eq!(ev, "The review shows FAIL");
+    }
+
+    #[test]
+    fn warn_at_end_no_text_after() {
+        let v = parse_verdict("Minor issues found WARN");
+        assert_eq!(v.status, Status::Warn);
+        let ev = v.evidence.unwrap();
+        assert_eq!(ev, "Minor issues found WARN");
+    }
+
+    #[test]
+    fn keyword_at_end_with_preceding_boundary() {
+        let v = parse_verdict("result: PASS");
+        assert_eq!(v.status, Status::Pass);
+        assert_eq!(v.evidence, None);
+    }
+
+    #[test]
+    fn text_not_starting_with_keyword_falls_to_pass2() {
+        let v = parse_verdict("Hello PASS");
+        assert_eq!(v.status, Status::Pass);
+        assert_eq!(v.evidence, None);
+    }
 }

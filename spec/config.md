@@ -45,7 +45,7 @@ Parses a TOML string into a validated `BatonConfig`. The `config_dir` parameter 
 
 SPEC-CF-PC-001: toml-syntax-error-propagated
   When the input string is not valid TOML, parse_config returns an error propagated from the TOML parser via the `?` operator. The error message is from the toml crate, not wrapped in baton-specific text.
-  test: UNTESTED (no test for malformed TOML input)
+  test: config::tests::malformed_toml_returns_error
 
 SPEC-CF-PC-002: version-must-be-0-4
   The `version` field must be exactly the string "0.4". Any other value, including "0.3", "0.5", "1.0", or an empty string, returns ConfigError containing the rejected version string.
@@ -69,23 +69,23 @@ SPEC-CF-PC-011: default-blocking-is-true
 
 SPEC-CF-PC-012: default-prompts-dir
   When `prompts_dir` is not specified in `[defaults]`, it defaults to "./prompts" resolved against config_dir.
-  test: UNTESTED (no test checks defaults.prompts_dir path resolution)
+  test: config::tests::prompts_dir_default
 
 SPEC-CF-PC-013: default-log-dir
   When `log_dir` is not specified in `[defaults]`, it defaults to "./.baton/logs" resolved against config_dir.
-  test: UNTESTED (no test checks defaults.log_dir path resolution)
+  test: config::tests::log_dir_default
 
 SPEC-CF-PC-014: default-history-db
   When `history_db` is not specified in `[defaults]`, it defaults to "./.baton/history.db" resolved against config_dir.
-  test: UNTESTED (no test checks defaults.history_db path resolution)
+  test: config::tests::history_db_default
 
 SPEC-CF-PC-015: default-tmp-dir
   When `tmp_dir` is not specified in `[defaults]`, it defaults to "./.baton/tmp" resolved against config_dir.
-  test: UNTESTED (no test checks defaults.tmp_dir path resolution)
+  test: config::tests::tmp_dir_default
 
 SPEC-CF-PC-016: relative-paths-resolved-against-config-dir
   All relative path defaults (prompts_dir, log_dir, history_db, tmp_dir) are joined with `config_dir` to produce absolute paths. This ensures paths are correct regardless of the working directory at invocation time.
-  test: UNTESTED (no test verifies path resolution with a non-trivial config_dir)
+  test: config::tests::path_resolution_with_config_dir
 
 SPEC-CF-PC-017: explicit-defaults-override-builtins
   When `[defaults]` explicitly sets timeout_seconds or blocking, those values replace the built-in defaults and are inherited by validators that do not override them.
@@ -113,11 +113,11 @@ Runtimes are iterated from the `[runtimes]` map and stored with their defaults a
 
 SPEC-CF-PC-025: runtime-defaults
   Runtime entries default to sandbox=true, timeout_seconds=600, max_iterations=30 when those fields are omitted.
-  test: UNTESTED (no test verifies runtime default values)
+  test: config::tests::runtime_defaults
 
 SPEC-CF-PC-026: runtime-fields-preserved
   Runtime type, base_url, api_key_env, and default_model are stored verbatim from TOML.
-  test: UNTESTED (no test inspects parsed runtime fields)
+  test: config::tests::runtime_fields_stored_verbatim
 
 ### parse_config: gate and validator parsing
 
@@ -155,11 +155,11 @@ SPEC-CF-PC-036: human-requires-prompt
 
 SPEC-CF-PC-037: mode-defaults-to-completion
   When `mode` is omitted or set to "completion", the validator gets LlmMode::Completion. When set to "session", it gets LlmMode::Session. Any other value returns ConfigError containing "invalid mode" and the rejected value.
-  test: UNTESTED (no test for explicit "completion" mode or invalid mode string)
+  test: config::tests::invalid_mode_string
 
 SPEC-CF-PC-038: response-format-defaults-to-verdict
   When `response_format` is omitted or set to "verdict", the validator gets ResponseFormat::Verdict. When set to "freeform", it gets ResponseFormat::Freeform. Any other value returns ConfigError containing "invalid response_format".
-  test: UNTESTED (no test for invalid response_format string)
+  test: config::tests::invalid_response_format
 
 SPEC-CF-PC-039: warn-exit-codes-rejects-zero
   The `warn_exit_codes` array must not contain 0. Exit code 0 is unconditionally "pass" and cannot be reclassified as a warning. If 0 is present, returns ConfigError with "warn_exit_codes must not contain 0".
@@ -177,7 +177,7 @@ SPEC-CF-PC-041: validator-inherits-timeout-from-defaults
 
 SPEC-CF-PC-042: provider-defaults-to-default
   When `provider` is not set on a validator, it defaults to the string "default". This means an LLM validator without an explicit provider will look up providers["default"] at validation and execution time.
-  test: UNTESTED (no test checks the default provider assignment)
+  test: config::tests::default_provider
 
 SPEC-CF-PC-043: temperature-defaults-to-zero
   When `temperature` is not set on a validator, it defaults to 0.0. This is a deliberate choice for reproducibility in code review tasks.
@@ -189,11 +189,11 @@ SPEC-CF-PC-044: context-slots-parsed
 
 SPEC-CF-PC-045: config-dir-stored
   The config_dir path is stored on BatonConfig for later use in path resolution (e.g., resolving working_dir references at execution time).
-  test: UNTESTED (no test checks config.config_dir)
+  test: config::tests::config_dir_stored
 
 SPEC-CF-PC-046: validator-name-uniqueness-is-per-gate
   Duplicate name detection resets for each gate (the seen_names HashSet is created inside the per-gate loop). Two different gates may each have a validator named "lint" without error.
-  test: UNTESTED (no test with same validator name in different gates)
+  test: config::tests::duplicate_name_across_gates_is_ok
 
 SPEC-CF-PC-047: parse-errors-are-early-return
   parse_config returns on the first structural error encountered. If a config has multiple problems (e.g., wrong version AND empty gates), only the first error is reported. Check order is: TOML syntax, version, empty gates, then per-gate in BTreeMap order (empty validators, per-validator checks in declaration order).
@@ -201,7 +201,7 @@ SPEC-CF-PC-047: parse-errors-are-early-return
 
 SPEC-CF-PC-048: empty-validator-name-rejected
   An empty string for a validator name fails the `[A-Za-z0-9_-]+` check because the check requires `!raw_v.name.is_empty()`. The error message still says "invalid characters" even though the real problem is emptiness.
-  test: UNTESTED (no test for empty validator name specifically)
+  test: config::tests::empty_validator_name
 
 ---
 
@@ -232,7 +232,7 @@ SPEC-CF-VC-003: run-if-syntax-validated
 
 SPEC-CF-VC-004: run-if-self-reference-is-forward-reference
   A validator referencing itself in run_if (e.g., validator "a" with run_if "a.status == pass") is treated as a forward reference because the validator's own index equals current_idx. The check is `ref_idx >= current_idx`, so self-references produce the "later in the pipeline" error.
-  test: UNTESTED (no test for self-referencing run_if)
+  test: config::tests::self_referencing_run_if
 
 SPEC-CF-VC-005: context-refs-must-reference-defined-slots
   Each entry in a validator's `context_refs` must correspond to a key in the gate's context map. Undefined context references produce an error naming the undefined slot and the gate.
@@ -240,7 +240,7 @@ SPEC-CF-VC-005: context-refs-must-reference-defined-slots
 
 SPEC-CF-VC-006: llm-provider-must-be-defined
   For LLM validators, if the provider is not "default" and is not present in the config's providers map, an error is produced. The special name "default" is exempt -- it is resolved at execution time, not at validation time. Script and human validators are not checked.
-  test: UNTESTED (no test for undefined non-default provider reference)
+  test: config::tests::undefined_non_default_provider
 
 SPEC-CF-VC-007: session-mode-requires-runtime
   An LLM validator with mode "session" must have a runtime field set. If runtime is None, an error is produced containing "runtime".
@@ -252,7 +252,7 @@ SPEC-CF-VC-008: completion-mode-with-runtime-warns
 
 SPEC-CF-VC-009: runtime-reference-must-be-defined
   When an LLM validator specifies a runtime, that runtime name must exist in the config's runtimes map. An undefined runtime produces an error containing "not defined in [runtimes]".
-  test: UNTESTED (no test for undefined runtime reference; validate_session_without_runtime tests missing runtime field, not undefined reference)
+  test: config::tests::undefined_runtime_reference
 
 SPEC-CF-VC-010: freeform-with-blocking-warns
   An LLM validator with response_format "freeform" and blocking=true produces a warning containing "blocking has no effect". Freeform validators always return warn status, so blocking (which triggers gate failure on fail/error) is meaningless.
@@ -260,7 +260,7 @@ SPEC-CF-VC-010: freeform-with-blocking-warns
 
 SPEC-CF-VC-011: validation-checks-only-llm-validators
   Provider, mode/runtime, and freeform/blocking checks are gated behind `val.validator_type == ValidatorType::Llm`. Script and human validators skip these checks entirely, even if they have stray LLM fields set (which would be ignored at execution time).
-  test: UNTESTED (no test verifies script validator with provider field is not flagged)
+  test: config::tests::script_validator_with_provider_not_flagged
 
 ### validate_config: provider API key checks
 
@@ -268,11 +268,11 @@ After all per-validator checks, validate_config iterates every provider in the c
 
 SPEC-CF-VC-020: provider-api-key-env-must-be-set
   For each provider in the config, if `api_key_env` is non-empty and the named environment variable is not set (std::env::var returns Err), an error is produced containing the provider name and the env var name. If `api_key_env` is empty, this check is skipped.
-  test: UNTESTED (no test for api_key_env validation; provider_trailing_slash_stripped uses empty api_key_env)
+  test: config::tests::api_key_env_validation
 
 SPEC-CF-VC-021: validation-accumulates-all-errors
   validate_config does not short-circuit. If multiple validators have problems, all errors and warnings are collected in the returned ConfigValidation. The caller can inspect `has_errors()` and iterate both `errors` and `warnings`.
-  test: UNTESTED (no test with multiple simultaneous validation errors)
+  test: config::tests::multiple_simultaneous_validation_errors
 
 SPEC-CF-VC-022: has-errors-reflects-error-presence
   `ConfigValidation::has_errors()` returns true if and only if the errors vec is non-empty. Warnings alone do not cause has_errors() to return true.
@@ -304,11 +304,11 @@ SPEC-CF-SR-004: mixed-operators-first-match-priority
 
 SPEC-CF-SR-005: whitespace-trimmed
   Leading and trailing whitespace on the full expression is trimmed before tokenization. Each atom is also trimmed.
-  test: UNTESTED (no test with extra whitespace in run_if expression)
+  test: config::tests::whitespace_in_run_if
 
 SPEC-CF-SR-006: embedded-and-or-not-split
   The delimiters require surrounding spaces (" and ", " or "). A validator name like "command" (containing "and") or "mentor" (containing "or") is not split, because the substrings lack surrounding spaces.
-  test: UNTESTED (no test with names containing "and"/"or" substrings)
+  test: config::tests::names_containing_and_or
 
 ---
 

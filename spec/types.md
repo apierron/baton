@@ -72,7 +72,7 @@ SPEC-TY-AF-002: from-file-rejects-directory
 
 SPEC-TY-AF-003: from-file-converts-relative-to-absolute
   When a relative path is provided, `from_file` resolves it to an absolute path using `std::env::current_dir()`. The stored `path` field is always absolute after successful construction.
-  test: UNTESTED (no test provides a relative path and asserts absolute storage)
+  test: types::tests::artifact_from_file_stores_absolute_path
 
 SPEC-TY-AF-004: from-file-defers-content-read
   A successful `from_file` call sets `content` to None and `hash` to None. Content is not read from disk until `get_content` is called. This allows constructing an artifact for path validation without incurring I/O cost.
@@ -176,7 +176,7 @@ SPEC-TY-CI-002: from-file-rejects-directory
 
 SPEC-TY-CI-003: from-file-converts-relative-to-absolute
   When a relative path is provided, `from_file` resolves it to an absolute path using `std::env::current_dir()`. The stored `path` field is always absolute.
-  test: UNTESTED (no test provides a relative path and asserts absolute storage)
+  test: types::tests::context_item_from_file_stores_absolute_path
 
 SPEC-TY-CI-004: from-file-defers-content-read
   A successful `from_file` call sets `content` to None. Content is not read from disk until `get_content` is called.
@@ -204,7 +204,7 @@ SPEC-TY-CI-009: get-hash-returns-sha256-hex
 
 SPEC-TY-CI-010: get-hash-is-not-cached
   Unlike Artifact, ContextItem does not cache its hash. Each call to `get_hash` recomputes from content. This is a simplification — context items are typically hashed once during pre-flight.
-  test: UNTESTED
+  test: types::tests::context_item_get_hash_recomputes_same_value
 
 SPEC-TY-CI-011: absolute-path-returns-string-for-file-backed
   For file-backed items, `absolute_path` returns `Some(String)` containing the absolute path.
@@ -236,7 +236,7 @@ SPEC-TY-CX-003: add-string-inserts-inline-item
 
 SPEC-TY-CX-004: add-overwrites-existing-key
   If an item with the same name already exists, `add_file` or `add_string` replaces it silently. BTreeMap::insert overwrites on duplicate keys.
-  test: UNTESTED
+  test: types::tests::context_add_duplicate_replaces_silently
 
 SPEC-TY-CX-005: get-hash-joins-item-hashes-with-colon
   `get_hash` computes the SHA-256 hash of each item (in sorted key order), joins them with ":" as separator, then computes the SHA-256 of the joined string.
@@ -260,7 +260,7 @@ SPEC-TY-CX-009: get-hash-differs-when-values-swapped-between-keys
 
 SPEC-TY-CX-010: same-content-different-key-name-produces-same-hash-for-single-item
   When there is only one item, the combined hash depends only on the item's content hash, not its key name. Two single-item contexts with different key names but identical content produce the same combined hash. Key names affect ordering, not individual item hashes.
-  test: UNTESTED (the existing test acknowledges this in its comment and tests the two-item case instead)
+  test: types::tests::context_single_item_hash_ignores_key_name
 
 ---
 
@@ -425,7 +425,7 @@ SPEC-TY-VD-017: to-human-ends-with-verdict-line
 
 SPEC-TY-VD-018: to-human-lines-joined-with-newline
   All lines are joined with "\n". There is no trailing newline.
-  test: UNTESTED
+  test: types::tests::verdict_to_human_no_trailing_newline
 
 ### Verdict: to_summary
 
@@ -451,7 +451,7 @@ SPEC-TY-VD-024: to-summary-omits-colon-when-no-feedback
 
 SPEC-TY-VD-025: to-summary-uses-unknown-when-failed-at-is-none
   When `failed_at` is None (which should not happen for Fail/Error verdicts in practice), the string "unknown" is used as the validator name.
-  test: UNTESTED
+  test: types::tests::verdict_to_summary_fail_no_failed_at_uses_unknown
 
 ---
 

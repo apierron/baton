@@ -341,4 +341,121 @@ Check the spec.
         let result = parse_template(&path);
         assert!(result.is_err());
     }
+
+    // ─── Spec coverage (UNTESTED) ──────────────────────
+
+    #[test]
+    fn toml_syntax_error_in_frontmatter() {
+        let raw = "+++\nnot: [valid toml\n+++\nbody here";
+        let result = parse_template_str(raw, "test", "test.md");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("frontmatter parse error"),
+            "Expected 'frontmatter parse error', got: {err}"
+        );
+    }
+
+    #[test]
+    fn non_table_toml_frontmatter() {
+        // TOML top-level is always a table, so a bare string literal like
+        // `"just a string"` is invalid TOML syntax and triggers a parse
+        // error before the as_table() check is reached.
+        let raw = "+++\n\"just a string\"\n+++\nbody";
+        let result = parse_template_str(raw, "test", "test.md");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("frontmatter parse error"),
+            "Expected 'frontmatter parse error', got: {err}"
+        );
+    }
+
+    #[test]
+    fn empty_string_without_frontmatter() {
+        let result = parse_template_str("", "test", "test.md");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("empty"), "Expected 'empty' error, got: {err}");
+    }
+
+    #[test]
+    fn whitespace_only_without_frontmatter() {
+        let result = parse_template_str("   \n  ", "test", "test.md");
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("empty"), "Expected 'empty' error, got: {err}");
+    }
+
+    #[test]
+    fn unknown_frontmatter_fields_ignored() {
+        let raw =
+            "+++\nfoo = \"bar\"\nunknown_field = 42\nexpects = \"verdict\"\n+++\nSome prompt body";
+        let t = parse_template_str(raw, "test", "test.md").unwrap();
+        assert_eq!(t.expects, TemplateExpects::Verdict);
+        assert_eq!(t.body, "Some prompt body");
+    }
+
+    #[test]
+    fn template_expects_verdict_display() {
+        assert_eq!(format!("{}", TemplateExpects::Verdict), "verdict");
+    }
+
+    #[test]
+    fn template_expects_freeform_display() {
+        assert_eq!(format!("{}", TemplateExpects::Freeform), "freeform");
+    }
+
+    #[test]
+    fn is_file_reference_suffix_match_edge_cases() {
+        assert!(
+            is_file_reference("use file.md"),
+            "Should match because it ends with .md"
+        );
+        assert!(
+            is_file_reference("review.prompt"),
+            "Should match because it ends with .prompt"
+        );
+    }
+
+    #[test]
+    fn resolve_prompt_config_dir_fallback() {
+        let prompts_dir = TempDir::new().unwrap();
+        let config_dir = TempDir::new().unwrap();
+
+        // Create the file only in config_dir, not in prompts_dir
+        let mut f = std::fs::File::create(config_dir.path().join("fallback.md")).unwrap();
+        write!(f, "+++\nexpects = \"verdict\"\n+++\nFallback body").unwrap();
+
+        let t = resolve_prompt_value("fallback.md", prompts_dir.path(), config_dir.path()).unwrap();
+        assert_eq!(t.name, "fallback");
+        assert_eq!(t.body, "Fallback body");
+    }
+
+    #[test]
+    fn resolve_prompt_file_with_invalid_frontmatter() {
+        let dir = TempDir::new().unwrap();
+        let prompts_dir = dir.path().join("prompts");
+        std::fs::create_dir(&prompts_dir).unwrap();
+
+        let mut f = std::fs::File::create(prompts_dir.join("bad.md")).unwrap();
+        write!(f, "+++\nnot: [valid toml\n+++\nbody here").unwrap();
+
+        let result = resolve_prompt_value("bad.md", &prompts_dir, dir.path());
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("frontmatter parse error"),
+            "Expected parse error to propagate, got: {err}"
+        );
+    }
+
+    #[test]
+    fn resolve_prompt_inline_name_is_inline() {
+        let dir = TempDir::new().unwrap();
+        let t =
+            resolve_prompt_value("Just some inline prompt text", dir.path(), dir.path()).unwrap();
+        assert_eq!(t.name, "inline");
+        assert_eq!(t.body, "Just some inline prompt text");
+    }
 }

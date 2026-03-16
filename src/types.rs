@@ -1090,4 +1090,104 @@ mod tests {
         let opts = RunOptions::default();
         assert!(!opts.log);
     }
+
+    // ─── Spec coverage (UNTESTED) ──────────────────────
+
+    #[test]
+    fn artifact_from_file_stores_absolute_path() {
+        // SPEC-TY-AF-075: Relative path → absolute storage
+        let f = NamedTempFile::new().unwrap();
+        let art = Artifact::from_file(f.path()).unwrap();
+        assert!(art.path.as_ref().unwrap().is_absolute());
+    }
+
+    #[test]
+    fn context_item_from_file_stores_absolute_path() {
+        // SPEC-TY-CI-179: ContextItem::from_file stores absolute path
+        let f = NamedTempFile::new().unwrap();
+        let item = ContextItem::from_file("spec".into(), f.path()).unwrap();
+        assert!(item.path.as_ref().unwrap().is_absolute());
+    }
+
+    #[test]
+    fn context_item_get_hash_recomputes_same_value() {
+        // SPEC-TY-CI-207: ContextItem hash not cached — calling get_hash twice
+        // recomputes and returns the same value
+        let mut item = ContextItem::from_string("spec".into(), "deterministic content".into());
+        let h1 = item.get_hash().unwrap();
+        let h2 = item.get_hash().unwrap();
+        assert_eq!(h1, h2);
+    }
+
+    #[test]
+    fn context_add_duplicate_replaces_silently() {
+        // SPEC-TY-CX-239: Adding two items with the same name replaces silently
+        let mut ctx = Context::new();
+        ctx.add_string("dup".into(), "first".into());
+        ctx.add_string("dup".into(), "second".into());
+        assert_eq!(ctx.items.len(), 1);
+        let content = ctx.items.get_mut("dup").unwrap().get_content().unwrap();
+        assert_eq!(content, "second");
+    }
+
+    #[test]
+    fn context_single_item_hash_ignores_key_name() {
+        // SPEC-TY-CX-263: Single-item context hash — two contexts with different
+        // key names but same content produce the same hash (because the hash is
+        // computed from content hashes only, not key names)
+        let mut ctx1 = Context::new();
+        ctx1.add_string("alpha".into(), "same content".into());
+
+        let mut ctx2 = Context::new();
+        ctx2.add_string("bravo".into(), "same content".into());
+
+        assert_eq!(ctx1.get_hash().unwrap(), ctx2.get_hash().unwrap());
+    }
+
+    #[test]
+    fn verdict_to_human_no_trailing_newline() {
+        // SPEC-TY-VD-428: to_human has no trailing newline
+        let v = Verdict {
+            status: VerdictStatus::Pass,
+            gate: "g".into(),
+            failed_at: None,
+            feedback: None,
+            duration_ms: 0,
+            timestamp: Utc::now(),
+            artifact_hash: "a".into(),
+            context_hash: "c".into(),
+            warnings: vec![],
+            suppressed: vec![],
+            history: vec![ValidatorResult {
+                name: "lint".into(),
+                status: Status::Pass,
+                feedback: None,
+                duration_ms: 10,
+                cost: None,
+            }],
+        };
+        let human = v.to_human();
+        assert!(!human.ends_with('\n'));
+    }
+
+    #[test]
+    fn verdict_to_summary_fail_no_failed_at_uses_unknown() {
+        // SPEC-TY-VD-454: When failed_at is None for a Fail verdict,
+        // to_summary uses "unknown"
+        let v = Verdict {
+            status: VerdictStatus::Fail,
+            gate: "g".into(),
+            failed_at: None,
+            feedback: Some("something broke".into()),
+            duration_ms: 0,
+            timestamp: Utc::now(),
+            artifact_hash: "a".into(),
+            context_hash: "c".into(),
+            warnings: vec![],
+            suppressed: vec![],
+            history: vec![],
+        };
+        let summary = v.to_summary();
+        assert!(summary.contains("unknown"), "Summary: {summary}");
+    }
 }

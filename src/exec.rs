@@ -2543,4 +2543,210 @@ mod tests {
         assert_eq!(mock.cancel_count(), 1);
         assert_eq!(mock.teardown_count(), 1);
     }
+
+    // ─── Spec coverage (UNTESTED) ──────────────────────
+
+    #[test]
+    fn run_if_empty_expression_returns_err() {
+        let results = BTreeMap::new();
+        let err = evaluate_run_if("", &results).unwrap_err();
+        assert!(
+            err.to_string().contains("Empty run_if"),
+            "expected 'Empty run_if' in error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn run_if_unrecognized_status_returns_err() {
+        let results = th::prior_results();
+        let err = evaluate_run_if("lint.status == invalid_status", &results).unwrap_err();
+        assert!(
+            err.to_string().contains("Invalid status"),
+            "expected 'Invalid status' in error, got: {err}"
+        );
+    }
+
+    #[test]
+    fn run_if_expression_ending_with_operator_returns_err() {
+        let results = th::prior_results();
+        // "lint.status == pass and" — the trailing "and" gets absorbed into
+        // the atom text by split_run_if, producing an invalid atom that cannot
+        // be parsed. Either way an Err is returned.
+        let err = evaluate_run_if("lint.status == pass and", &results).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Invalid"),
+            "expected 'Invalid' in error, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn compute_final_status_empty_results_is_pass() {
+        assert_eq!(compute_final_status(&[], &[]), VerdictStatus::Pass);
+    }
+
+    #[test]
+    fn script_empty_command_returns_error() {
+        let v = ValidatorBuilder::script("empty-cmd", "   ").build();
+        let mut artifact = Artifact::from_string("hello");
+        let mut context = Context::new();
+        let prior = BTreeMap::new();
+        let result = execute_validator(&v, &mut artifact, &mut context, &prior, None);
+        assert_eq!(result.status, Status::Error);
+        assert!(
+            result
+                .feedback
+                .as_ref()
+                .unwrap()
+                .contains("Command is empty"),
+            "expected 'Command is empty' in feedback, got: {:?}",
+            result.feedback
+        );
+    }
+
+    #[test]
+    fn script_warn_exit_code_with_empty_output() {
+        let v = ValidatorBuilder::script("warn-no-out", "exit 2")
+            .warn_exit_codes(vec![2])
+            .build();
+        let mut artifact = Artifact::from_string("hello");
+        let mut context = Context::new();
+        let prior = BTreeMap::new();
+        let result = execute_validator(&v, &mut artifact, &mut context, &prior, None);
+        assert_eq!(result.status, Status::Warn);
+        assert!(
+            result
+                .feedback
+                .as_ref()
+                .unwrap()
+                .contains("warn, no output"),
+            "expected 'warn, no output' in feedback, got: {:?}",
+            result.feedback
+        );
+    }
+
+    #[test]
+    fn script_env_vars_passed_to_subprocess() {
+        let v = ValidatorBuilder::script("env-test", "echo $BATON_TEST_VAR")
+            .env("BATON_TEST_VAR", "hello123")
+            .build();
+        let mut artifact = Artifact::from_string("hello");
+        let mut context = Context::new();
+        let prior = BTreeMap::new();
+        let result = execute_validator(&v, &mut artifact, &mut context, &prior, None);
+        assert_eq!(result.status, Status::Pass);
+        // Pass means exit 0, stdout captured but feedback is None for pass.
+        // The echo output goes to stdout but isn't surfaced in feedback on pass.
+        // Instead, let's use a script that checks the var and fails if wrong.
+        let v2 = ValidatorBuilder::script(
+            "env-check",
+            r#"test "$BATON_TEST_VAR" = "hello123" || echo "MISMATCH: $BATON_TEST_VAR""#,
+        )
+        .env("BATON_TEST_VAR", "hello123")
+        .build();
+        let result2 = execute_validator(&v2, &mut artifact, &mut context, &prior, None);
+        assert_eq!(
+            result2.status,
+            Status::Pass,
+            "env var should be set correctly; feedback: {:?}",
+            result2.feedback
+        );
+    }
+
+    #[test]
+    fn run_gate_artifact_not_found() {
+        let v = ValidatorBuilder::script("dummy", "true").build();
+        let gate = th::gate("test-gate", vec![v]);
+        let config = th::config_for_gate(gate.clone());
+        let mut artifact = Artifact::from_string("placeholder");
+        artifact.path = Some(std::path::PathBuf::from("/nonexistent/file.txt"));
+        let mut context = Context::new();
+        let options = RunOptions::new();
+
+        let err = run_gate(&gate, &config, &mut artifact, &mut context, &options).unwrap_err();
+        match err {
+            BatonError::ArtifactNotFound(p) => {
+                assert!(p.contains("nonexistent"), "path was: {p}");
+            }
+            other => panic!("expected ArtifactNotFound, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn run_gate_artifact_is_directory() {
+        let dir = TempDir::new().unwrap();
+        let v = ValidatorBuilder::script("dummy", "true").build();
+        let gate = th::gate("test-gate", vec![v]);
+        let config = th::config_for_gate(gate.clone());
+        let mut artifact = Artifact::from_string("placeholder");
+        artifact.path = Some(dir.path().to_path_buf());
+        let mut context = Context::new();
+        let options = RunOptions::new();
+
+        let err = run_gate(&gate, &config, &mut artifact, &mut context, &options).unwrap_err();
+        match err {
+            BatonError::ArtifactIsDirectory(p) => {
+                assert!(p.contains(dir.path().to_str().unwrap()), "path was: {p}");
+            }
+            other => panic!("expected ArtifactIsDirectory, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn run_gate_context_not_found() {
+        let tmp = TempDir::new().unwrap();
+        let artifact_path = tmp.path().join("artifact.txt");
+        std::fs::write(&artifact_path, "hello").unwrap();
+        let mut artifact = Artifact::from_file(&artifact_path).unwrap();
+
+        let v = ValidatorBuilder::script("dummy", "true").build();
+        let gate = th::gate("test-gate", vec![v]);
+        let config = th::config_for_gate(gate.clone());
+
+        let mut context = Context::new();
+        context.add_string("bogus".into(), "temp".into());
+        // Mutate the path to a nonexistent file
+        context.items.get_mut("bogus").unwrap().path =
+            Some(std::path::PathBuf::from("/nonexistent/context.txt"));
+
+        let options = RunOptions::new();
+        let err = run_gate(&gate, &config, &mut artifact, &mut context, &options).unwrap_err();
+        match err {
+            BatonError::ContextNotFound { name, path } => {
+                assert_eq!(name, "bogus");
+                assert!(path.contains("nonexistent"), "path was: {path}");
+            }
+            other => panic!("expected ContextNotFound, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn run_gate_context_is_directory() {
+        let tmp = TempDir::new().unwrap();
+        let artifact_path = tmp.path().join("artifact.txt");
+        std::fs::write(&artifact_path, "hello").unwrap();
+        let mut artifact = Artifact::from_file(&artifact_path).unwrap();
+
+        let context_dir = TempDir::new().unwrap();
+        let v = ValidatorBuilder::script("dummy", "true").build();
+        let gate = th::gate("test-gate", vec![v]);
+        let config = th::config_for_gate(gate.clone());
+
+        let mut context = Context::new();
+        context.add_string("dirctx".into(), "temp".into());
+        context.items.get_mut("dirctx").unwrap().path = Some(context_dir.path().to_path_buf());
+
+        let options = RunOptions::new();
+        let err = run_gate(&gate, &config, &mut artifact, &mut context, &options).unwrap_err();
+        match err {
+            BatonError::ContextIsDirectory { name, path } => {
+                assert_eq!(name, "dirctx");
+                assert!(
+                    path.contains(context_dir.path().to_str().unwrap()),
+                    "path was: {path}"
+                );
+            }
+            other => panic!("expected ContextIsDirectory, got: {other}"),
+        }
+    }
 }

@@ -44,7 +44,7 @@ SPEC-VP-SW-003: keyword-followed-by-alphanumeric-rejected
 
 SPEC-VP-SW-004: keyword-not-at-start-rejected
   When the text does not start with the keyword, returns false regardless of content.
-  test: UNTESTED
+  test: verdict_parser::tests::text_not_starting_with_keyword_falls_to_pass2
 
 ---
 
@@ -84,7 +84,7 @@ SPEC-VP-RF-007: keyword-at-start-of-text
 
 SPEC-VP-RF-008: keyword-at-end-of-text
   When the keyword appears at the end of the text, the following-character check is skipped (there is no following character). Only the preceding-character boundary is checked.
-  test: UNTESTED (no explicit test for keyword at end with preceding boundary check)
+  test: verdict_parser::tests::keyword_at_end_with_preceding_boundary
 
 ---
 
@@ -105,7 +105,7 @@ SPEC-VP-PV-001: empty-text-returns-error
 
 SPEC-VP-PV-002: whitespace-only-returns-error
   When the input text contains only whitespace and newlines (no non-empty lines), returns the same Status::Error as empty text. The text is trimmed before processing.
-  test: UNTESTED (empty_text covers "" but not "   \n  \n  ")
+  test: verdict_parser::tests::whitespace_only_input
 
 ### parse_verdict: pass 1 -- first line
 
@@ -122,7 +122,7 @@ SPEC-VP-PV-011: first-line-pass-discards-feedback
 
 SPEC-VP-PV-012: first-line-pass-is-case-insensitive
   The first line is uppercased before keyword matching, so "pass", "Pass", and "PASS" all match.
-  test: UNTESTED (no test uses lowercase "pass" on the first line)
+  test: verdict_parser::tests::lowercase_pass_on_first_line
 
 SPEC-VP-PV-013: first-line-fail-with-inline-evidence
   When the first non-empty line starts with "FAIL" at a word boundary followed by text, returns Status::Fail with evidence set to the trimmed text after "FAIL".
@@ -134,7 +134,7 @@ SPEC-VP-PV-014: first-line-fail-with-multiline-evidence
 
 SPEC-VP-PV-015: first-line-fail-no-evidence
   When the first line is "FAIL" and there are no remaining lines (or remaining lines are empty), evidence is None.
-  test: UNTESTED
+  test: verdict_parser::tests::fail_with_no_remaining_lines
 
 SPEC-VP-PV-016: first-line-warn-with-inline-evidence
   When the first non-empty line starts with "WARN" at a word boundary followed by text, returns Status::Warn with evidence set to the trimmed text after "WARN".
@@ -146,7 +146,7 @@ SPEC-VP-PV-017: first-line-warn-with-multiline-evidence
 
 SPEC-VP-PV-018: first-line-warn-no-evidence
   When the first line is "WARN" and there are no remaining lines, evidence is None.
-  test: UNTESTED
+  test: verdict_parser::tests::warn_with_no_remaining_lines
 
 SPEC-VP-PV-019: leading-whitespace-trimmed
   Leading whitespace and blank lines before the first non-empty line are stripped. The first non-empty line is used for pass 1 matching.
@@ -179,15 +179,15 @@ SPEC-VP-PV-032: pass2-fail-evidence-after-keyword
 
 SPEC-VP-PV-033: pass2-warn-evidence-after-keyword
   When WARN is the winning keyword in pass 2, evidence is the trimmed text after the keyword. If no text follows the keyword, evidence is the full input text (truncated to 500 characters).
-  test: UNTESTED (no test has WARN as a pass-2 winner with evidence)
+  test: verdict_parser::tests::warn_pass2_winner_with_evidence
 
 SPEC-VP-PV-034: pass2-fail-empty-evidence-uses-full-text
   When FAIL wins in pass 2 and there is no text after the keyword (e.g., text ends with "FAIL"), evidence is set to the full input text truncated to 500 characters. This ensures the user always gets context about what went wrong.
-  test: UNTESTED
+  test: verdict_parser::tests::fail_at_end_no_text_after
 
 SPEC-VP-PV-035: pass2-warn-empty-evidence-uses-full-text
   When WARN wins in pass 2 and there is no text after the keyword, evidence is set to the full input text truncated to 500 characters.
-  test: UNTESTED
+  test: verdict_parser::tests::warn_at_end_no_text_after
 
 SPEC-VP-PV-036: pass2-word-boundaries-enforced
   In pass 2, word boundary rules apply via rfind_keyword. "PASSWORD" and "BYPASS" do not match "PASS". Only standalone keyword occurrences are considered.

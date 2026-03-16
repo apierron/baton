@@ -773,4 +773,182 @@ mod tests {
         assert_eq!(parsed.status, VerdictStatus::Pass);
         assert_eq!(parsed.gate, "test-gate");
     }
+
+    // ─── Spec coverage (UNTESTED) ──────────────────────
+
+    #[test]
+    fn index_existence_after_init_db() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = init_db(&db_path).unwrap();
+
+        let mut stmt = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='index' AND name LIKE 'idx_%'")
+            .unwrap();
+        let names: Vec<String> = stmt
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .map(|r| r.unwrap())
+            .collect();
+
+        let expected = [
+            "idx_verdicts_gate",
+            "idx_verdicts_status",
+            "idx_verdicts_artifact",
+            "idx_verdicts_context",
+            "idx_verdicts_timestamp",
+            "idx_vresults_verdict",
+        ];
+        for idx in &expected {
+            assert!(
+                names.contains(&idx.to_string()),
+                "missing index: {idx}, found: {names:?}"
+            );
+        }
+        assert_eq!(names.len(), expected.len());
+    }
+
+    #[test]
+    fn warnings_json_column_stores_warnings() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = init_db(&db_path).unwrap();
+
+        let mut v = th::verdict(VerdictStatus::Pass);
+        v.warnings = vec!["warn1".into(), "warn2".into()];
+        let verdict_id = store_verdict(&conn, &v).unwrap();
+
+        let json_str: String = conn
+            .query_row(
+                "SELECT warnings_json FROM verdicts WHERE id = ?1",
+                params![verdict_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        let parsed: Vec<String> = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(parsed, vec!["warn1", "warn2"]);
+    }
+
+    #[test]
+    fn suppressed_json_column_stores_suppressed() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = init_db(&db_path).unwrap();
+
+        let mut v = th::verdict(VerdictStatus::Pass);
+        v.suppressed = vec!["lint".into(), "format".into()];
+        let verdict_id = store_verdict(&conn, &v).unwrap();
+
+        let json_str: String = conn
+            .query_row(
+                "SELECT suppressed_json FROM verdicts WHERE id = ?1",
+                params![verdict_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        let parsed: Vec<String> = serde_json::from_str(&json_str).unwrap();
+        assert_eq!(parsed, vec!["lint", "format"]);
+    }
+
+    #[test]
+    fn null_cost_columns_when_cost_is_none() {
+        use crate::types::{Status, ValidatorResult};
+
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = init_db(&db_path).unwrap();
+
+        let mut v = th::verdict(VerdictStatus::Pass);
+        v.history = vec![ValidatorResult {
+            name: "no-cost".into(),
+            status: Status::Pass,
+            feedback: None,
+            duration_ms: 10,
+            cost: None,
+        }];
+        let verdict_id = store_verdict(&conn, &v).unwrap();
+
+        let (input_tokens, output_tokens, model, estimated_usd): (
+            Option<i64>,
+            Option<i64>,
+            Option<String>,
+            Option<f64>,
+        ) = conn
+            .query_row(
+                "SELECT input_tokens, output_tokens, model, estimated_usd FROM validator_results WHERE verdict_id = ?1",
+                params![verdict_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+
+        assert!(input_tokens.is_none());
+        assert!(output_tokens.is_none());
+        assert!(model.is_none());
+        assert!(estimated_usd.is_none());
+    }
+
+    #[test]
+    fn query_by_artifact_ordering_newest_first() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = init_db(&db_path).unwrap();
+
+        let shared_hash = "shared-artifact-hash";
+        for gate_name in &["oldest", "middle", "newest"] {
+            let mut v = th::verdict(VerdictStatus::Pass);
+            v.artifact_hash = shared_hash.into();
+            v.gate = gate_name.to_string();
+            v.timestamp = chrono::Utc::now();
+            store_verdict(&conn, &v).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        let results = query_by_artifact(&conn, shared_hash).unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].gate, "newest");
+        assert_eq!(results[1].gate, "middle");
+        assert_eq!(results[2].gate, "oldest");
+    }
+
+    #[test]
+    fn query_by_artifact_returns_all_rows() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("test.db");
+        let conn = init_db(&db_path).unwrap();
+
+        let shared_hash = "all-rows-hash";
+        for i in 0..5 {
+            let mut v = th::verdict(VerdictStatus::Pass);
+            v.artifact_hash = shared_hash.into();
+            v.gate = format!("gate-{i}");
+            store_verdict(&conn, &v).unwrap();
+        }
+
+        // Also insert a verdict with a different hash to ensure filtering works
+        let mut other = th::verdict(VerdictStatus::Pass);
+        other.artifact_hash = "other-hash".into();
+        store_verdict(&conn, &other).unwrap();
+
+        let results = query_by_artifact(&conn, shared_hash).unwrap();
+        assert_eq!(results.len(), 5);
+    }
+
+    #[test]
+    fn verdict_summary_debug_and_clone() {
+        let summary = VerdictSummary {
+            id: "test-id".into(),
+            timestamp: "2026-01-01T00:00:00Z".into(),
+            gate: "test-gate".into(),
+            status: "pass".into(),
+            failed_at: None,
+            feedback: Some("all good".into()),
+            duration_ms: 42,
+            artifact_hash: "abc123".into(),
+        };
+
+        let _cloned = summary.clone();
+        let _debug = format!("{:?}", summary);
+    }
 }

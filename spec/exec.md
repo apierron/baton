@@ -49,7 +49,7 @@ The lack of short-circuit evaluation is intentional: every atom is evaluated eve
 
 SPEC-EX-RI-001: empty-expression-errors
   Empty run_if expression returns Err(ValidationError).
-  test: UNTESTED (empty strings are caught by config validation before reaching evaluate_run_if)
+  test: exec::tests::run_if_empty_expression_returns_err
 
 SPEC-EX-RI-002: simple-atom-matches-status
   An atom `name.status == value` evaluates to true when the prior result for `name` has the matching status.
@@ -88,11 +88,11 @@ SPEC-EX-RI-009: invalid-atom-syntax-errors
 
 SPEC-EX-RI-010: invalid-status-value-errors
   An atom with an unrecognized status value (not pass/fail/warn/skip/error) returns Err(ValidationError).
-  test: UNTESTED (validated at config level, never reaches evaluate_atom at runtime)
+  test: exec::tests::run_if_unrecognized_status_returns_err
 
 SPEC-EX-RI-011: trailing-operator-errors
   An expression ending with an operator and no following atom (e.g., "a.status == pass and") returns Err(ValidationError).
-  test: UNTESTED
+  test: exec::tests::run_if_expression_ending_with_operator_returns_err
 
 ---
 
@@ -128,7 +128,7 @@ SPEC-EX-CF-006: all-suppressed-produces-pass
 
 SPEC-EX-CF-007: empty-results-produces-pass
   If the results list is empty (no validators ran, or all were skipped), the verdict is VerdictStatus::Pass.
-  test: UNTESTED
+  test: exec::tests::compute_final_status_empty_results_is_pass
 
 ---
 
@@ -199,7 +199,7 @@ SPEC-EX-SV-007: placeholders-resolved-in-command
 
 SPEC-EX-SV-008: empty-command-after-resolution-errors
   If the command is empty (or whitespace-only) after placeholder resolution, Status::Error with "[baton] Command is empty after placeholder resolution".
-  test: UNTESTED
+  test: exec::tests::script_empty_command_returns_error
 
 SPEC-EX-SV-009: working-dir-not-found-errors
   If the specified working_dir does not exist, Status::Error with "[baton] Working directory not found: ...".
@@ -215,7 +215,7 @@ SPEC-EX-SV-011: permission-denied-errors
 
 SPEC-EX-SV-012: env-vars-passed-to-subprocess
   Environment variables from validator.env are passed to the subprocess via cmd.env().
-  test: UNTESTED (no test asserts env var propagation to script)
+  test: exec::tests::script_env_vars_passed_to_subprocess
 
 SPEC-EX-SV-013: platform-specific-shell
   On unix, commands run via `sh -c`. On windows, via `cmd /C`. This allows shell features like pipes, redirects, and chaining in commands.
@@ -223,7 +223,7 @@ SPEC-EX-SV-013: platform-specific-shell
 
 SPEC-EX-SV-014: warn-exit-code-no-output
   When a warn exit code fires but stdout+stderr are empty, feedback is "[baton] Script exited with code N (warn, no output)".
-  test: UNTESTED
+  test: exec::tests::script_warn_exit_code_with_empty_output
 
 ---
 
@@ -500,11 +500,11 @@ Edge cases to consider:
 
 SPEC-EX-RG-001: artifact-path-must-exist
   When the artifact is file-backed (artifact.path is Some) and the path does not exist on disk, run_gate returns Err(ArtifactNotFound) containing the path string. When the artifact is from_string (path is None), this check is skipped entirely.
-  test: UNTESTED (exec-level; types::tests::artifact_from_file_not_found covers Artifact::from_file)
+  test: exec::tests::run_gate_artifact_not_found
 
 SPEC-EX-RG-002: artifact-path-rejects-directory
   When artifact.path points to a directory, run_gate returns Err(ArtifactIsDirectory). This check runs after existence, so a nonexistent path always gets ArtifactNotFound, never ArtifactIsDirectory.
-  test: UNTESTED (exec-level; types tests cover Artifact::from_file)
+  test: exec::tests::run_gate_artifact_is_directory
 
 SPEC-EX-RG-003: required-context-enforced
   For each context slot in gate.context where required=true, if the provided context map does not contain that key, run_gate returns Err(MissingRequiredContext) naming both the slot and the gate. Only the first missing context triggers the error (early return).
@@ -516,8 +516,8 @@ SPEC-EX-RG-004: unexpected-context-warns-not-errors
 
 SPEC-EX-RG-005: context-path-must-exist
   For each context item backed by a file path, if the path does not exist, run_gate returns Err(ContextNotFound) with the item name and path. If the path is a directory, returns Err(ContextIsDirectory). Context items with inline string content skip this check.
-  test: UNTESTED (ContextNotFound case)
-  test: UNTESTED (ContextIsDirectory case)
+  test: exec::tests::run_gate_context_not_found
+  test: exec::tests::run_gate_context_is_directory
 
 SPEC-EX-RG-006: hashes-computed-before-execution
   After pre-flight validation passes, artifact_hash and context_hash are computed before any validators run. This ensures the verdict records the exact input state, even if a validator modifies files on disk during execution. Artifact hash is SHA-256 of file content (triggers lazy load). Context hash is SHA-256 of the sorted concatenation of all context item contents.

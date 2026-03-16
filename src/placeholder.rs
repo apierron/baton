@@ -504,4 +504,142 @@ mod tests {
             resolve_placeholders("Unclosed {brace", &mut art, &mut ctx, &prior, &mut warns);
         assert_eq!(result, "Unclosed {brace");
     }
+
+    // ─── Spec coverage (UNTESTED) ──────────────────────────
+
+    #[test]
+    fn nested_braces_extracted_as_single_placeholder() {
+        let mut art = Artifact::from_string("x");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let mut warns = ResolutionWarnings::new();
+        let result = resolve_placeholders("{a{b}c}", &mut art, &mut ctx, &prior, &mut warns);
+        // The outer braces match: open at 0, inner { at 2, inner } at 4 (depth back to 1),
+        // outer } at 6 (depth 0). Extracted placeholder content is "a{b}c".
+        // "a{b}c" is unrecognized, so it is kept as literal and a warning is emitted.
+        assert_eq!(result, "{a{b}c}");
+        assert_eq!(warns.warnings.len(), 1);
+        assert!(warns.warnings[0].contains("a{b}c"));
+    }
+
+    #[test]
+    fn artifact_file_backed_resolves_to_path() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let mut art = Artifact::from_file(tmp.path()).unwrap();
+        let expected_path = art.absolute_path().unwrap();
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let mut warns = ResolutionWarnings::new();
+        let result = resolve_placeholders("{artifact}", &mut art, &mut ctx, &prior, &mut warns);
+        assert_eq!(result, expected_path);
+        assert!(result.contains(tmp.path().file_name().unwrap().to_str().unwrap()));
+        assert!(warns.warnings.is_empty());
+    }
+
+    #[test]
+    fn artifact_from_string_resolves_to_empty() {
+        let mut art = Artifact::from_string("inline content");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let mut warns = ResolutionWarnings::new();
+        let result = resolve_placeholders("{artifact}", &mut art, &mut ctx, &prior, &mut warns);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn artifact_dir_resolves_to_parent() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let mut art = Artifact::from_file(tmp.path()).unwrap();
+        let expected_dir = art.parent_dir().unwrap();
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let mut warns = ResolutionWarnings::new();
+        let result = resolve_placeholders("{artifact_dir}", &mut art, &mut ctx, &prior, &mut warns);
+        assert_eq!(result, expected_dir);
+        assert!(!result.is_empty());
+        assert!(warns.warnings.is_empty());
+    }
+
+    #[test]
+    fn context_file_backed_resolves_to_path() {
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        let mut art = Artifact::from_string("x");
+        let mut ctx = Context::new();
+        ctx.add_file("myfile".into(), tmp.path()).unwrap();
+        let expected_path = ctx.items.get("myfile").unwrap().absolute_path().unwrap();
+        let prior = BTreeMap::new();
+        let mut warns = ResolutionWarnings::new();
+        let result =
+            resolve_placeholders("{context.myfile}", &mut art, &mut ctx, &prior, &mut warns);
+        assert_eq!(result, expected_path);
+        assert!(result.contains(tmp.path().file_name().unwrap().to_str().unwrap()));
+        assert!(warns.warnings.is_empty());
+    }
+
+    #[test]
+    fn context_string_resolves_to_empty_path() {
+        let mut art = Artifact::from_string("x");
+        let mut ctx = Context::new();
+        ctx.add_string("myitem".into(), "some string value".into());
+        let prior = BTreeMap::new();
+        let mut warns = ResolutionWarnings::new();
+        let result =
+            resolve_placeholders("{context.myitem}", &mut art, &mut ctx, &prior, &mut warns);
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn nonexistent_validator_feedback_is_empty() {
+        let mut art = Artifact::from_string("x");
+        let mut ctx = Context::new();
+        let prior = th::prior_results();
+        let mut warns = ResolutionWarnings::new();
+        let result = resolve_placeholders(
+            "{verdict.nonexistent.feedback}",
+            &mut art,
+            &mut ctx,
+            &prior,
+            &mut warns,
+        );
+        assert_eq!(result, "");
+        assert!(warns.warnings.is_empty());
+    }
+
+    #[test]
+    fn unrecognized_verdict_sub_path_warns() {
+        let mut art = Artifact::from_string("x");
+        let mut ctx = Context::new();
+        let prior = th::prior_results();
+        let mut warns = ResolutionWarnings::new();
+        let result = resolve_placeholders(
+            "{verdict.lint.duration}",
+            &mut art,
+            &mut ctx,
+            &prior,
+            &mut warns,
+        );
+        assert_eq!(result, "");
+        assert_eq!(warns.warnings.len(), 1);
+        assert!(warns.warnings[0].contains("verdict"));
+    }
+
+    #[test]
+    fn multiple_warnings_in_one_call() {
+        let mut art = Artifact::from_string("x");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let mut warns = ResolutionWarnings::new();
+        let _result = resolve_placeholders(
+            "{unknown1} {unknown2}",
+            &mut art,
+            &mut ctx,
+            &prior,
+            &mut warns,
+        );
+        assert!(
+            warns.warnings.len() >= 2,
+            "Expected at least 2 warnings, got {}",
+            warns.warnings.len()
+        );
+    }
 }
