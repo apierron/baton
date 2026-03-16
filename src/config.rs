@@ -721,7 +721,7 @@ mod tests {
     use std::path::PathBuf;
 
     fn config_dir() -> PathBuf {
-        PathBuf::from("/tmp/test")
+        std::env::temp_dir().join("baton-test")
     }
 
     // ═══════════════════════════════════════════════════════════════

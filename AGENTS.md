@@ -14,6 +14,7 @@ cargo test                           # Run all tests (396 across 8 modules + int
 cargo test config::tests::test_name  # Run a single test
 cargo test config::tests             # Run one module's tests
 cargo clippy --all-targets -- -D warnings  # Lint (must pass with zero warnings)
+cargo fmt --check # Formatting
 ```
 
 ## Architecture
@@ -21,7 +22,8 @@ cargo clippy --all-targets -- -D warnings  # Lint (must pass with zero warnings)
 **Data flow:** CLI → config discovery/parse/validate → load artifact & context → `run_gate()` → store verdict in SQLite → output (JSON/human/summary)
 
 **Module dependency layers** (top → bottom, never import upward):
-```
+
+```text
 main.rs → exec, config, history, runtime, types
 exec → config, types, placeholder, runtime, error
 config → types, placeholder, error
