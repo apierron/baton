@@ -14,6 +14,9 @@ pub fn init_db(db_path: &Path) -> Result<Connection> {
     let conn = Connection::open(db_path)
         .map_err(|e| BatonError::DatabaseError(format!("Failed to open database: {e}")))?;
 
+    conn.busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|e| BatonError::DatabaseError(format!("Failed to set busy timeout: {e}")))?;
+
     conn.pragma_update(None, "journal_mode", "WAL")
         .map_err(|e| BatonError::DatabaseError(format!("Failed to set WAL mode: {e}")))?;
 
@@ -478,9 +481,6 @@ mod tests {
                 let path = db_path.clone();
                 std::thread::spawn(move || {
                     let conn = init_db(&path).unwrap();
-                    // WAL mode busy timeout — give concurrent writers time to retry
-                    conn.busy_timeout(std::time::Duration::from_secs(5))
-                        .unwrap();
                     for j in 0..writes_per_thread {
                         let mut v = th::verdict(VerdictStatus::Pass);
                         v.gate = format!("gate-{i}");
@@ -518,8 +518,6 @@ mod tests {
 
         let writer = std::thread::spawn(move || {
             let conn = init_db(&writer_path).unwrap();
-            conn.busy_timeout(std::time::Duration::from_secs(5))
-                .unwrap();
             for _ in 0..20 {
                 store_verdict(&conn, &th::verdict(VerdictStatus::Fail)).unwrap();
             }
@@ -527,8 +525,6 @@ mod tests {
 
         let reader = std::thread::spawn(move || {
             let conn = init_db(&reader_path).unwrap();
-            conn.busy_timeout(std::time::Duration::from_secs(5))
-                .unwrap();
             let mut total_seen = 0;
             for _ in 0..20 {
                 let results = query_recent(&conn, 1000, None, None).unwrap();
