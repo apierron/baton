@@ -2749,4 +2749,718 @@ mod tests {
             other => panic!("expected ContextIsDirectory, got: {other}"),
         }
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // Additional edge-case tests
+    // ═══════════════════════════════════════════════════════════════
+
+    // ─── extract_cost edge cases ─────────────────────────
+
+    #[test]
+    fn extract_cost_only_completion_tokens() {
+        let body = serde_json::json!({
+            "usage": {
+                "completion_tokens": 42
+            }
+        });
+        let cost = extract_cost(&body, "model").unwrap();
+        assert_eq!(cost.input_tokens, None);
+        assert_eq!(cost.output_tokens, Some(42));
+        assert_eq!(cost.model, Some("model".into()));
+    }
+
+    #[test]
+    fn extract_cost_both_null_returns_none() {
+        // usage object exists but both token fields are null (not absent)
+        let body = serde_json::json!({
+            "usage": {
+                "prompt_tokens": null,
+                "completion_tokens": null
+            }
+        });
+        assert!(extract_cost(&body, "model").is_none());
+    }
+
+    #[test]
+    fn extract_cost_usage_is_non_object() {
+        // usage exists but is not an object — get("usage") returns Some
+        // but inner field lookups return None
+        let body = serde_json::json!({
+            "usage": "not-an-object"
+        });
+        assert!(extract_cost(&body, "model").is_none());
+    }
+
+    // ─── Script validator: working_dir error ──────────────
+
+    #[test]
+    fn script_nonexistent_working_dir_returns_error() {
+        let v = ValidatorBuilder::script("wd-test", "echo hi")
+            .working_dir("/nonexistent/working/dir/path")
+            .build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        assert_eq!(result.status, Status::Error);
+        assert!(
+            result
+                .feedback
+                .as_ref()
+                .unwrap()
+                .contains("Working directory not found"),
+            "expected working dir error, got: {:?}",
+            result.feedback
+        );
+    }
+
+    // ─── Human validator edge cases ──────────────────────
+
+    #[test]
+    fn human_validator_with_placeholders_in_prompt() {
+        let v = ValidatorBuilder::human("human-ph", "Review {artifact_content} please").build();
+        let mut art = Artifact::from_string("fn main() {}");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        assert_eq!(result.status, Status::Fail);
+        assert!(result.feedback.as_ref().unwrap().contains("fn main() {}"));
+        assert!(result
+            .feedback
+            .as_ref()
+            .unwrap()
+            .contains("[human-review-requested]"));
+    }
+
+    #[test]
+    fn human_validator_with_empty_prompt() {
+        // prompt is None — the builder with "" sets Some(""), which resolves to ""
+        let mut v = ValidatorBuilder::human("human-empty", "").build();
+        v.prompt = None;
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        assert_eq!(result.status, Status::Fail);
+        // With None prompt, it falls back to "" and renders "[human-review-requested] "
+        assert!(result
+            .feedback
+            .as_ref()
+            .unwrap()
+            .contains("[human-review-requested]"));
+    }
+
+    // ─── execute_validator: run_if error propagation ─────
+
+    #[test]
+    fn execute_validator_run_if_error_propagates() {
+        let v = ValidatorBuilder::script("run-if-err", "exit 0")
+            .run_if("bad expression no operator")
+            .build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        assert_eq!(result.status, Status::Error);
+        assert!(
+            result
+                .feedback
+                .as_ref()
+                .unwrap()
+                .contains("run_if evaluation error"),
+            "expected run_if error, got: {:?}",
+            result.feedback
+        );
+    }
+
+    // ─── run_gate: --all mode with mixed results ─────────
+
+    #[test]
+    fn gate_all_mode_mixed_fail_and_pass_reports_fail() {
+        // All validators run; final status uses compute_final_status
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("a", "exit 0").build(),
+                ValidatorBuilder::script("b", "exit 1")
+                    .blocking(false)
+                    .build(),
+                ValidatorBuilder::script("c", "exit 0").build(),
+                ValidatorBuilder::script("d", "exit 1").build(),
+            ],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let mut opts = RunOptions::new();
+        opts.run_all = true;
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        assert_eq!(verdict.status, VerdictStatus::Fail);
+        // All 4 ran
+        assert_eq!(verdict.history.len(), 4);
+        // failed_at should point to the first failing validator
+        assert_eq!(verdict.failed_at, Some("b".into()));
+        assert!(verdict.feedback.is_some());
+    }
+
+    #[test]
+    fn gate_all_mode_all_pass() {
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("a", "exit 0").build(),
+                ValidatorBuilder::script("b", "exit 0").build(),
+            ],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let mut opts = RunOptions::new();
+        opts.run_all = true;
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        assert_eq!(verdict.status, VerdictStatus::Pass);
+        assert!(verdict.failed_at.is_none());
+        assert!(verdict.feedback.is_none());
+    }
+
+    // ─── run_gate: warnings list tracking ────────────────
+
+    #[test]
+    fn gate_warnings_list_tracks_multiple_warn_validators() {
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("w1", "exit 2")
+                    .warn_exit_codes(vec![2])
+                    .build(),
+                ValidatorBuilder::script("ok", "exit 0").build(),
+                ValidatorBuilder::script("w2", "exit 3")
+                    .warn_exit_codes(vec![3])
+                    .build(),
+            ],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let opts = RunOptions::new();
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        assert_eq!(verdict.status, VerdictStatus::Pass);
+        assert_eq!(verdict.warnings, vec!["w1", "w2"]);
+    }
+
+    // ─── run_gate: required context error message format ─
+
+    #[test]
+    fn gate_required_context_error_includes_gate_name() {
+        let mut gate = th::gate(
+            "my-gate",
+            vec![ValidatorBuilder::script("a", "exit 0").build()],
+        );
+        gate.context.insert(
+            "design-doc".into(),
+            ContextSlot {
+                description: None,
+                required: true,
+            },
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let opts = RunOptions::new();
+
+        let err = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("design-doc"),
+            "expected context name in error: {msg}"
+        );
+        assert!(
+            msg.contains("my-gate"),
+            "expected gate name in error: {msg}"
+        );
+    }
+
+    // ─── run_gate: suppress_all mode (Warn + Error + Fail) ─
+
+    #[test]
+    fn gate_suppress_all_statuses_in_blocking_mode() {
+        // Fail is blocking, but suppressed — so pipeline continues
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("fail-v", "exit 1").build(),
+                ValidatorBuilder::script("warn-v", "exit 2")
+                    .warn_exit_codes(vec![2])
+                    .build(),
+                ValidatorBuilder::script("error-v", "exit 0")
+                    .working_dir("/nonexistent/dir")
+                    .build(),
+                ValidatorBuilder::script("ok-v", "exit 0").build(),
+            ],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let mut opts = RunOptions::new();
+        opts.suppressed_statuses = vec![Status::Warn, Status::Error, Status::Fail];
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        // All suppressed, so gate passes
+        assert_eq!(verdict.status, VerdictStatus::Pass);
+        // All validators ran (blocking failures were suppressed)
+        assert_eq!(verdict.history.len(), 4);
+        // Suppressed list recorded in verdict
+        assert_eq!(verdict.suppressed.len(), 3);
+    }
+
+    // ─── LLM completion: missing prompt ──────────────────
+
+    #[test]
+    fn llm_completion_missing_prompt() {
+        let config = th::config_with_provider("http://localhost");
+        let mut v = ValidatorBuilder::llm("llm-no-prompt", "placeholder").build();
+        v.prompt = None;
+
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(
+            result.feedback.as_ref().unwrap().contains("missing prompt"),
+            "expected missing prompt error, got: {:?}",
+            result.feedback
+        );
+    }
+
+    // ─── LLM completion: no choices / missing content key ─
+
+    #[test]
+    fn llm_completion_missing_choices_key() {
+        // Response has no "choices" key at all — content resolves to ""
+        let response = serde_json::json!({
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5
+            }
+        });
+
+        let (port, handle) = start_mock_server(200, &response.to_string());
+        let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = ValidatorBuilder::llm("llm-check", "Review this").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(result
+            .feedback
+            .as_ref()
+            .unwrap()
+            .contains("empty or malformed"));
+        // Cost should still be extracted even on empty content
+        assert!(result.cost.is_some());
+
+        handle.join().unwrap();
+    }
+
+    // ─── LLM completion: generic HTTP error (e.g. 503) ───
+
+    #[test]
+    fn llm_completion_http_503() {
+        let (port, handle) = start_mock_server(503, r#"{"error": "service unavailable"}"#);
+        let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = ValidatorBuilder::llm("llm-check", "Review this").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(result.feedback.as_ref().unwrap().contains("HTTP 503"));
+
+        handle.join().unwrap();
+    }
+
+    // ─── drive_session: poll error cancels and tears down ─
+
+    /// A mock adapter that returns an error on poll_status.
+    #[derive(Debug)]
+    struct PollErrorAdapter {
+        teardown_count: std::sync::atomic::AtomicU32,
+        cancel_count: std::sync::atomic::AtomicU32,
+    }
+
+    impl PollErrorAdapter {
+        fn new() -> Self {
+            Self {
+                teardown_count: std::sync::atomic::AtomicU32::new(0),
+                cancel_count: std::sync::atomic::AtomicU32::new(0),
+            }
+        }
+    }
+
+    impl runtime::RuntimeAdapter for PollErrorAdapter {
+        fn health_check(&self) -> crate::error::Result<runtime::HealthResult> {
+            Ok(runtime::HealthResult {
+                reachable: true,
+                version: None,
+                models: None,
+                message: None,
+            })
+        }
+        fn create_session(
+            &self,
+            _config: runtime::SessionConfig,
+        ) -> crate::error::Result<runtime::SessionHandle> {
+            Ok(runtime::SessionHandle {
+                id: "poll-err-session".into(),
+                workspace_id: "ws".into(),
+            })
+        }
+        fn poll_status(
+            &self,
+            _handle: &runtime::SessionHandle,
+        ) -> crate::error::Result<runtime::SessionStatus> {
+            Err(crate::error::BatonError::RuntimeError(
+                "poll network failure".into(),
+            ))
+        }
+        fn collect_result(
+            &self,
+            _handle: &runtime::SessionHandle,
+        ) -> crate::error::Result<runtime::SessionResult> {
+            unreachable!("should not collect after poll error");
+        }
+        fn cancel(&self, _handle: &runtime::SessionHandle) -> crate::error::Result<()> {
+            self.cancel_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+        fn teardown(&self, _handle: &runtime::SessionHandle) -> crate::error::Result<()> {
+            self.teardown_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn session_poll_error_cancels_and_tears_down() {
+        let adapter = PollErrorAdapter::new();
+        let result = drive_session("v", &adapter, test_session_config(), 30);
+        assert_eq!(result.status, Status::Error);
+        assert!(
+            result
+                .feedback
+                .as_ref()
+                .unwrap()
+                .contains("Error polling session"),
+            "expected poll error, got: {:?}",
+            result.feedback
+        );
+        assert!(result
+            .feedback
+            .as_ref()
+            .unwrap()
+            .contains("poll network failure"));
+        assert_eq!(
+            adapter
+                .cancel_count
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        assert_eq!(
+            adapter
+                .teardown_count
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+    }
+
+    // ─── drive_session: collect error tears down ─────────
+
+    #[test]
+    fn session_collect_error_message_contains_cause() {
+        let mock =
+            MockRuntimeAdapter::completing("PASS").with_collect_error("database unavailable");
+        let result = drive_session("v", &mock, test_session_config(), 30);
+        assert_eq!(result.status, Status::Error);
+        assert!(result
+            .feedback
+            .as_ref()
+            .unwrap()
+            .contains("Error collecting session result"));
+        assert!(result
+            .feedback
+            .as_ref()
+            .unwrap()
+            .contains("database unavailable"));
+        assert_eq!(mock.teardown_count(), 1);
+    }
+
+    // ─── drive_session: Running status (defensive path) ──
+
+    #[test]
+    fn session_running_terminal_status_returns_error() {
+        // Force the mock to report Running as the terminal status.
+        // This exercises the defensive `SessionStatus::Running` match arm.
+        let mock =
+            MockRuntimeAdapter::completing("PASS").with_terminal_status(SessionStatus::Running);
+        // polls_before_done is 0, so first poll returns the terminal status (Running).
+        // But the poll loop sees Running and sleeps+continues, so we need timeout=1
+        // to break out. After timeout, it cancels and tears down with a timeout error.
+        // Actually: the mock immediately returns Running (terminal_status), the poll
+        // loop sees Running and sleeps. After timeout_seconds=1, it exits with timeout.
+        // To truly test the defensive path, we need a mock that returns Running from
+        // collect_result's status. Let's use a custom adapter.
+
+        // Use a simpler approach: the existing MockRuntimeAdapter::completing_after
+        // makes the poll loop exit when poll returns Completed. Then collect_result
+        // returns a SessionResult with status=Running (the terminal_status we set).
+        // Wait — with_terminal_status sets terminal_status which is used by BOTH
+        // poll_status (after N polls) and collect_result. So if we do
+        // completing_after(0, "PASS").with_terminal_status(Running), poll_status
+        // returns Running on first call, the loop sleeps and continues, eventually
+        // timing out. That doesn't test the defensive path.
+        //
+        // We need an adapter that: poll returns Completed, but collect returns
+        // status=Running. Let's build a custom one.
+        drop(mock);
+
+        #[derive(Debug)]
+        struct RunningCollectAdapter;
+        impl runtime::RuntimeAdapter for RunningCollectAdapter {
+            fn health_check(&self) -> crate::error::Result<runtime::HealthResult> {
+                Ok(runtime::HealthResult {
+                    reachable: true,
+                    version: None,
+                    models: None,
+                    message: None,
+                })
+            }
+            fn create_session(
+                &self,
+                _config: runtime::SessionConfig,
+            ) -> crate::error::Result<runtime::SessionHandle> {
+                Ok(runtime::SessionHandle {
+                    id: "s".into(),
+                    workspace_id: "w".into(),
+                })
+            }
+            fn poll_status(
+                &self,
+                _handle: &runtime::SessionHandle,
+            ) -> crate::error::Result<runtime::SessionStatus> {
+                Ok(runtime::SessionStatus::Completed)
+            }
+            fn collect_result(
+                &self,
+                _handle: &runtime::SessionHandle,
+            ) -> crate::error::Result<runtime::SessionResult> {
+                Ok(runtime::SessionResult {
+                    status: runtime::SessionStatus::Running,
+                    output: "PASS".into(),
+                    raw_log: String::new(),
+                    cost: Some(Cost {
+                        input_tokens: Some(50),
+                        output_tokens: Some(10),
+                        model: Some("m".into()),
+                        estimated_usd: None,
+                    }),
+                })
+            }
+            fn cancel(&self, _handle: &runtime::SessionHandle) -> crate::error::Result<()> {
+                Ok(())
+            }
+            fn teardown(&self, _handle: &runtime::SessionHandle) -> crate::error::Result<()> {
+                Ok(())
+            }
+        }
+
+        let adapter = RunningCollectAdapter;
+        let result = drive_session("v", &adapter, test_session_config(), 30);
+        assert_eq!(result.status, Status::Error);
+        assert!(
+            result.feedback.as_ref().unwrap().contains("no verdict"),
+            "expected 'no verdict' in feedback, got: {:?}",
+            result.feedback
+        );
+        // Cost should still be propagated from the session result
+        assert!(result.cost.is_some());
+    }
+
+    // ─── LLM session: missing prompt ─────────────────────
+
+    #[test]
+    fn llm_session_missing_prompt() {
+        let mut config = th::config_with_provider("http://localhost");
+        config.runtimes.insert(
+            "oh".into(),
+            crate::config::Runtime {
+                runtime_type: "openhands".into(),
+                base_url: "http://localhost:3000".into(),
+                api_key_env: None,
+                default_model: Some("test-model".into()),
+                sandbox: false,
+                timeout_seconds: 300,
+                max_iterations: 10,
+            },
+        );
+
+        let mut v = ValidatorBuilder::llm("session-no-prompt", "placeholder")
+            .mode(LlmMode::Session)
+            .runtime("oh")
+            .build();
+        v.prompt = None;
+
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(
+            result.feedback.as_ref().unwrap().contains("missing prompt"),
+            "expected missing prompt, got: {:?}",
+            result.feedback
+        );
+    }
+
+    // ─── run_gate: error in blocking mode propagates Error verdict ─
+
+    #[test]
+    fn gate_blocking_error_returns_error_verdict() {
+        // A script validator that errors (not fails) should produce VerdictStatus::Error
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("err-v", "exit 0")
+                    .working_dir("/nonexistent/dir")
+                    .build(),
+                ValidatorBuilder::script("after", "exit 0").build(),
+            ],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let opts = RunOptions::new();
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        assert_eq!(verdict.status, VerdictStatus::Error);
+        assert_eq!(verdict.failed_at, Some("err-v".into()));
+        // "after" should not have run
+        assert_eq!(verdict.history.len(), 1);
+    }
+
+    // ─── run_gate: suppressed list in verdict ────────────
+
+    #[test]
+    fn gate_verdict_records_suppressed_statuses() {
+        let gate = th::gate(
+            "test",
+            vec![ValidatorBuilder::script("a", "exit 0").build()],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let mut opts = RunOptions::new();
+        opts.suppressed_statuses = vec![Status::Warn, Status::Fail];
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        assert!(verdict.suppressed.contains(&"warn".to_string()));
+        assert!(verdict.suppressed.contains(&"fail".to_string()));
+    }
+
+    // ─── run_gate: all mode with error reports failed_at ─
+
+    #[test]
+    fn gate_all_mode_error_reports_failed_at_error_validator() {
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("ok", "exit 0").build(),
+                ValidatorBuilder::script("fail-v", "exit 1")
+                    .blocking(false)
+                    .build(),
+                ValidatorBuilder::script("err-v", "exit 0")
+                    .working_dir("/nonexistent/dir")
+                    .blocking(false)
+                    .build(),
+            ],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let mut opts = RunOptions::new();
+        opts.run_all = true;
+
+        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        // Error beats fail
+        assert_eq!(verdict.status, VerdictStatus::Error);
+        // failed_at should point to the error validator (first with Error status)
+        assert_eq!(verdict.failed_at, Some("err-v".into()));
+    }
+
+    // ─── Script: no command (None) ───────────────────────
+
+    #[test]
+    fn script_no_command_returns_error() {
+        let mut v = ValidatorBuilder::script("no-cmd", "placeholder").build();
+        v.command = None;
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        assert_eq!(result.status, Status::Error);
+        assert!(result
+            .feedback
+            .as_ref()
+            .unwrap()
+            .contains("Command is empty"));
+    }
+
+    // ─── Script: working_dir set to valid directory ──────
+
+    #[test]
+    fn script_valid_working_dir() {
+        let dir = TempDir::new().unwrap();
+        let v = ValidatorBuilder::script("wd-ok", "exit 0")
+            .working_dir(dir.path().to_str().unwrap())
+            .build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        assert_eq!(result.status, Status::Pass);
+    }
+
+    // ─── LLM completion: HTTP 403 ────────────────────────
+
+    #[test]
+    fn llm_completion_http_403() {
+        let (port, handle) = start_mock_server(403, r#"{"error": "forbidden"}"#);
+        let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
+
+        let v = ValidatorBuilder::llm("llm-check", "Review this").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        assert!(result
+            .feedback
+            .as_ref()
+            .unwrap()
+            .contains("Authentication failed"));
+
+        handle.join().unwrap();
+    }
 }

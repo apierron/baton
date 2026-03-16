@@ -440,4 +440,231 @@ mod tests {
         assert_eq!(cost.output_tokens, None);
         assert_eq!(cost.model, None);
     }
+
+    // ─── OpenHandsAdapter::new ─────────────────────────
+
+    #[test]
+    fn new_strips_trailing_slash() {
+        let adapter =
+            OpenHandsAdapter::new("http://localhost:3000/".into(), None, None, true, 600, 30)
+                .unwrap();
+        let debug = format!("{:?}", adapter);
+        assert!(
+            debug.contains("http://localhost:3000\""),
+            "Expected trailing slash to be stripped, got: {debug}"
+        );
+    }
+
+    #[test]
+    fn new_strips_trailing_slash_preserves_path() {
+        let adapter = OpenHandsAdapter::new(
+            "http://localhost:3000/api/v1/".into(),
+            None,
+            None,
+            true,
+            600,
+            30,
+        )
+        .unwrap();
+        let debug = format!("{:?}", adapter);
+        assert!(
+            debug.contains("http://localhost:3000/api/v1\""),
+            "Expected only trailing slash stripped, got: {debug}"
+        );
+    }
+
+    #[test]
+    fn new_no_trailing_slash_unchanged() {
+        let adapter =
+            OpenHandsAdapter::new("http://localhost:3000".into(), None, None, true, 600, 30)
+                .unwrap();
+        let debug = format!("{:?}", adapter);
+        assert!(
+            debug.contains("http://localhost:3000\""),
+            "URL without trailing slash should be unchanged, got: {debug}"
+        );
+    }
+
+    #[test]
+    fn new_missing_env_var_returns_config_error() {
+        // Use a var name that is extremely unlikely to exist
+        let result = OpenHandsAdapter::new(
+            "http://localhost".into(),
+            Some("BATON_TEST_NONEXISTENT_KEY_12345"),
+            None,
+            true,
+            600,
+            30,
+        );
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("BATON_TEST_NONEXISTENT_KEY_12345"),
+            "Error should mention the env var name, got: {err}"
+        );
+        assert!(
+            err.contains("not set"),
+            "Error should say 'not set', got: {err}"
+        );
+    }
+
+    #[test]
+    fn new_empty_env_var_name_treated_as_none() {
+        // An empty string for api_key_env should not attempt env lookup
+        let result =
+            OpenHandsAdapter::new("http://localhost".into(), Some(""), None, true, 600, 30);
+        assert!(result.is_ok(), "Empty env var name should succeed");
+        let debug = format!("{:?}", result.unwrap());
+        assert!(
+            debug.contains("api_key: None"),
+            "Empty env var name should result in no api key, got: {debug}"
+        );
+    }
+
+    #[test]
+    fn new_valid_env_var_is_resolved() {
+        // Set a temporary env var and verify the adapter picks it up
+        std::env::set_var("BATON_TEST_OPENHANDS_KEY", "test-secret-123");
+        let result = OpenHandsAdapter::new(
+            "http://localhost".into(),
+            Some("BATON_TEST_OPENHANDS_KEY"),
+            None,
+            true,
+            600,
+            30,
+        );
+        std::env::remove_var("BATON_TEST_OPENHANDS_KEY");
+        assert!(result.is_ok(), "Valid env var should succeed");
+        let debug = format!("{:?}", result.unwrap());
+        assert!(
+            debug.contains("test-secret-123"),
+            "Adapter should contain the resolved key, got: {debug}"
+        );
+    }
+
+    #[test]
+    fn new_stores_default_model() {
+        let adapter = OpenHandsAdapter::new(
+            "http://localhost".into(),
+            None,
+            Some("gpt-4o".into()),
+            false,
+            300,
+            10,
+        )
+        .unwrap();
+        assert_eq!(adapter.default_model, Some("gpt-4o".into()));
+        assert!(!adapter.sandbox);
+        assert_eq!(adapter.timeout_seconds, 300);
+        assert_eq!(adapter.max_iterations, 10);
+    }
+
+    // ─── auth_headers (tested indirectly via Debug) ────
+
+    #[test]
+    fn adapter_without_api_key_has_no_auth_in_debug() {
+        let adapter =
+            OpenHandsAdapter::new("http://localhost".into(), None, None, true, 600, 30).unwrap();
+        let headers = adapter.auth_headers();
+        assert!(
+            headers.is_empty(),
+            "No API key should produce empty headers"
+        );
+    }
+
+    #[test]
+    fn adapter_with_api_key_has_auth_header() {
+        std::env::set_var("BATON_TEST_AUTH_HEADER_KEY", "my-key");
+        let adapter = OpenHandsAdapter::new(
+            "http://localhost".into(),
+            Some("BATON_TEST_AUTH_HEADER_KEY"),
+            None,
+            true,
+            600,
+            30,
+        )
+        .unwrap();
+        std::env::remove_var("BATON_TEST_AUTH_HEADER_KEY");
+        let headers = adapter.auth_headers();
+        assert_eq!(headers.len(), 1);
+        let auth_val = headers.get(reqwest::header::AUTHORIZATION).unwrap();
+        assert_eq!(auth_val.to_str().unwrap(), "Bearer my-key");
+    }
+
+    // ─── Cost extraction — additional edge cases ───────
+
+    #[test]
+    fn extract_cost_only_output_tokens() {
+        let body = serde_json::json!({
+            "metrics": {
+                "output_tokens": 250
+            }
+        });
+        let cost = extract_cost_from_openhands(&body).unwrap();
+        assert_eq!(cost.input_tokens, None);
+        assert_eq!(cost.output_tokens, Some(250));
+    }
+
+    #[test]
+    fn extract_cost_non_numeric_tokens_returns_none() {
+        let body = serde_json::json!({
+            "metrics": {
+                "input_tokens": "five hundred",
+                "output_tokens": "two hundred"
+            }
+        });
+        // as_i64() returns None for string values, so both are None → returns None
+        assert!(extract_cost_from_openhands(&body).is_none());
+    }
+
+    #[test]
+    fn extract_cost_all_fields_present() {
+        let body = serde_json::json!({
+            "metrics": {
+                "input_tokens": 1000,
+                "output_tokens": 200,
+                "model": "gpt-4o",
+                "cost": 0.012
+            }
+        });
+        let cost = extract_cost_from_openhands(&body).unwrap();
+        assert_eq!(cost.input_tokens, Some(1000));
+        assert_eq!(cost.output_tokens, Some(200));
+        assert_eq!(cost.model, Some("gpt-4o".into()));
+        assert_eq!(cost.estimated_usd, Some(0.012));
+    }
+
+    #[test]
+    fn extract_cost_metrics_is_not_object() {
+        let body = serde_json::json!({
+            "metrics": "not an object"
+        });
+        // metrics.get("input_tokens") returns None on a string value
+        assert!(extract_cost_from_openhands(&body).is_none());
+    }
+
+    #[test]
+    fn extract_cost_metrics_null() {
+        let body = serde_json::json!({
+            "metrics": null
+        });
+        assert!(extract_cost_from_openhands(&body).is_none());
+    }
+
+    // ─── Status mapping — additional edge cases ────────
+
+    #[test]
+    fn map_status_empty_string_defaults_to_failed() {
+        assert_eq!(map_openhands_status(""), SessionStatus::Failed);
+    }
+
+    #[test]
+    fn map_status_mixed_case_variants() {
+        assert_eq!(map_openhands_status("DONE"), SessionStatus::Completed);
+        assert_eq!(map_openhands_status("Cancelled"), SessionStatus::Cancelled);
+        assert_eq!(map_openhands_status("TIMED_OUT"), SessionStatus::TimedOut);
+        assert_eq!(map_openhands_status("Pending"), SessionStatus::Running);
+        assert_eq!(map_openhands_status("Error"), SessionStatus::Failed);
+        assert_eq!(map_openhands_status("Stopped"), SessionStatus::Cancelled);
+    }
 }

@@ -1480,3 +1480,615 @@ fn all_validators_skipped_still_passes() {
     let history = verdict["history"].as_array().unwrap();
     assert_eq!(history[0]["status"], "skip");
 }
+
+// ─── Init Command ────────────────────────────────────────
+
+#[test]
+fn init_creates_baton_toml_and_baton_dir() {
+    let dir = TempDir::new().unwrap();
+
+    let output = baton()
+        .arg("init")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(dir.path().join("baton.toml").exists());
+    assert!(dir.path().join(".baton/logs").exists());
+    assert!(dir.path().join(".baton/tmp").exists());
+    // Default (non-minimal) also creates prompts/
+    assert!(dir.path().join("prompts").exists());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("initialized"));
+}
+
+#[test]
+fn init_minimal_skips_prompts_dir() {
+    let dir = TempDir::new().unwrap();
+
+    let output = baton()
+        .args(["init", "--minimal"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(dir.path().join("baton.toml").exists());
+    assert!(dir.path().join(".baton/logs").exists());
+    assert!(dir.path().join(".baton/tmp").exists());
+    assert!(
+        !dir.path().join("prompts").exists(),
+        "prompts/ should not be created with --minimal"
+    );
+}
+
+#[test]
+fn init_when_baton_toml_already_exists_returns_error() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("baton.toml"), "existing content").unwrap();
+
+    let output = baton()
+        .arg("init")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("already exists"));
+    // Original content should not be overwritten
+    let content = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
+    assert_eq!(content, "existing content");
+}
+
+#[test]
+fn init_prompts_only_creates_only_prompts() {
+    let dir = TempDir::new().unwrap();
+
+    let output = baton()
+        .args(["init", "--prompts-only"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(
+        !dir.path().join("baton.toml").exists(),
+        "baton.toml should not be created with --prompts-only"
+    );
+    assert!(dir.path().join("prompts").exists());
+    // Starter templates should exist
+    assert!(dir.path().join("prompts/spec-compliance.md").exists());
+    assert!(dir.path().join("prompts/adversarial-review.md").exists());
+    assert!(dir.path().join("prompts/doc-completeness.md").exists());
+}
+
+// ─── Version Command ─────────────────────────────────────
+
+#[test]
+fn version_outputs_crate_version() {
+    let dir = TempDir::new().unwrap();
+
+    let output = baton()
+        .arg("version")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("baton"));
+    assert!(stdout.contains("spec version: 0.4"));
+}
+
+#[test]
+fn version_shows_config_not_found_when_no_config() {
+    let dir = TempDir::new().unwrap();
+    // Put a .git so discover_config stops searching
+    fs::create_dir(dir.path().join(".git")).unwrap();
+
+    let output = baton()
+        .arg("version")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("config: not found"));
+}
+
+#[test]
+fn version_shows_config_found_when_config_exists() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .arg("version")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("config:"));
+    assert!(stdout.contains("(found)"));
+}
+
+// ─── Validate-Config Command ─────────────────────────────
+
+#[test]
+fn validate_config_valid_exits_0() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+
+    baton()
+        .arg("validate-config")
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Config OK"));
+}
+
+#[test]
+fn validate_config_invalid_exits_1() {
+    let dir = TempDir::new().unwrap();
+    // Config with a validator missing a command field
+    let bad_toml = r#"version = "0.4"
+
+[defaults]
+timeout_seconds = 30
+blocking = true
+prompts_dir = "./prompts"
+log_dir = "./.baton/logs"
+history_db = "./.baton/history.db"
+tmp_dir = "./.baton/tmp"
+
+[gates.review]
+[[gates.review.validators]]
+name = "lint"
+type = "script"
+"#;
+    fs::write(dir.path().join("baton.toml"), bad_toml).unwrap();
+
+    let output = baton()
+        .arg("validate-config")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Error"));
+}
+
+#[test]
+fn validate_config_nonexistent_file_exits_nonzero() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir(dir.path().join(".git")).unwrap();
+
+    let output = baton()
+        .args(["validate-config", "--config", "nonexistent.toml"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+}
+
+// ─── List Command ────────────────────────────────────────
+
+#[test]
+fn list_all_gates() {
+    let toml = format!(
+        r#"version = "0.4"
+
+[defaults]
+timeout_seconds = 30
+blocking = true
+prompts_dir = "./prompts"
+log_dir = "./.baton/logs"
+history_db = "./.baton/history.db"
+tmp_dir = "./.baton/tmp"
+
+[gates.alpha]
+{alpha_v}
+
+[gates.beta]
+{beta_v}
+"#,
+        alpha_v = script_validator_for("alpha", "lint", "echo PASS"),
+        beta_v = script_validator_for("beta", "test", "echo PASS"),
+    );
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .arg("list")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("alpha"));
+    assert!(stdout.contains("beta"));
+    assert!(stdout.contains("Available gates"));
+}
+
+#[test]
+fn list_validators_for_specific_gate() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["list", "--gate", "review"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Gate: review"));
+    assert!(stdout.contains("lint"));
+    assert!(stdout.contains("script"));
+}
+
+#[test]
+fn list_nonexistent_gate_exits_1() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["list", "--gate", "nonexistent"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("not found"));
+}
+
+// ─── History Command (Empty) ─────────────────────────────
+
+#[test]
+fn history_empty_shows_no_verdicts() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["history", "--gate", "review"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("No verdicts found"));
+}
+
+#[test]
+fn history_with_status_filter() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+
+    // Run a passing check
+    baton()
+        .args(["check", "--gate", "review", "--artifact", "artifact.txt"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Query for fail status - should find nothing
+    let output = baton()
+        .args(["history", "--gate", "review", "--status", "fail"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("No verdicts found"));
+
+    // Query for pass status - should find the result
+    let output = baton()
+        .args(["history", "--gate", "review", "--status", "pass"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("pass"));
+    assert!(stdout.contains("review"));
+}
+
+// ─── Clean Command ───────────────────────────────────────
+
+#[test]
+fn clean_with_no_stale_files() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .arg("clean")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("No stale files"));
+}
+
+#[test]
+fn clean_dry_run() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["clean", "--dry-run"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    // With no stale files, dry run should also report nothing
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No stale files") || stderr.contains("would be removed"),
+        "Expected clean output, got: {stderr}"
+    );
+}
+
+// ─── Check with --verbose flag ───────────────────────────
+
+#[test]
+fn check_verbose_flag_accepted() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+
+    baton()
+        .args([
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--verbose",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+}
+
+// ─── Check with --timeout override ───────────────────────
+
+#[test]
+fn check_timeout_override_accepted() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+
+    baton()
+        .args([
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--timeout",
+            "60",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+}
+
+// ─── List with --config flag ─────────────────────────────
+
+#[test]
+fn list_with_explicit_config() {
+    let dir = TempDir::new().unwrap();
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    fs::write(dir.path().join("custom.toml"), &toml).unwrap();
+
+    let output = baton()
+        .args([
+            "list",
+            "--config",
+            dir.path().join("custom.toml").to_str().unwrap(),
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("review"));
+}
+
+// ─── Validate-Config with explicit --config ──────────────
+
+#[test]
+fn validate_config_with_explicit_config() {
+    let dir = TempDir::new().unwrap();
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    fs::write(dir.path().join("custom.toml"), &toml).unwrap();
+
+    baton()
+        .args([
+            "validate-config",
+            "--config",
+            dir.path().join("custom.toml").to_str().unwrap(),
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("Config OK"));
+}
+
+// ─── History with --limit ────────────────────────────────
+
+#[test]
+fn history_respects_limit() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+
+    // Run two checks
+    baton()
+        .args(["check", "--gate", "review", "--artifact", "artifact.txt"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+    baton()
+        .args(["check", "--gate", "review", "--artifact", "artifact.txt"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Query with limit 1
+    let output = baton()
+        .args(["history", "--gate", "review", "--limit", "1"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // Should have exactly one result line (containing "pass")
+    let lines: Vec<&str> = stdout.trim().lines().collect();
+    assert_eq!(
+        lines.len(),
+        1,
+        "Expected 1 line with --limit 1, got: {stdout}"
+    );
+}
+
+// ─── Init creates valid config ───────────────────────────
+
+#[test]
+fn init_creates_valid_parseable_config() {
+    let dir = TempDir::new().unwrap();
+
+    baton()
+        .arg("init")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // The generated config should pass validate-config
+    baton()
+        .arg("validate-config")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+}
+
+// ─── Clean with --config flag ────────────────────────────
+
+#[test]
+fn clean_with_explicit_config() {
+    let dir = TempDir::new().unwrap();
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    fs::write(dir.path().join("custom.toml"), &toml).unwrap();
+    fs::create_dir_all(dir.path().join(".baton/tmp")).unwrap();
+
+    let output = baton()
+        .args([
+            "clean",
+            "--config",
+            dir.path().join("custom.toml").to_str().unwrap(),
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+}
+
+// ─── Version with --config flag ──────────────────────────
+
+#[test]
+fn version_with_explicit_config() {
+    let dir = TempDir::new().unwrap();
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    fs::write(dir.path().join("custom.toml"), &toml).unwrap();
+
+    let output = baton()
+        .args([
+            "version",
+            "--config",
+            dir.path().join("custom.toml").to_str().unwrap(),
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("(found)"));
+}
+
+// ─── History without --gate (all gates) ──────────────────
+
+#[test]
+fn history_without_gate_filter() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+
+    // Run a check
+    baton()
+        .args(["check", "--gate", "review", "--artifact", "artifact.txt"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Query without gate filter
+    let output = baton()
+        .arg("history")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("review"));
+    assert!(stdout.contains("pass"));
+}
+
+// ─── Multiple context args ───────────────────────────────
+
+#[test]
+fn multiple_context_args_accepted() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+    fs::write(dir.path().join("spec.md"), "spec").unwrap();
+    fs::write(dir.path().join("readme.md"), "readme").unwrap();
+
+    let output = baton()
+        .args([
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--context",
+            "spec=spec.md",
+            "--context",
+            "readme=readme.md",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    assert_eq!(verdict["status"], "pass");
+    // context_hash should be set since we have context
+    let ctx_hash = verdict["context_hash"].as_str().unwrap();
+    assert!(!ctx_hash.is_empty());
+}

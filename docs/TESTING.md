@@ -113,11 +113,11 @@ For new features, cover:
 | prompt | 28 |
 | placeholder | 35 |
 | config | 55 |
-| exec | 91 |
+| exec | 116 |
 | history | 34 |
-| runtime | 18 |
-| cli (integration) | 49 |
-| **Total** | **396** |
+| runtime | 34 |
+| cli (integration) | 73 |
+| **Total** | **461** |
 
 ## Spec Files & Coverage Gaps
 

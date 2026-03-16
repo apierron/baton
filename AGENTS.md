@@ -10,7 +10,7 @@ A composable validation gate for AI agent outputs. Accepts an artifact (file to 
 
 ```bash
 cargo build                          # Build
-cargo test                           # Run all tests (396 across 8 modules + integration)
+cargo test                           # Run all tests (461 across 8 modules + integration)
 cargo test config::tests::test_name  # Run a single test
 cargo test config::tests             # Run one module's tests
 cargo clippy --all-targets -- -D warnings  # Lint (must pass with zero warnings)
