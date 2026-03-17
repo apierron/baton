@@ -667,4 +667,530 @@ mod tests {
         assert_eq!(map_openhands_status("Error"), SessionStatus::Failed);
         assert_eq!(map_openhands_status("Stopped"), SessionStatus::Cancelled);
     }
+
+    // ═══════════════════════════════════════════════════════════════
+    // HTTP-level adapter tests (httpmock)
+    // ═══════════════════════════════════════════════════════════════
+
+    /// Creates an OpenHandsAdapter pointed at the mock server with no auth.
+    fn test_adapter(server: &httpmock::MockServer) -> OpenHandsAdapter {
+        OpenHandsAdapter {
+            base_url: server.url(""),
+            api_key: None,
+            default_model: Some("test-model".into()),
+            sandbox: false,
+            timeout_seconds: 30,
+            max_iterations: 10,
+            client: reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap(),
+        }
+    }
+
+    fn test_handle() -> SessionHandle {
+        SessionHandle {
+            id: "sess-123".into(),
+            workspace_id: "ws-456".into(),
+        }
+    }
+
+    // ─── health_check HTTP tests ────────────────────────
+
+    #[test]
+    fn http_health_check_success() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/api/health");
+            then.status(200)
+                .json_body(serde_json::json!({"version": "1.2.3"}));
+        });
+
+        let adapter = test_adapter(&server);
+        let result = adapter.health_check().unwrap();
+        assert!(result.reachable);
+        assert_eq!(result.version, Some("1.2.3".into()));
+        mock.assert();
+    }
+
+    #[test]
+    fn http_health_check_http_error() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/api/health");
+            then.status(503);
+        });
+
+        let adapter = test_adapter(&server);
+        let result = adapter.health_check().unwrap();
+        assert!(!result.reachable);
+        assert!(result.message.unwrap().contains("503"));
+        mock.assert();
+    }
+
+    #[test]
+    fn http_health_check_malformed_json() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/api/health");
+            then.status(200).body("not json");
+        });
+
+        let adapter = test_adapter(&server);
+        let result = adapter.health_check().unwrap();
+        assert!(result.reachable);
+        assert_eq!(result.version, None);
+        mock.assert();
+    }
+
+    #[test]
+    fn http_health_check_connection_refused() {
+        // Point at a port with no server
+        let adapter = OpenHandsAdapter {
+            base_url: "http://127.0.0.1:1".into(),
+            api_key: None,
+            default_model: None,
+            sandbox: false,
+            timeout_seconds: 30,
+            max_iterations: 10,
+            client: reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+                .unwrap(),
+        };
+
+        let result = adapter.health_check();
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("Cannot reach"), "Error: {err}");
+    }
+
+    // ─── create_session HTTP tests ──────────────────────
+
+    #[test]
+    fn http_create_session_success_no_files() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST).path("/api/sessions");
+            then.status(200)
+                .json_body(serde_json::json!({"session_id": "s1"}));
+        });
+
+        let adapter = test_adapter(&server);
+        let config = SessionConfig {
+            task: "Review code".into(),
+            files: std::collections::BTreeMap::new(),
+            model: "test-model".into(),
+            sandbox: false,
+            max_iterations: 10,
+            timeout_seconds: 30,
+            env: std::collections::BTreeMap::new(),
+        };
+
+        let handle = adapter.create_session(config).unwrap();
+        assert_eq!(handle.id, "s1");
+        mock.assert();
+    }
+
+    #[test]
+    fn http_create_session_success_with_files() {
+        let server = httpmock::MockServer::start();
+
+        // File upload mock — match any workspace path
+        let upload_mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path_includes("/api/workspaces/")
+                .path_includes("/files");
+            then.status(200).body("ok");
+        });
+
+        let session_mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST).path("/api/sessions");
+            then.status(200)
+                .json_body(serde_json::json!({"session_id": "s2"}));
+        });
+
+        // Create a temp file to upload
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut tmp.as_file().try_clone().unwrap(), b"file content")
+            .unwrap();
+
+        let mut files = std::collections::BTreeMap::new();
+        files.insert("test.py".into(), tmp.path().to_str().unwrap().to_string());
+
+        let adapter = test_adapter(&server);
+        let config = SessionConfig {
+            task: "Review code".into(),
+            files,
+            model: "test-model".into(),
+            sandbox: false,
+            max_iterations: 10,
+            timeout_seconds: 30,
+            env: std::collections::BTreeMap::new(),
+        };
+
+        let handle = adapter.create_session(config).unwrap();
+        assert_eq!(handle.id, "s2");
+        upload_mock.assert();
+        session_mock.assert();
+    }
+
+    #[test]
+    fn http_create_session_file_upload_http_error() {
+        let server = httpmock::MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path_includes("/api/workspaces/");
+            then.status(500).body("upload failed");
+        });
+
+        let tmp = tempfile::NamedTempFile::new().unwrap();
+        std::io::Write::write_all(&mut tmp.as_file().try_clone().unwrap(), b"content").unwrap();
+
+        let mut files = std::collections::BTreeMap::new();
+        files.insert("bad.py".into(), tmp.path().to_str().unwrap().to_string());
+
+        let adapter = test_adapter(&server);
+        let config = SessionConfig {
+            task: "task".into(),
+            files,
+            model: "m".into(),
+            sandbox: false,
+            max_iterations: 10,
+            timeout_seconds: 30,
+            env: std::collections::BTreeMap::new(),
+        };
+
+        let result = adapter.create_session(config);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("bad.py"), "Error should mention file: {err}");
+    }
+
+    #[test]
+    fn http_create_session_http_error() {
+        let server = httpmock::MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST).path("/api/sessions");
+            then.status(400).body("bad request");
+        });
+
+        let adapter = test_adapter(&server);
+        let config = SessionConfig {
+            task: "task".into(),
+            files: std::collections::BTreeMap::new(),
+            model: "m".into(),
+            sandbox: false,
+            max_iterations: 10,
+            timeout_seconds: 30,
+            env: std::collections::BTreeMap::new(),
+        };
+
+        let result = adapter.create_session(config);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("400"), "Error should mention status: {err}");
+    }
+
+    #[test]
+    fn http_create_session_missing_session_id() {
+        let server = httpmock::MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST).path("/api/sessions");
+            then.status(200).json_body(serde_json::json!({}));
+        });
+
+        let adapter = test_adapter(&server);
+        let config = SessionConfig {
+            task: "task".into(),
+            files: std::collections::BTreeMap::new(),
+            model: "m".into(),
+            sandbox: false,
+            max_iterations: 10,
+            timeout_seconds: 30,
+            env: std::collections::BTreeMap::new(),
+        };
+
+        let result = adapter.create_session(config);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("session_id"),
+            "Error should mention missing field: {err}"
+        );
+    }
+
+    #[test]
+    fn http_create_session_unparseable_json() {
+        let server = httpmock::MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST).path("/api/sessions");
+            then.status(200).body("not json");
+        });
+
+        let adapter = test_adapter(&server);
+        let config = SessionConfig {
+            task: "task".into(),
+            files: std::collections::BTreeMap::new(),
+            model: "m".into(),
+            sandbox: false,
+            max_iterations: 10,
+            timeout_seconds: 30,
+            env: std::collections::BTreeMap::new(),
+        };
+
+        let result = adapter.create_session(config);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn http_create_session_body_contents() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/api/sessions")
+                .json_body_includes(r#"{"task": "Review code"}"#)
+                .json_body_includes(r#"{"model": "gpt-4o"}"#)
+                .json_body_includes(r#"{"sandbox": true}"#);
+            then.status(200)
+                .json_body(serde_json::json!({"session_id": "s3"}));
+        });
+
+        let adapter = test_adapter(&server);
+        let config = SessionConfig {
+            task: "Review code".into(),
+            files: std::collections::BTreeMap::new(),
+            model: "gpt-4o".into(),
+            sandbox: true,
+            max_iterations: 10,
+            timeout_seconds: 30,
+            env: std::collections::BTreeMap::new(),
+        };
+
+        adapter.create_session(config).unwrap();
+        mock.assert();
+    }
+
+    // ─── poll_status HTTP tests ─────────────────────────
+
+    #[test]
+    fn http_poll_status_running() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/sessions/sess-123/status");
+            then.status(200)
+                .json_body(serde_json::json!({"status": "running"}));
+        });
+
+        let adapter = test_adapter(&server);
+        let status = adapter.poll_status(&test_handle()).unwrap();
+        assert_eq!(status, SessionStatus::Running);
+        mock.assert();
+    }
+
+    #[test]
+    fn http_poll_status_completed() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/sessions/sess-123/status");
+            then.status(200)
+                .json_body(serde_json::json!({"status": "completed"}));
+        });
+
+        let adapter = test_adapter(&server);
+        let status = adapter.poll_status(&test_handle()).unwrap();
+        assert_eq!(status, SessionStatus::Completed);
+        mock.assert();
+    }
+
+    #[test]
+    fn http_poll_status_http_error() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/sessions/sess-123/status");
+            then.status(500);
+        });
+
+        let adapter = test_adapter(&server);
+        let result = adapter.poll_status(&test_handle());
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("poll"), "Error: {err}");
+        mock.assert();
+    }
+
+    #[test]
+    fn http_poll_status_missing_status_field() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/sessions/sess-123/status");
+            then.status(200).json_body(serde_json::json!({}));
+        });
+
+        let adapter = test_adapter(&server);
+        // Missing status field defaults to "unknown" which maps to Failed
+        let status = adapter.poll_status(&test_handle()).unwrap();
+        assert_eq!(status, SessionStatus::Failed);
+        mock.assert();
+    }
+
+    #[test]
+    fn http_poll_status_unparseable_json() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/sessions/sess-123/status");
+            then.status(200).body("not json");
+        });
+
+        let adapter = test_adapter(&server);
+        let result = adapter.poll_status(&test_handle());
+        assert!(result.is_err());
+        mock.assert();
+    }
+
+    // ─── collect_result HTTP tests ──────────────────────
+
+    #[test]
+    fn http_collect_result_success() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/sessions/sess-123/result");
+            then.status(200).json_body(serde_json::json!({
+                "status": "completed",
+                "final_message": "PASS — all good",
+                "full_log": "log line 1\nlog line 2",
+                "metrics": {
+                    "input_tokens": 500,
+                    "output_tokens": 100,
+                    "model": "gpt-4o",
+                    "cost": 0.005
+                }
+            }));
+        });
+
+        let adapter = test_adapter(&server);
+        let result = adapter.collect_result(&test_handle()).unwrap();
+        assert_eq!(result.status, SessionStatus::Completed);
+        assert_eq!(result.output, "PASS — all good");
+        assert!(result.raw_log.contains("log line 1"));
+        let cost = result.cost.unwrap();
+        assert_eq!(cost.input_tokens, Some(500));
+        assert_eq!(cost.output_tokens, Some(100));
+        mock.assert();
+    }
+
+    #[test]
+    fn http_collect_result_missing_fields() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/sessions/sess-123/result");
+            then.status(200).json_body(serde_json::json!({}));
+        });
+
+        let adapter = test_adapter(&server);
+        let result = adapter.collect_result(&test_handle()).unwrap();
+        // Missing fields default to empty strings
+        assert_eq!(result.output, "");
+        assert_eq!(result.raw_log, "");
+        assert!(result.cost.is_none());
+        mock.assert();
+    }
+
+    #[test]
+    fn http_collect_result_http_error() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/sessions/sess-123/result");
+            then.status(500);
+        });
+
+        let adapter = test_adapter(&server);
+        let result = adapter.collect_result(&test_handle());
+        assert!(result.is_err());
+        mock.assert();
+    }
+
+    #[test]
+    fn http_collect_result_unparseable_json() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/sessions/sess-123/result");
+            then.status(200).body("not json");
+        });
+
+        let adapter = test_adapter(&server);
+        let result = adapter.collect_result(&test_handle());
+        assert!(result.is_err());
+        mock.assert();
+    }
+
+    // ─── cancel HTTP tests ──────────────────────────────
+
+    #[test]
+    fn http_cancel_sends_delete() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::DELETE)
+                .path("/api/sessions/sess-123");
+            then.status(200);
+        });
+
+        let adapter = test_adapter(&server);
+        adapter.cancel(&test_handle()).unwrap();
+        mock.assert();
+    }
+
+    #[test]
+    fn http_cancel_ignores_errors() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::DELETE)
+                .path("/api/sessions/sess-123");
+            then.status(500);
+        });
+
+        let adapter = test_adapter(&server);
+        // Should return Ok even on server error
+        adapter.cancel(&test_handle()).unwrap();
+        mock.assert();
+    }
+
+    // ─── teardown HTTP tests ────────────────────────────
+
+    #[test]
+    fn http_teardown_sends_delete() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::DELETE)
+                .path("/api/workspaces/ws-456");
+            then.status(200);
+        });
+
+        let adapter = test_adapter(&server);
+        adapter.teardown(&test_handle()).unwrap();
+        mock.assert();
+    }
+
+    #[test]
+    fn http_teardown_ignores_errors() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::DELETE)
+                .path("/api/workspaces/ws-456");
+            then.status(500);
+        });
+
+        let adapter = test_adapter(&server);
+        adapter.teardown(&test_handle()).unwrap();
+        mock.assert();
+    }
 }

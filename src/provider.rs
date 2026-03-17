@@ -601,4 +601,406 @@ mod tests {
         let client = ProviderClient::new(&provider, "p", 42).unwrap();
         assert_eq!(client.timeout_seconds, 42);
     }
+
+    // ─── HTTP tests (httpmock) ──────────────────────────
+
+    /// Creates a ProviderClient pointed at the mock server with no auth.
+    fn test_client(server: &httpmock::MockServer) -> ProviderClient {
+        let provider = Provider {
+            api_base: server.url(""),
+            api_key_env: "".into(),
+            default_model: "test-model".into(),
+        };
+        ProviderClient::new(&provider, "test", 10).unwrap()
+    }
+
+    /// Creates a ProviderClient with a pre-set API key (bypasses env lookup).
+    fn test_client_with_key(server: &httpmock::MockServer, key: &str) -> ProviderClient {
+        ProviderClient {
+            client: reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(10))
+                .build()
+                .unwrap(),
+            api_base: server.url(""),
+            api_key: Some(key.into()),
+            provider_name: "test".into(),
+            api_key_env: "TEST_KEY".into(),
+            timeout_seconds: 10,
+        }
+    }
+
+    fn valid_completion_response() -> serde_json::Value {
+        serde_json::json!({
+            "choices": [{"message": {"content": "PASS — looks good"}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 20}
+        })
+    }
+
+    // ─── post_completion HTTP tests ─────────────────────
+
+    #[test]
+    fn post_completion_malformed_json() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/v1/chat/completions");
+            then.status(200).body("not json at all");
+        });
+
+        let client = test_client(&server);
+        let body = serde_json::json!({"model": "m", "messages": []});
+        let result = client.post_completion(body, "m");
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            ProviderError::MalformedResponse(_) => {}
+            other => panic!("Expected MalformedResponse, got: {other:?}"),
+        }
+        mock.assert();
+    }
+
+    #[test]
+    fn post_completion_body_forwarded() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/v1/chat/completions")
+                .json_body_includes(r#"{"model": "gpt-4o"}"#)
+                .json_body_includes(r#"{"temperature": 0.5}"#);
+            then.status(200).json_body(valid_completion_response());
+        });
+
+        let client = test_client(&server);
+        let body = serde_json::json!({
+            "model": "gpt-4o",
+            "messages": [{"role": "user", "content": "hello"}],
+            "temperature": 0.5
+        });
+        let result = client.post_completion(body, "gpt-4o").unwrap();
+        assert!(result.content.contains("PASS"));
+        mock.assert();
+    }
+
+    #[test]
+    fn post_completion_auth_header_sent() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/v1/chat/completions")
+                .header("Authorization", "Bearer sk-test-key");
+            then.status(200).json_body(valid_completion_response());
+        });
+
+        let client = test_client_with_key(&server, "sk-test-key");
+        let body = serde_json::json!({"model": "m", "messages": []});
+        let result = client.post_completion(body, "m").unwrap();
+        assert!(!result.content.is_empty());
+        mock.assert();
+    }
+
+    #[test]
+    fn post_completion_no_auth_header_when_no_key() {
+        let server = httpmock::MockServer::start();
+        // Mock that accepts any request (no auth constraint)
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/v1/chat/completions");
+            then.status(200).json_body(valid_completion_response());
+        });
+        // Mock that would match if Authorization header IS present
+        let auth_mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/v1/chat/completions")
+                .header_exists("Authorization");
+            then.status(200).json_body(valid_completion_response());
+        });
+
+        let client = test_client(&server);
+        let body = serde_json::json!({"model": "m", "messages": []});
+        client.post_completion(body, "m").unwrap();
+        mock.assert();
+        auth_mock.assert_calls(0);
+    }
+
+    #[test]
+    fn post_completion_401_returns_auth_failed() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/v1/chat/completions");
+            then.status(401).body("unauthorized");
+        });
+
+        let client = test_client(&server);
+        let body = serde_json::json!({"model": "m", "messages": []});
+        match client.post_completion(body, "m").unwrap_err() {
+            ProviderError::AuthFailed { .. } => {}
+            other => panic!("Expected AuthFailed, got: {other:?}"),
+        }
+        mock.assert();
+    }
+
+    #[test]
+    fn post_completion_429_returns_rate_limited() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/v1/chat/completions");
+            then.status(429).body("too many requests");
+        });
+
+        let client = test_client(&server);
+        let body = serde_json::json!({"model": "m", "messages": []});
+        match client.post_completion(body, "m").unwrap_err() {
+            ProviderError::RateLimited { .. } => {}
+            other => panic!("Expected RateLimited, got: {other:?}"),
+        }
+        mock.assert();
+    }
+
+    #[test]
+    fn post_completion_404_returns_model_not_found() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/v1/chat/completions");
+            then.status(404).body("not found");
+        });
+
+        let client = test_client(&server);
+        let body = serde_json::json!({"model": "gpt-5", "messages": []});
+        match client.post_completion(body, "gpt-5").unwrap_err() {
+            ProviderError::ModelNotFound { model, .. } => {
+                assert_eq!(model, "gpt-5");
+            }
+            other => panic!("Expected ModelNotFound, got: {other:?}"),
+        }
+        mock.assert();
+    }
+
+    #[test]
+    fn post_completion_500_returns_http_error() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/v1/chat/completions");
+            then.status(500).body("internal server error");
+        });
+
+        let client = test_client(&server);
+        let body = serde_json::json!({"model": "m", "messages": []});
+        match client.post_completion(body, "m").unwrap_err() {
+            ProviderError::HttpError { status, body } => {
+                assert_eq!(status, 500);
+                assert!(body.contains("internal server error"));
+            }
+            other => panic!("Expected HttpError, got: {other:?}"),
+        }
+        mock.assert();
+    }
+
+    #[test]
+    fn post_completion_empty_content_returns_empty_content_error() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/v1/chat/completions");
+            then.status(200).json_body(serde_json::json!({
+                "choices": [{"message": {"content": ""}}],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 0}
+            }));
+        });
+
+        let client = test_client(&server);
+        let body = serde_json::json!({"model": "m", "messages": []});
+        match client.post_completion(body, "m").unwrap_err() {
+            ProviderError::EmptyContent { cost } => {
+                assert!(cost.is_some());
+            }
+            other => panic!("Expected EmptyContent, got: {other:?}"),
+        }
+        mock.assert();
+    }
+
+    // ─── list_models HTTP tests ─────────────────────────
+
+    #[test]
+    fn list_models_success() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/v1/models");
+            then.status(200).json_body(serde_json::json!({
+                "data": [{"id": "gpt-4o"}, {"id": "gpt-3.5-turbo"}]
+            }));
+        });
+
+        let client = test_client(&server);
+        let models = client.list_models().unwrap();
+        assert_eq!(models, vec!["gpt-4o", "gpt-3.5-turbo"]);
+        mock.assert();
+    }
+
+    #[test]
+    fn list_models_empty_data() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/v1/models");
+            then.status(200).json_body(serde_json::json!({"data": []}));
+        });
+
+        let client = test_client(&server);
+        let models = client.list_models().unwrap();
+        assert!(models.is_empty());
+        mock.assert();
+    }
+
+    #[test]
+    fn list_models_no_data_field() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/v1/models");
+            then.status(200).json_body(serde_json::json!({}));
+        });
+
+        let client = test_client(&server);
+        let models = client.list_models().unwrap();
+        assert!(models.is_empty());
+        mock.assert();
+    }
+
+    #[test]
+    fn list_models_auth_failure() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/v1/models");
+            then.status(401).body("unauthorized");
+        });
+
+        let client = test_client(&server);
+        match client.list_models().unwrap_err() {
+            ProviderError::AuthFailed { .. } => {}
+            other => panic!("Expected AuthFailed, got: {other:?}"),
+        }
+        mock.assert();
+    }
+
+    #[test]
+    fn list_models_http_error() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/v1/models");
+            then.status(500).body("server error");
+        });
+
+        let client = test_client(&server);
+        match client.list_models().unwrap_err() {
+            ProviderError::HttpError { status, .. } => assert_eq!(status, 500),
+            other => panic!("Expected HttpError, got: {other:?}"),
+        }
+        mock.assert();
+    }
+
+    // ─── test_completion HTTP tests ─────────────────────
+
+    #[test]
+    fn test_completion_success() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/v1/chat/completions");
+            then.status(200).json_body(valid_completion_response());
+        });
+
+        let client = test_client(&server);
+        let result = client.test_completion("test-model").unwrap();
+        assert!(result);
+        mock.assert();
+    }
+
+    #[test]
+    fn test_completion_verifies_body() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/v1/chat/completions")
+                .json_body_includes(r#"{"max_tokens": 1}"#)
+                .json_body_includes(r#"{"model": "gpt-4o"}"#);
+            then.status(200).json_body(valid_completion_response());
+        });
+
+        let client = test_client(&server);
+        client.test_completion("gpt-4o").unwrap();
+        mock.assert();
+    }
+
+    #[test]
+    fn test_completion_http_error() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/v1/chat/completions");
+            then.status(401).body("unauthorized");
+        });
+
+        let client = test_client(&server);
+        match client.test_completion("m").unwrap_err() {
+            ProviderError::AuthFailed { .. } => {}
+            other => panic!("Expected AuthFailed, got: {other:?}"),
+        }
+        mock.assert();
+    }
+
+    // ─── send_request error paths ───────────────────────
+
+    #[test]
+    fn send_request_timeout() {
+        let server = httpmock::MockServer::start();
+        let _mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/v1/chat/completions");
+            then.status(200)
+                .delay(std::time::Duration::from_secs(5))
+                .json_body(valid_completion_response());
+        });
+
+        // Client with 1-second timeout
+        let provider = Provider {
+            api_base: server.url(""),
+            api_key_env: "".into(),
+            default_model: "test-model".into(),
+        };
+        let client = ProviderClient::new(&provider, "test", 1).unwrap();
+
+        let body = serde_json::json!({"model": "m", "messages": []});
+        match client.post_completion(body, "m").unwrap_err() {
+            ProviderError::Timeout {
+                timeout_seconds, ..
+            } => {
+                assert_eq!(timeout_seconds, 1);
+            }
+            other => panic!("Expected Timeout, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn send_request_unreachable() {
+        // Point at a port with no server
+        let provider = Provider {
+            api_base: "http://127.0.0.1:1".into(),
+            api_key_env: "".into(),
+            default_model: "test-model".into(),
+        };
+        let client = ProviderClient::new(&provider, "test", 5).unwrap();
+
+        let body = serde_json::json!({"model": "m", "messages": []});
+        match client.post_completion(body, "m").unwrap_err() {
+            ProviderError::Unreachable {
+                provider, api_base, ..
+            } => {
+                assert_eq!(provider, "test");
+                assert!(api_base.contains("127.0.0.1"));
+            }
+            other => panic!("Expected Unreachable, got: {other:?}"),
+        }
+    }
 }
