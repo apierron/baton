@@ -9,17 +9,17 @@ Modules follow a strict dependency direction. Lower layers must not import from 
           │  main.rs  │  CLI entry point (clap)
           └─────┬─────┘
                 │ uses
-    ┌───────┬───┼───────┐
-    │       │   │       │
-    ▼       ▼   ▼       ▼
-  exec   config history runtime
-    │       │           │
-    ├───────┤           │
-    │       │     ┌─────┘
-    ▼       ▼     │
-placeholder prompt│
-    │             │
-    ▼             ▼
+    ┌───────┬───┼───────┬──────────┐
+    │       │   │       │          │
+    ▼       ▼   ▼       ▼          ▼
+  exec   config history runtime  provider
+    │       │                      │
+    ├───────┤──────────────────────┘
+    │       │
+    ▼       ▼
+placeholder prompt
+    │
+    ▼
   types ◄──── verdict_parser
     │
     ▼
@@ -30,8 +30,8 @@ placeholder prompt│
 
 | Layer | May import from |
 | ----- | --------------- |
-| `main.rs` | `config`, `exec`, `history`, `runtime`, `types` |
-| `exec` | `config`, `types`, `placeholder`, `runtime`, `error` |
+| `main.rs` | `config`, `exec`, `history`, `runtime`, `provider`, `types` |
+| `exec` | `config`, `types`, `placeholder`, `runtime`, `provider`, `error` |
 | `config` | `types`, `placeholder`, `error` |
 | `history` | `types`, `error` |
 | `runtime` | `types`, `error` |
@@ -39,6 +39,7 @@ placeholder prompt│
 | `prompt` | `error` |
 | `verdict_parser` | `types` |
 | `types` | `error` |
+| `provider` | `config` (for `Provider` struct), `types` (for `Cost`) |
 | `error` | *(leaf — no internal imports)* |
 
 **Violations of this layering are bugs.** If you need to call upward, restructure: move the shared logic into the lower layer or introduce a new shared module.
@@ -89,11 +90,17 @@ The mapping from validator statuses to gate verdict is in `compute_final_status(
 
 LLM validators operate in two modes:
 
-- **Completion** (`exec.rs: execute_llm_completion`) — Sends a single HTTP POST to an OpenAI-compatible `/v1/chat/completions` endpoint. The prompt template is resolved with placeholders, the response is parsed by `verdict_parser` for PASS/FAIL/WARN keywords. Token counts and cost are tracked in `ValidatorResult.cost`.
+- **Completion** (`exec.rs: execute_llm_completion`) — Resolves the prompt template and placeholders, then delegates the HTTP call to `provider::ProviderClient::post_completion()`. The response content is parsed by `verdict_parser` for PASS/FAIL/WARN keywords. Token counts and cost are extracted by the provider client and tracked in `ValidatorResult.cost`.
 
 - **Session** (`exec.rs: execute_llm_session`) — Delegates to a `RuntimeAdapter` (see below). Creates a multi-turn agent session, polls for completion, and collects the final result. The agent can use tools, read files, and produce a verdict grounded in observation.
 
 `execute_validator()` takes `Option<&BatonConfig>` — `None` is fine for script/human validators, but required for LLM validators (to resolve provider/runtime configuration).
+
+## Provider Client
+
+The `provider` module provides `ProviderClient`, a shared HTTP client for OpenAI-compatible LLM APIs. It handles API key resolution, Bearer auth, and structured error classification (auth failures, model-not-found, rate limiting, timeouts). Both `exec::execute_llm_completion` and the CLI's `check-provider` command use it.
+
+Unlike `RuntimeAdapter` (a trait for pluggable backends), `ProviderClient` is a concrete struct — all supported LLM providers use the OpenAI-compatible API format. If a non-OpenAI-compatible provider is added, the client can be extended or a trait can be extracted at that point.
 
 ## Runtime Adapters
 

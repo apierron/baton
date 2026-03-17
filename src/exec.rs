@@ -14,6 +14,7 @@ use crate::config::{
 use crate::error::{BatonError, Result};
 use crate::placeholder::{resolve_placeholders, ResolutionWarnings};
 use crate::prompt::{is_file_reference, resolve_prompt_value};
+use crate::provider::{ProviderClient, ProviderError};
 use crate::runtime::{self, SessionConfig, SessionStatus};
 use crate::types::*;
 use crate::verdict_parser::parse_verdict;
@@ -357,24 +358,18 @@ fn execute_llm_completion(
         }
     };
 
-    // Resolve API key
-    let api_key = if provider.api_key_env.is_empty() {
-        None
-    } else {
-        match std::env::var(&provider.api_key_env) {
-            Ok(key) => Some(key),
-            Err(_) => {
-                return ValidatorResult {
-                    name: validator.name.clone(),
-                    status: Status::Error,
-                    feedback: Some(format!(
-                        "[baton] Authentication failed for provider '{}'. Check {}.",
-                        validator.provider, provider.api_key_env
-                    )),
-                    duration_ms: 0,
-                    cost: None,
-                };
-            }
+    // Build provider client
+    let client = match ProviderClient::new(provider, &validator.provider, validator.timeout_seconds)
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return ValidatorResult {
+                name: validator.name.clone(),
+                status: Status::Error,
+                feedback: Some(format!("[baton] {e}")),
+                duration_ms: 0,
+                cost: None,
+            };
         }
     };
 
@@ -457,166 +452,45 @@ fn execute_llm_completion(
         request_body["max_tokens"] = serde_json::json!(max_tokens);
     }
 
-    // Make HTTP request
-    let url = format!("{}/v1/chat/completions", provider.api_base);
-
-    let client = match reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(validator.timeout_seconds))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            return ValidatorResult {
-                name: validator.name.clone(),
-                status: Status::Error,
-                feedback: Some(format!("[baton] Failed to create HTTP client: {e}")),
-                duration_ms: 0,
-                cost: None,
-            };
-        }
-    };
-
-    let mut req = client.post(&url).json(&request_body);
-
-    if let Some(ref key) = api_key {
-        req = req.header("Authorization", format!("Bearer {key}"));
-    }
-
-    let response = match req.send() {
-        Ok(r) => r,
-        Err(e) => {
-            let feedback = if e.is_timeout() {
-                format!(
-                    "[baton] Validator timed out after {} seconds",
-                    validator.timeout_seconds
-                )
-            } else {
-                format!(
-                    "[baton] Cannot reach provider '{}' at {}: {e}",
-                    validator.provider, provider.api_base
-                )
-            };
-            return ValidatorResult {
-                name: validator.name.clone(),
-                status: Status::Error,
-                feedback: Some(feedback),
-                duration_ms: 0,
-                cost: None,
-            };
-        }
-    };
-
-    let status_code = response.status();
-
-    // Handle HTTP error statuses
-    if !status_code.is_success() {
-        let body_text = response.text().unwrap_or_default();
-        let feedback = match status_code.as_u16() {
-            401 | 403 => format!(
-                "[baton] Authentication failed for provider '{}'. Check {}.",
-                validator.provider, provider.api_key_env
-            ),
-            404 => format!(
-                "[baton] Model '{model}' not found on provider '{}'.",
-                validator.provider
-            ),
-            429 => {
-                let retry_after = "unknown";
-                format!(
-                    "[baton] Rate limited by provider '{}'. Retry-After: {retry_after}s",
-                    validator.provider
-                )
+    // Send completion via provider client
+    match client.post_completion(request_body, &model) {
+        Ok(response) => {
+            // Parse verdict from content
+            match validator.response_format {
+                ResponseFormat::Verdict => {
+                    let parsed = parse_verdict(&response.content);
+                    ValidatorResult {
+                        name: validator.name.clone(),
+                        status: parsed.status,
+                        feedback: parsed.evidence,
+                        duration_ms: 0,
+                        cost: response.cost,
+                    }
+                }
+                ResponseFormat::Freeform => ValidatorResult {
+                    name: validator.name.clone(),
+                    status: Status::Warn,
+                    feedback: Some(response.content),
+                    duration_ms: 0,
+                    cost: response.cost,
+                },
             }
-            _ => format!("[baton] Provider returned HTTP {status_code}: {body_text}"),
-        };
-        return ValidatorResult {
-            name: validator.name.clone(),
-            status: Status::Error,
-            feedback: Some(feedback),
-            duration_ms: 0,
-            cost: None,
-        };
-    }
-
-    // Parse response
-    let resp_body: serde_json::Value = match response.json() {
-        Ok(v) => v,
-        Err(e) => {
-            return ValidatorResult {
-                name: validator.name.clone(),
-                status: Status::Error,
-                feedback: Some(format!(
-                    "[baton] Provider returned empty or malformed response: {e}"
-                )),
-                duration_ms: 0,
-                cost: None,
-            };
         }
-    };
-
-    // Extract content from response
-    let content = resp_body
-        .get("choices")
-        .and_then(|c| c.get(0))
-        .and_then(|c| c.get("message"))
-        .and_then(|m| m.get("content"))
-        .and_then(|c| c.as_str())
-        .unwrap_or("");
-
-    if content.is_empty() {
-        return ValidatorResult {
+        Err(ProviderError::EmptyContent { cost }) => ValidatorResult {
             name: validator.name.clone(),
             status: Status::Error,
             feedback: Some("[baton] Provider returned empty or malformed response.".into()),
             duration_ms: 0,
-            cost: extract_cost(&resp_body, &model),
-        };
+            cost,
+        },
+        Err(e) => ValidatorResult {
+            name: validator.name.clone(),
+            status: Status::Error,
+            feedback: Some(format!("[baton] {e}")),
+            duration_ms: 0,
+            cost: None,
+        },
     }
-
-    // Extract cost
-    let cost = extract_cost(&resp_body, &model);
-
-    // Parse verdict from content
-    match validator.response_format {
-        ResponseFormat::Verdict => {
-            let parsed = parse_verdict(content);
-            ValidatorResult {
-                name: validator.name.clone(),
-                status: parsed.status,
-                feedback: parsed.evidence,
-                duration_ms: 0,
-                cost,
-            }
-        }
-        ResponseFormat::Freeform => {
-            // Freeform always returns warn with the content as feedback
-            ValidatorResult {
-                name: validator.name.clone(),
-                status: Status::Warn,
-                feedback: Some(content.to_string()),
-                duration_ms: 0,
-                cost,
-            }
-        }
-    }
-}
-
-fn extract_cost(resp_body: &serde_json::Value, model: &str) -> Option<Cost> {
-    let usage = resp_body.get("usage")?;
-
-    let input_tokens = usage.get("prompt_tokens").and_then(|v| v.as_i64());
-    let output_tokens = usage.get("completion_tokens").and_then(|v| v.as_i64());
-
-    if input_tokens.is_none() && output_tokens.is_none() {
-        return None;
-    }
-
-    Some(Cost {
-        input_tokens,
-        output_tokens,
-        model: Some(model.to_string()),
-        estimated_usd: None,
-    })
 }
 
 // ─── LLM session validator ──────────────────────────────
@@ -1277,51 +1151,6 @@ mod tests {
             compute_final_status(&results, &[Status::Error, Status::Fail, Status::Warn]),
             VerdictStatus::Pass
         );
-    }
-
-    // ─── extract_cost ─────────────────────────────────
-
-    #[test]
-    fn extract_cost_full_usage() {
-        let body = serde_json::json!({
-            "usage": {
-                "prompt_tokens": 1500,
-                "completion_tokens": 300,
-            }
-        });
-        let cost = extract_cost(&body, "claude-haiku").unwrap();
-        assert_eq!(cost.input_tokens, Some(1500));
-        assert_eq!(cost.output_tokens, Some(300));
-        assert_eq!(cost.model, Some("claude-haiku".into()));
-        assert!(cost.estimated_usd.is_none());
-    }
-
-    #[test]
-    fn extract_cost_no_usage() {
-        let body = serde_json::json!({
-            "choices": [{"message": {"content": "PASS"}}]
-        });
-        assert!(extract_cost(&body, "model").is_none());
-    }
-
-    #[test]
-    fn extract_cost_empty_usage() {
-        let body = serde_json::json!({
-            "usage": {}
-        });
-        assert!(extract_cost(&body, "model").is_none());
-    }
-
-    #[test]
-    fn extract_cost_partial_usage() {
-        let body = serde_json::json!({
-            "usage": {
-                "prompt_tokens": 100
-            }
-        });
-        let cost = extract_cost(&body, "model").unwrap();
-        assert_eq!(cost.input_tokens, Some(100));
-        assert_eq!(cost.output_tokens, None);
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -2753,43 +2582,6 @@ mod tests {
     // ═══════════════════════════════════════════════════════════════
     // Additional edge-case tests
     // ═══════════════════════════════════════════════════════════════
-
-    // ─── extract_cost edge cases ─────────────────────────
-
-    #[test]
-    fn extract_cost_only_completion_tokens() {
-        let body = serde_json::json!({
-            "usage": {
-                "completion_tokens": 42
-            }
-        });
-        let cost = extract_cost(&body, "model").unwrap();
-        assert_eq!(cost.input_tokens, None);
-        assert_eq!(cost.output_tokens, Some(42));
-        assert_eq!(cost.model, Some("model".into()));
-    }
-
-    #[test]
-    fn extract_cost_both_null_returns_none() {
-        // usage object exists but both token fields are null (not absent)
-        let body = serde_json::json!({
-            "usage": {
-                "prompt_tokens": null,
-                "completion_tokens": null
-            }
-        });
-        assert!(extract_cost(&body, "model").is_none());
-    }
-
-    #[test]
-    fn extract_cost_usage_is_non_object() {
-        // usage exists but is not an object — get("usage") returns Some
-        // but inner field lookups return None
-        let body = serde_json::json!({
-            "usage": "not-an-object"
-        });
-        assert!(extract_cost(&body, "model").is_none());
-    }
 
     // ─── Script validator: working_dir error ──────────────
 

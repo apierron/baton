@@ -370,34 +370,34 @@ SPEC-MN-VC-005: errors-exit-1-warnings-exit-0
 
 ## check_single_provider
 
-Tests connectivity to a single LLM provider. Performs up to three checks in sequence: API key, /v1/models endpoint, fallback test completion.
+Tests connectivity to a single LLM provider. Uses `ProviderClient` from the provider module for all HTTP interactions.
 
 SPEC-MN-SP-001: missing-api-key-returns-false
-  If `api_key_env` is non-empty and the environment variable is not set, prints an error and returns false.
+  If ProviderClient::new returns ApiKeyNotSet, prints the env var error and returns false.
   test: UNTESTED
 
 SPEC-MN-SP-002: empty-api-key-env-skips-key-check
-  If `api_key_env` is empty, no API key is required. The HTTP client is built without an Authorization header.
+  Handled by ProviderClient::new — empty api_key_env means no auth.
   test: UNTESTED
 
 SPEC-MN-SP-003: models-endpoint-auth-failure
-  If `/v1/models` returns HTTP 401 or 403, prints "Authentication failed" and returns false.
+  If list_models returns AuthFailed, prints "Authentication failed" and returns false.
   test: UNTESTED
 
 SPEC-MN-SP-004: models-endpoint-timeout
-  If the models request times out (10-second client timeout), prints "connection timed out" and returns false.
+  If list_models returns Timeout, prints "connection timed out" and returns false.
   test: UNTESTED
 
 SPEC-MN-SP-005: model-found-in-list
-  If `/v1/models` succeeds and the `data` array contains an entry with `id` matching `provider.default_model`, prints "OK" and returns true.
+  If list_models succeeds and the default model is in the list, prints "OK" and returns true.
   test: UNTESTED
 
 SPEC-MN-SP-006: model-not-found-in-list
-  If `/v1/models` succeeds but the default model is not in the list, prints "WARN" with up to 10 available model names. Returns true (provider is reachable, just model mismatch).
+  If list_models succeeds but the model is absent, prints "WARN" with available models. Returns true.
   test: UNTESTED
 
 SPEC-MN-SP-007: fallback-test-completion
-  If the models endpoint is unavailable or returns an empty list, attempts a minimal chat completion with `max_tokens: 1`. Success returns true; HTTP error or network failure returns false.
+  If list_models returns a non-auth/non-connectivity error, falls through to test_completion.
   test: UNTESTED
 
 ---

@@ -13,6 +13,7 @@ use std::process;
 use baton::config::{discover_config, parse_config, validate_config};
 use baton::exec::run_gate;
 use baton::history;
+use baton::provider::{ProviderClient, ProviderError};
 use baton::types::*;
 
 #[derive(Parser)]
@@ -813,144 +814,77 @@ fn cmd_validate_config(config_path: Option<&PathBuf>) -> i32 {
 /// Tests connectivity to a single LLM provider: checks API key, tries `/v1/models`,
 /// and falls back to a minimal test completion if the model list is unavailable.
 fn check_single_provider(name: &str, provider: &baton::config::Provider) -> bool {
-    // 1. Check API key
-    let api_key = if provider.api_key_env.is_empty() {
-        None
-    } else {
-        match std::env::var(&provider.api_key_env) {
-            Ok(key) => Some(key),
-            Err(_) => {
-                eprintln!(
-                    "  ERROR: API key env var '{}' is not set",
-                    provider.api_key_env
-                );
-                return false;
-            }
-        }
-    };
-
-    // 2. Build HTTP client with short timeout
-    let client = match reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(10))
-        .build()
-    {
+    // 1. Build provider client
+    let client = match ProviderClient::new(provider, name, 10) {
         Ok(c) => c,
+        Err(ProviderError::ApiKeyNotSet { env_var, .. }) => {
+            eprintln!("  ERROR: API key env var '{env_var}' is not set");
+            return false;
+        }
         Err(e) => {
-            eprintln!("  ERROR: Failed to create HTTP client: {e}");
+            eprintln!("  ERROR: {e}");
             return false;
         }
     };
 
-    // Build auth headers
-    let mut headers = reqwest::header::HeaderMap::new();
-    if let Some(ref key) = api_key {
-        if let Ok(val) = reqwest::header::HeaderValue::from_str(&format!("Bearer {key}")) {
-            headers.insert(reqwest::header::AUTHORIZATION, val);
-        }
-    }
-
-    // 3. Try /v1/models endpoint
-    let models_url = format!("{}/v1/models", provider.api_base);
-    let models_response = client.get(&models_url).headers(headers.clone()).send();
-
-    match models_response {
-        Err(e) => {
-            if e.is_timeout() {
+    // 2. Try /v1/models endpoint
+    match client.list_models() {
+        Ok(models) => {
+            if models.iter().any(|m| m == &provider.default_model) {
                 eprintln!(
-                    "  ERROR: Provider '{name}': connection timed out to {}",
-                    provider.api_base
+                    "  OK: Provider '{name}': reachable, model '{}' available",
+                    provider.default_model
                 );
+                return true;
+            } else if models.is_empty() {
+                // Model list came back empty — fall through to test completion
             } else {
-                eprintln!("  ERROR: Cannot reach {}: {e}", provider.api_base);
+                eprintln!(
+                    "  WARN: Provider '{name}': reachable, but model '{}' not found",
+                    provider.default_model
+                );
+                let display: Vec<&str> = models.iter().take(10).map(|s| s.as_str()).collect();
+                eprintln!("  Available models: {}", display.join(", "));
+                return true; // reachable, just model not found
             }
+        }
+        Err(ProviderError::AuthFailed { api_key_env, .. }) => {
+            eprintln!("  ERROR: Authentication failed for provider '{name}'. Check {api_key_env}.");
             return false;
         }
-        Ok(resp) => {
-            let status = resp.status();
-            if status.as_u16() == 401 || status.as_u16() == 403 {
-                eprintln!(
-                    "  ERROR: Authentication failed for provider '{name}'. Check {}.",
-                    provider.api_key_env
-                );
-                return false;
-            }
-            if status.is_success() {
-                // Parse model list and check for default_model
-                let body: serde_json::Value = resp.json().unwrap_or_default();
-                let models: Vec<String> = body
-                    .get("data")
-                    .and_then(|d| d.as_array())
-                    .map(|arr| {
-                        arr.iter()
-                            .filter_map(|m| m.get("id").and_then(|v| v.as_str()))
-                            .map(|s| s.to_string())
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                if models.iter().any(|m| m == &provider.default_model) {
-                    eprintln!(
-                        "  OK: Provider '{name}': reachable, model '{}' available",
-                        provider.default_model
-                    );
-                    return true;
-                } else if models.is_empty() {
-                    // Model list came back empty — fall through to test completion
-                } else {
-                    eprintln!(
-                        "  WARN: Provider '{name}': reachable, but model '{}' not found",
-                        provider.default_model
-                    );
-                    let display: Vec<&str> = models.iter().take(10).map(|s| s.as_str()).collect();
-                    eprintln!("  Available models: {}", display.join(", "));
-                    return true; // reachable, just model not found
-                }
-            }
-            // /v1/models not available or empty — try test completion
+        Err(ProviderError::Timeout { .. }) => {
+            eprintln!(
+                "  ERROR: Provider '{name}': connection timed out to {}",
+                provider.api_base
+            );
+            return false;
+        }
+        Err(ProviderError::Unreachable {
+            api_base, detail, ..
+        }) => {
+            eprintln!("  ERROR: Cannot reach {api_base}: {detail}");
+            return false;
+        }
+        Err(_) => {
+            // /v1/models not available — fall through to test completion
         }
     }
 
-    // 4. Fallback: minimal test completion
+    // 3. Fallback: minimal test completion
     eprintln!("  WARN: Model list not available. Attempting test completion...");
-    let completions_url = format!("{}/v1/chat/completions", provider.api_base);
-    let test_body = serde_json::json!({
-        "model": provider.default_model,
-        "messages": [{"role": "user", "content": "ping"}],
-        "max_tokens": 1,
-    });
-
-    let test_client = match reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("  ERROR: Failed to create HTTP client: {e}");
-            return false;
-        }
-    };
-
-    match test_client
-        .post(&completions_url)
-        .headers(headers)
-        .json(&test_body)
-        .send()
-    {
-        Ok(resp) if resp.status().is_success() => {
+    match client.test_completion(&provider.default_model) {
+        Ok(true) => {
             eprintln!(
                 "  OK: Provider '{name}': reachable, model '{}' responds",
                 provider.default_model
             );
             true
         }
-        Ok(resp) => {
-            eprintln!("  ERROR: Provider '{name}': HTTP {}", resp.status());
-            false
-        }
         Err(e) => {
-            eprintln!("  ERROR: Provider '{name}': test completion failed: {e}");
+            eprintln!("  ERROR: Provider '{name}': {e}");
             false
         }
+        Ok(false) => unreachable!("test_completion returns Ok(true) or Err"),
     }
 }
 

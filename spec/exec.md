@@ -23,7 +23,6 @@ This module is the core orchestrator — it ties together config, types, placeho
 | `execute_llm_session`        | `execute_validator`  |
 | `drive_session`              | `execute_llm_session`|
 | `evaluate_atom`              | `evaluate_run_if`    |
-| `extract_cost`               | `execute_llm_completion` |
 
 ## Design notes
 
@@ -245,14 +244,14 @@ SPEC-EX-HV-002: placeholders-resolved-in-prompt
 
 ## execute_llm_completion
 
-Calls an OpenAI-compatible chat completions API and parses the response as a verdict.
+Resolves provider and prompt, builds the request body, delegates the HTTP call to `provider::ProviderClient::post_completion()`, and maps the response or error to a `ValidatorResult`.
 
 ### Sections
 
 1. Config and provider resolution
-2. API key resolution
+2. ProviderClient construction
 3. Prompt resolution (file or inline) and placeholder substitution
-4. HTTP request construction
+4. Request body construction
 5. Response parsing and verdict extraction
 
 SPEC-EX-LC-001: no-config-errors
@@ -264,7 +263,7 @@ SPEC-EX-LC-002: missing-provider-errors
   test: exec::tests::llm_completion_missing_provider
 
 SPEC-EX-LC-003: api-key-env-not-set-errors
-  If the provider's api_key_env is non-empty but the env var is not set, returns Status::Error with "Authentication failed".
+  If ProviderClient::new returns ApiKeyNotSet, returns Status::Error with the formatted error.
   test: UNTESTED (would require env var manipulation during test)
 
 SPEC-EX-LC-004: empty-api-key-env-skips-auth
@@ -297,26 +296,32 @@ SPEC-EX-LC-010: http-timeout-uses-validator-timeout
 
 SPEC-EX-LC-011: unreachable-provider-errors
   If the provider cannot be reached (connection error), returns Status::Error with "Cannot reach provider".
+  HTTP error classification is performed by ProviderClient::classify_http_error. The exec module maps ProviderError variants to "[baton]" prefixed feedback strings.
   test: exec::tests::llm_completion_unreachable_provider
 
 SPEC-EX-LC-012: timeout-error-distinguished
   If the request times out (e.is_timeout()), returns Status::Error with "Validator timed out after N seconds" rather than the generic connection error.
+  HTTP error classification is performed by ProviderClient::classify_http_error.
   test: UNTESTED (would require a slow mock server)
 
 SPEC-EX-LC-013: http-401-403-auth-error
   HTTP 401 or 403 returns Status::Error with "Authentication failed".
+  HTTP error classification is performed by ProviderClient::classify_http_error.
   test: exec::tests::llm_completion_http_401
 
 SPEC-EX-LC-014: http-404-model-not-found
   HTTP 404 returns Status::Error with "Model 'X' not found on provider 'Y'".
+  HTTP error classification is performed by ProviderClient::classify_http_error.
   test: exec::tests::llm_completion_http_404
 
 SPEC-EX-LC-015: http-429-rate-limited
   HTTP 429 returns Status::Error with "Rate limited by provider".
+  HTTP error classification is performed by ProviderClient::classify_http_error.
   test: exec::tests::llm_completion_http_429
 
 SPEC-EX-LC-016: http-5xx-generic-error
   Other HTTP errors return Status::Error with "Provider returned HTTP {code}: {body}".
+  HTTP error classification is performed by ProviderClient::classify_http_error.
   test: exec::tests::llm_completion_http_500
 
 SPEC-EX-LC-017: malformed-json-response-errors
@@ -448,29 +453,7 @@ SPEC-EX-DS-014: validator-name-propagated
 
 ---
 
-## extract_cost
-
-Extracts token usage from the OpenAI-compatible response body.
-
-SPEC-EX-EC-001: full-usage-extracted
-  When `usage` contains prompt_tokens and completion_tokens, both are returned. Model is set from the model parameter (not the response).
-  test: exec::tests::extract_cost_full_usage
-
-SPEC-EX-EC-002: no-usage-returns-none
-  When the response has no `usage` key, returns None.
-  test: exec::tests::extract_cost_no_usage
-
-SPEC-EX-EC-003: empty-usage-returns-none
-  When `usage` exists but has no token counts, returns None.
-  test: exec::tests::extract_cost_empty_usage
-
-SPEC-EX-EC-004: partial-usage-returns-partial
-  When only prompt_tokens is present (no completion_tokens), returns Some with output_tokens=None.
-  test: exec::tests::extract_cost_partial_usage
-
-SPEC-EX-EC-005: estimated-usd-always-none
-  The estimated_usd field is always None for completion-style cost extraction (unlike OpenHands which extracts a cost field).
-  test: IMPLICIT via extract_cost_full_usage (asserts estimated_usd is None)
+Note: extract_cost has been moved to the provider module. See spec/provider.md SPEC-PV-EC-*.
 
 ---
 

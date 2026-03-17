@@ -34,8 +34,9 @@ This ordering keeps the spec, tests, and code in sync. The spec drives everythin
 **Module dependency layers** (top → bottom, never import upward):
 
 ```text
-main.rs → exec, config, history, runtime, types
-exec → config, types, placeholder, runtime, error
+main.rs → exec, config, history, runtime, provider, types
+exec → config, types, placeholder, runtime, provider, error
+provider → config, types
 config → types, placeholder, error
 history, placeholder → types, error
 runtime → types, error
@@ -81,6 +82,7 @@ Quick reference:
 - **Understand behavior contracts:** read the prose and assertions for any function
 - **Drive new features:** edit the spec first, then write tests, then implement (see Development Workflow above)
 - **List spec files:** `ls spec/*.md`
+- **Files:** `types.md`, `config.md`, `prompt.md`, `placeholder.md`, `verdict_parser.md`, `exec.md`, `history.md`, `runtime.md`, `provider.md`, `main.md`
 
 ## Not Yet Implemented
 

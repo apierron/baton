@@ -13,6 +13,7 @@
 //! - [`prompt`] — Prompt template parsing with frontmatter support
 //! - [`placeholder`] — Template variable resolution
 //! - [`verdict_parser`] — Verdict extraction from LLM/agent text output
+//! - [`provider`] — HTTP client for OpenAI-compatible LLM provider APIs
 //! - [`runtime`] — Runtime adapter abstraction for agent-based validators
 //! - [`error`] — Error types
 
@@ -22,6 +23,7 @@ pub mod exec;
 pub mod history;
 pub mod placeholder;
 pub mod prompt;
+pub mod provider;
 pub mod runtime;
 pub mod types;
 pub mod verdict_parser;
