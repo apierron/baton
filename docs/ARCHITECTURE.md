@@ -103,4 +103,6 @@ The `runtime` module defines the `RuntimeAdapter` trait with five methods: `crea
 
 ## Spec Files
 
-Detailed behavioral assertions for each module live in `spec/*.md`. These enumerate every decision point, error return, and invariant as machine-readable `SPEC-XX-YY-NNN` assertions. See `docs/TESTING.md` for how to use them to find coverage gaps.
+Detailed behavioral specifications for each module live in `spec/*.md`. Each spec file is a complete decision tree for its module — it enumerates every decision point, error return, and invariant as machine-readable `SPEC-XX-YY-NNN` assertions, with associated tests for each assertion. These specs are the authoritative behavior reference: when the implementation disagrees with the spec, the implementation is wrong.
+
+See `docs/SPEC.md` for the spec file format, assertion ID conventions, and the spec-driven development workflow. See `docs/TESTING.md` for how to use spec files to find coverage gaps.

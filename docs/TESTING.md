@@ -10,6 +10,22 @@ cargo test -- --nocapture                 # Show println! output
 cargo test -- --test-threads=1            # Sequential (for debugging shared state)
 ```
 
+To get current per-module test counts:
+
+```bash
+cargo test -- --list 2>/dev/null | grep '::' | sed 's/::[^:]*$//' | sort | uniq -c | sort -rn
+```
+
+## Development Workflow
+
+New features and bug fixes follow spec → tests → implementation order:
+
+1. **Edit the spec first** — add or update `SPEC-XX-YY-NNN` assertions in the relevant `spec/*.md` file. Mark new assertions as `UNTESTED`.
+2. **Write tests** — implement tests that exercise the new assertions. Update the spec to reference the test name.
+3. **Write implementation** — make the tests pass.
+
+The spec is the authoritative behavior reference. If the implementation disagrees with the spec, fix the implementation. This ordering keeps the spec, tests, and code in sync.
+
 ## Test Structure
 
 Every module has `#[cfg(test)] mod tests` at the bottom. Tests are grouped by section dividers:
@@ -104,24 +120,9 @@ For new features, cover:
 3. **Edge cases** — empty input, missing optional fields, boundary values
 4. **Interaction** — how the feature composes with existing features (e.g., `run_if` + `--skip`)
 
-## Current Test Counts
-
-| Module | Tests |
-| ------ | ----- |
-| types | 51 |
-| verdict_parser | 35 |
-| prompt | 28 |
-| placeholder | 35 |
-| config | 55 |
-| exec | 116 |
-| history | 34 |
-| runtime | 34 |
-| cli (integration) | 73 |
-| **Total** | **461** |
-
 ## Spec Files & Coverage Gaps
 
-Each module has a corresponding spec file in `spec/` (e.g., `spec/exec.md`) containing assertions in the format `SPEC-XX-YY-NNN`. Every assertion maps to an existing test (`test: module::tests::test_name`) or is marked `UNTESTED`.
+Each module has a corresponding spec file in `spec/` (e.g., `spec/exec.md`). These are detailed decision trees documenting every behavior as machine-readable `SPEC-XX-YY-NNN` assertions. See `docs/SPEC.md` for the full format guide, assertion ID conventions, and how to write new spec entries.
 
 To find what still needs tests:
 

@@ -297,34 +297,6 @@ baton history --gate code-review
 baton history --status fail
 ```
 
-## Implementation Status
-
-### Implemented
-
-- Core types: Artifact (with lazy content/hash loading), Context, Verdict, ValidatorResult, Cost
-- Configuration parsing and validation (`baton.toml`, env var interpolation, config discovery)
-- Prompt template parsing (TOML frontmatter, placeholder resolution)
-- Verdict parsing (word-boundary-aware keyword matching for PASS/FAIL/WARN)
-- Script validators (command execution, exit code mapping, stdout/stderr capture)
-- LLM completion validators (HTTP POST to OpenAI-compatible `/v1/chat/completions` endpoints)
-- LLM session validators (runtime adapter interface with OpenHands implementation)
-- Human validators (fail with `[human-review-requested]` feedback)
-- Gate execution pipeline (sequential validators, blocking logic, `run_if` conditionals, `--all` mode, status suppression, `--only`/`--skip`/`--tags` filtering)
-- Full CLI (check, init, list, history, validate-config, check-provider, check-runtime, clean, version)
-- SQLite verdict history (WAL mode, query by gate/status/artifact hash)
-- Dry-run mode
-- Stdin artifact support (piped input via temp file)
-- Output formats: JSON, human-readable, summary
-- CI/CD: GitHub Actions for lint, test (Linux/macOS/Windows), cross-platform release builds
-- Distribution: Homebrew tap, shell installer, prebuilt binaries
-
-### Not Yet Implemented
-
-- **Timeout enforcement** — SIGTERM/SIGKILL on script validators exceeding timeout
-- **Signal handling** — Graceful shutdown on SIGINT/SIGTERM with temp file cleanup
-- **Log file writing** — JSON log entries to `<log_dir>/<date>/` (only SQLite history is implemented)
-- **TTY auto-detection** — `--format` should default to `human` when stdout is a TTY
-
 ## Testing
 
 ```bash

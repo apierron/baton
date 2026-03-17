@@ -10,12 +10,22 @@ A composable validation gate for AI agent outputs. Accepts an artifact (file to 
 
 ```bash
 cargo build                          # Build
-cargo test                           # Run all tests (461 across 8 modules + integration)
+cargo test                           # Run all tests
 cargo test config::tests::test_name  # Run a single test
 cargo test config::tests             # Run one module's tests
 cargo clippy --all-targets -- -D warnings  # Lint (must pass with zero warnings)
-cargo fmt --check # Formatting
+cargo fmt --check                    # Formatting
 ```
+
+## Development Workflow
+
+New features and bug fixes follow spec → tests → implementation order:
+
+1. **Edit the spec first** — add or update `SPEC-XX-YY-NNN` assertions in the relevant `spec/*.md` file. Mark new assertions as `UNTESTED`.
+2. **Write tests** — implement tests that exercise the new assertions. Update the spec to reference the test name.
+3. **Write implementation** — make the tests pass. The spec is the authoritative behavior reference; if the implementation disagrees with the spec, fix the implementation.
+
+This ordering keeps the spec, tests, and code in sync. The spec drives everything — it is the single source of truth for what the system should do.
 
 ## Architecture
 
@@ -58,18 +68,19 @@ See `docs/CONVENTIONS.md` for the full list.
 | Golden rules, mechanical conventions | `docs/CONVENTIONS.md` |
 | Test patterns, running tests, what to cover | `docs/TESTING.md` |
 | Anti-patterns, security, what NOT to do | `docs/BOUNDARIES.md` |
-| Spec (authoritative behavior reference) | `baton-spec-v0_4.md` |
-| Module-level specs (assertions, test coverage gaps) | `spec/*.md` |
+| Module-level specs (behavior reference, test coverage) | `spec/*.md` |
+| Spec file format, assertion IDs, how to use them | `docs/SPEC.md` |
 
 ## Spec Files
 
-The `spec/` directory contains one spec file per module with machine-readable assertions (`SPEC-XX-YY-NNN`). Each assertion maps to an existing test or is marked `UNTESTED`. Use these to:
+The `spec/` directory contains one spec file per module. Each file is a detailed decision tree documenting every decision point, error return, and invariant as machine-readable `SPEC-XX-YY-NNN` assertions with associated tests. These are the authoritative behavior reference — see `docs/SPEC.md` for the full format guide, assertion ID conventions, and usage patterns.
 
-- **Find coverage gaps:** grep for `UNTESTED` to see what still needs tests
-- **Understand behavior contracts:** each assertion documents a specific decision point, error return, or invariant
-- **Write new tests:** the assertion IDs provide a checklist when adding or modifying functionality
+Quick reference:
 
-Files: `types.md`, `config.md`, `prompt.md`, `placeholder.md`, `verdict_parser.md`, `exec.md`, `history.md`, `runtime.md`
+- **Find coverage gaps:** `grep -r "UNTESTED" spec/`
+- **Understand behavior contracts:** read the prose and assertions for any function
+- **Drive new features:** edit the spec first, then write tests, then implement (see Development Workflow above)
+- **List spec files:** `ls spec/*.md`
 
 ## Not Yet Implemented
 

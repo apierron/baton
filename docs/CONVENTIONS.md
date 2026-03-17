@@ -52,9 +52,15 @@ Files referenced by placeholders (`{artifact_content}`, `{context.spec.content}`
 
 The version is defined once in `Cargo.toml` under `[package].version`. All runtime references use `env!("CARGO_PKG_VERSION")`. Never hardcode a version string in Rust source, README, or other files. The Homebrew formula version is updated by CI during releases.
 
-## Spec Assertions
+## Spec-First Development
 
-When adding new behavior or modifying existing behavior, update the corresponding `spec/*.md` file. Each assertion (`SPEC-XX-YY-NNN`) should map to a test — mark new assertions as `UNTESTED` until a test exists. See `docs/TESTING.md` for details.
+The `spec/*.md` files are the authoritative behavior reference. Each file is a detailed decision tree for its module, with every decision point, error return, and invariant documented as a `SPEC-XX-YY-NNN` assertion. New features and bug fixes follow this order:
+
+1. **Edit the spec** — add or update assertions in the relevant `spec/*.md` file. Mark new assertions as `UNTESTED`.
+2. **Write tests** — implement tests that exercise the new assertions. Update the assertion to reference the test name.
+3. **Write implementation** — make the tests pass.
+
+When modifying existing behavior, update the corresponding spec file to stay in sync. If the implementation disagrees with the spec, the implementation is wrong. See `docs/SPEC.md` for the full format guide and assertion ID conventions.
 
 ## Commit & PR Conventions
 
