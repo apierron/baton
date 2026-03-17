@@ -2092,3 +2092,502 @@ fn multiple_context_args_accepted() {
     let ctx_hash = verdict["context_hash"].as_str().unwrap();
     assert!(!ctx_hash.is_empty());
 }
+
+// ═══════════════════════════════════════════════════════════════
+// Wave 4: CLI Integration Test Gaps
+// ═══════════════════════════════════════════════════════════════
+
+// ─── cmd_check gaps ──────────────────────────────────────
+
+#[test]
+fn context_missing_equals_exits_2() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+
+    baton()
+        .args([
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--context",
+            "noequals",
+            "--no-log",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .code(2)
+        .stderr(predicate::str::contains("Invalid context format"));
+}
+
+#[test]
+fn context_file_not_found_warns() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+
+    // Unknown context items are warnings, not errors
+    baton()
+        .args([
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--context",
+            "spec=/nonexistent/file.md",
+            "--no-log",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("warning"));
+}
+
+#[test]
+fn nonexistent_artifact_file_exits_2() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+
+    baton()
+        .args([
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "/nonexistent/artifact.txt",
+            "--no-log",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .code(2);
+}
+
+#[test]
+#[cfg(not(windows))]
+fn dry_run_shows_run_if_expression() {
+    let toml = r#"version = "0.4"
+
+[defaults]
+timeout_seconds = 30
+blocking = true
+prompts_dir = "./prompts"
+log_dir = "./.baton/logs"
+history_db = "./.baton/history.db"
+tmp_dir = "./.baton/tmp"
+
+[gates.review]
+
+[[gates.review.validators]]
+name = "lint"
+type = "script"
+command = "echo PASS"
+
+[[gates.review.validators]]
+name = "typecheck"
+type = "script"
+command = "echo PASS"
+run_if = "lint.status == pass"
+"#;
+    let dir = setup_project(toml, "hello");
+
+    let output = baton()
+        .args([
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--dry-run",
+            "--no-log",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("lint.status == pass"),
+        "dry-run should show run_if expression, got: {stderr}"
+    );
+}
+
+#[test]
+fn unknown_format_falls_back_to_json_on_stdout() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args([
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--format",
+            "potato",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    // Should warn about unknown format but still produce JSON on stdout
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Unknown format") || stderr.contains("unknown format"),
+        "Should warn about unknown format: {stderr}"
+    );
+    // stdout should be valid JSON
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    assert_eq!(verdict["status"], "pass");
+}
+
+#[test]
+#[cfg(not(windows))]
+fn suppress_all_flag() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo FAIL; exit 1"));
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args([
+            "check",
+            "--gate",
+            "review",
+            "--artifact",
+            "artifact.txt",
+            "--no-log",
+            "--suppress-all",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "suppress-all should exit 0");
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    assert_eq!(verdict["status"], "pass");
+}
+
+// ─── cmd_init gaps ───────────────────────────────────────
+
+#[test]
+fn init_creates_prompt_templates() {
+    let dir = TempDir::new().unwrap();
+
+    baton()
+        .arg("init")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    assert!(dir.path().join("prompts/spec-compliance.md").exists());
+    assert!(dir.path().join("prompts/adversarial-review.md").exists());
+    assert!(dir.path().join("prompts/doc-completeness.md").exists());
+}
+
+#[test]
+fn init_minimal_skips_prompts() {
+    let dir = TempDir::new().unwrap();
+
+    baton()
+        .args(["init", "--minimal"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    assert!(dir.path().join("baton.toml").exists());
+    assert!(!dir.path().join("prompts").exists());
+}
+
+#[test]
+fn init_prompts_only_skips_config() {
+    let dir = TempDir::new().unwrap();
+
+    baton()
+        .args(["init", "--prompts-only"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    assert!(!dir.path().join("baton.toml").exists());
+    assert!(dir.path().join("prompts").exists());
+    assert!(dir.path().join("prompts/spec-compliance.md").exists());
+}
+
+#[test]
+fn init_existing_prompts_not_overwritten() {
+    let dir = TempDir::new().unwrap();
+    let prompts_dir = dir.path().join("prompts");
+    fs::create_dir_all(&prompts_dir).unwrap();
+
+    let custom_content = "my custom prompt content — do not overwrite";
+    fs::write(prompts_dir.join("spec-compliance.md"), custom_content).unwrap();
+
+    baton()
+        .args(["init", "--prompts-only"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let after = fs::read_to_string(prompts_dir.join("spec-compliance.md")).unwrap();
+    assert_eq!(
+        after, custom_content,
+        "Existing prompt should not be overwritten"
+    );
+}
+
+// ─── cmd_list gaps ───────────────────────────────────────
+
+#[test]
+fn list_gate_not_found_exits_1() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+
+    baton()
+        .args(["list", "--gate", "nonexistent"])
+        .current_dir(dir.path())
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("not found"));
+}
+
+// ─── cmd_history gaps ────────────────────────────────────
+
+#[test]
+fn history_empty_results_message() {
+    let dir = TempDir::new().unwrap();
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    fs::write(dir.path().join("baton.toml"), toml).unwrap();
+    fs::create_dir_all(dir.path().join(".baton/tmp")).unwrap();
+    fs::create_dir_all(dir.path().join(".baton/logs")).unwrap();
+
+    baton()
+        .args(["history", "--gate", "nonexistent-gate"])
+        .current_dir(dir.path())
+        .assert()
+        .stdout(predicate::str::contains("No verdicts found"));
+}
+
+// ─── cmd_validate_config gaps ────────────────────────────
+
+#[test]
+fn validate_config_parse_error_exits_1() {
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("bad.toml"), "this is not valid toml {{{}}}").unwrap();
+
+    baton()
+        .args(["validate-config", "--config", "bad.toml"])
+        .current_dir(dir.path())
+        .assert()
+        .code(predicate::ne(0));
+}
+
+#[test]
+fn validate_config_warnings_printed() {
+    let dir = TempDir::new().unwrap();
+    // Config with a validator referencing a non-existent provider triggers a warning
+    let toml = r#"version = "0.4"
+
+[defaults]
+timeout_seconds = 30
+blocking = true
+prompts_dir = "./prompts"
+log_dir = "./.baton/logs"
+history_db = "./.baton/history.db"
+tmp_dir = "./.baton/tmp"
+
+[gates.review]
+
+[[gates.review.validators]]
+name = "llm-check"
+type = "llm"
+prompt = "Review this"
+provider = "nonexistent"
+model = "test"
+"#;
+    fs::write(dir.path().join("baton.toml"), toml).unwrap();
+
+    let output = baton()
+        .args(["validate-config"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Warning")
+            || stderr.contains("warning")
+            || stderr.contains("Error")
+            || stderr.contains("error"),
+        "Should show warning or error for undefined provider: {stderr}"
+    );
+}
+
+// ─── cmd_version gaps ────────────────────────────────────
+
+#[test]
+fn version_includes_spec_version() {
+    let output = baton().arg("version").output().unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("spec version: 0.4"),
+        "Should show spec version, got: {stdout}"
+    );
+}
+
+#[test]
+fn version_config_not_found_in_empty_dir() {
+    let dir = TempDir::new().unwrap();
+
+    let output = baton()
+        .arg("version")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("not found"),
+        "Should show 'not found' for config, got: {stdout}"
+    );
+}
+
+// ─── cmd_clean gaps ──────────────────────────────────────
+
+#[test]
+fn clean_dry_run_does_not_delete() {
+    let dir = TempDir::new().unwrap();
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    fs::write(dir.path().join("baton.toml"), &toml).unwrap();
+    let tmp_dir = dir.path().join(".baton/tmp");
+    fs::create_dir_all(&tmp_dir).unwrap();
+    fs::create_dir_all(dir.path().join(".baton/logs")).unwrap();
+
+    // Create a file in tmp
+    let tmp_file = tmp_dir.join("old-artifact.txt");
+    fs::write(&tmp_file, "stale content").unwrap();
+
+    baton()
+        .args(["clean", "--dry-run"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // File should still exist after dry-run
+    assert!(tmp_file.exists(), "dry-run should not delete files");
+}
+
+// ─── cmd_check_provider gaps ─────────────────────────────
+
+#[test]
+fn check_provider_missing_api_key_env() {
+    let dir = TempDir::new().unwrap();
+    let toml = r#"version = "0.4"
+
+[defaults]
+timeout_seconds = 30
+blocking = true
+prompts_dir = "./prompts"
+log_dir = "./.baton/logs"
+history_db = "./.baton/history.db"
+tmp_dir = "./.baton/tmp"
+
+[providers.default]
+api_base = "http://localhost:1"
+api_key_env = "BATON_CLI_TEST_NONEXISTENT_KEY"
+default_model = "test-model"
+
+[gates.review]
+
+[[gates.review.validators]]
+name = "lint"
+type = "script"
+command = "echo PASS"
+"#;
+    fs::write(dir.path().join("baton.toml"), toml).unwrap();
+    fs::create_dir_all(dir.path().join(".baton/tmp")).unwrap();
+    fs::create_dir_all(dir.path().join(".baton/logs")).unwrap();
+
+    let output = baton()
+        .args(["check-provider"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("BATON_CLI_TEST_NONEXISTENT_KEY") || stderr.contains("not set"),
+        "Should mention missing env var: {stderr}"
+    );
+    assert!(!output.status.success());
+}
+
+// ─── cmd_check_runtime gaps ──────────────────────────────
+
+#[test]
+fn check_runtime_no_runtimes_exits_1() {
+    let dir = TempDir::new().unwrap();
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    fs::write(dir.path().join("baton.toml"), toml).unwrap();
+    fs::create_dir_all(dir.path().join(".baton/tmp")).unwrap();
+    fs::create_dir_all(dir.path().join(".baton/logs")).unwrap();
+
+    let output = baton()
+        .args(["check-runtime"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "check-runtime with no runtimes should fail"
+    );
+}
+
+#[test]
+fn check_runtime_named_not_found() {
+    let dir = TempDir::new().unwrap();
+    let toml = r#"version = "0.4"
+
+[defaults]
+timeout_seconds = 30
+blocking = true
+prompts_dir = "./prompts"
+log_dir = "./.baton/logs"
+history_db = "./.baton/history.db"
+tmp_dir = "./.baton/tmp"
+
+[runtimes.alpha]
+type = "openhands"
+base_url = "http://localhost:1"
+timeout_seconds = 600
+max_iterations = 30
+
+[gates.review]
+
+[[gates.review.validators]]
+name = "lint"
+type = "script"
+command = "echo PASS"
+"#;
+    fs::write(dir.path().join("baton.toml"), toml).unwrap();
+    fs::create_dir_all(dir.path().join(".baton/tmp")).unwrap();
+    fs::create_dir_all(dir.path().join(".baton/logs")).unwrap();
+
+    let output = baton()
+        .args(["check-runtime", "beta"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "Should fail when named runtime not found"
+    );
+    assert!(
+        stderr.contains("beta") || stderr.contains("not found"),
+        "Should mention the missing runtime: {stderr}"
+    );
+}

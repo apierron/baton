@@ -3255,4 +3255,160 @@ mod tests {
 
         handle.join().unwrap();
     }
+
+    // ─── Wave 3: Exec-level gap coverage ────────────────
+
+    #[test]
+    fn llm_completion_api_key_env_not_set() {
+        // Provider requires an env var that isn't set
+        let mut providers = BTreeMap::new();
+        providers.insert(
+            "default".into(),
+            crate::config::Provider {
+                api_base: "http://localhost:1".into(),
+                api_key_env: "BATON_TEST_NONEXISTENT_KEY_WAVE3".into(),
+                default_model: "test-model".into(),
+            },
+        );
+
+        let config = BatonConfig {
+            version: "0.4".into(),
+            defaults: crate::config::Defaults {
+                timeout_seconds: 300,
+                blocking: true,
+                prompts_dir: "/tmp/prompts".into(),
+                log_dir: "/tmp/logs".into(),
+                history_db: "/tmp/history.db".into(),
+                tmp_dir: "/tmp/tmp".into(),
+            },
+            providers,
+            runtimes: BTreeMap::new(),
+            gates: BTreeMap::new(),
+            config_dir: "/tmp".into(),
+        };
+
+        let v = ValidatorBuilder::llm("llm-check", "Review this").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        let feedback = result.feedback.unwrap();
+        assert!(
+            feedback.contains("BATON_TEST_NONEXISTENT_KEY_WAVE3"),
+            "Feedback should mention the env var: {feedback}"
+        );
+        assert!(
+            feedback.contains("not set"),
+            "Feedback should say 'not set': {feedback}"
+        );
+    }
+
+    #[test]
+    fn llm_completion_prompt_file_resolution() {
+        let tmp_dir = tempfile::tempdir().unwrap();
+        let prompts_dir = tmp_dir.path().join("prompts");
+        std::fs::create_dir_all(&prompts_dir).unwrap();
+        std::fs::write(
+            prompts_dir.join("review.md"),
+            "Please review the code carefully.",
+        )
+        .unwrap();
+
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/v1/chat/completions")
+                // Verify the resolved prompt file content appears in the request body
+                .body_includes("review the code carefully");
+            then.status(200).json_body(serde_json::json!({
+                "choices": [{"message": {"content": "PASS — looks good"}}]
+            }));
+        });
+
+        let mut providers = BTreeMap::new();
+        providers.insert(
+            "default".into(),
+            crate::config::Provider {
+                api_base: server.url(""),
+                api_key_env: "".into(),
+                default_model: "test-model".into(),
+            },
+        );
+
+        let config = BatonConfig {
+            version: "0.4".into(),
+            defaults: crate::config::Defaults {
+                timeout_seconds: 300,
+                blocking: true,
+                prompts_dir: prompts_dir.to_path_buf(),
+                log_dir: "/tmp/logs".into(),
+                history_db: "/tmp/history.db".into(),
+                tmp_dir: "/tmp/tmp".into(),
+            },
+            providers,
+            runtimes: BTreeMap::new(),
+            gates: BTreeMap::new(),
+            config_dir: tmp_dir.path().to_path_buf(),
+        };
+
+        // Use a .md file reference as prompt
+        let v = ValidatorBuilder::llm("llm-check", "review.md").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Pass);
+        mock.assert();
+    }
+
+    #[test]
+    fn llm_completion_prompt_file_not_found() {
+        let server = httpmock::MockServer::start();
+        // No mock needed — should fail before HTTP call
+
+        let config = th::config_with_provider(&server.url(""));
+
+        let v = ValidatorBuilder::llm("llm-check", "nonexistent-prompt.md").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Error);
+        let feedback = result.feedback.unwrap();
+        assert!(
+            feedback.contains("nonexistent-prompt.md")
+                || feedback.contains("not found")
+                || feedback.contains("No such file"),
+            "Feedback should reference the missing file: {feedback}"
+        );
+    }
+
+    #[test]
+    fn llm_completion_max_tokens_in_request_body() {
+        let server = httpmock::MockServer::start();
+        let mock = server.mock(|when, then| {
+            when.method(httpmock::Method::POST)
+                .path("/v1/chat/completions")
+                .json_body_includes(r#"{"max_tokens": 4096}"#);
+            then.status(200).json_body(serde_json::json!({
+                "choices": [{"message": {"content": "PASS — ok"}}]
+            }));
+        });
+
+        let config = th::config_with_provider(&server.url(""));
+
+        // ValidatorBuilder::llm sets max_tokens to Some(4096) by default
+        let v = ValidatorBuilder::llm("llm-check", "Review this").build();
+        let mut art = Artifact::from_string("hello");
+        let mut ctx = Context::new();
+        let prior = BTreeMap::new();
+
+        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        assert_eq!(result.status, Status::Pass);
+        mock.assert();
+    }
 }
