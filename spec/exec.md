@@ -1,8 +1,8 @@
 # module: exec
 
-The execution engine. Runs validators in pipeline order, evaluates `run_if` conditions, dispatches to script/LLM/human executors, and computes the final verdict.
+The execution engine. Collects input files into a pool, uses the dispatch planner to turn the pool into invocations, runs validators as stateless functions, and lets gates orchestrate sequencing and blocking.
 
-This module is the core orchestrator — it ties together config, types, placeholder resolution, runtime adapters, and verdict parsing into a single pipeline. It is the largest module by both code and test count.
+This module implements the `sources → validators → gates` pipeline at runtime. The file collector builds the input pool. The dispatch planner matches files to validator input declarations and produces invocations. Gate execution iterates validators in pipeline order, applying blocking and `run_if` orchestration rules. Individual validator execution (script/LLM/human) is a leaf operation with no knowledge of gates or pipelines.
 
 ## Public functions
 
@@ -26,11 +26,11 @@ This module is the core orchestrator — it ties together config, types, placeho
 
 ## Design notes
 
-run_gate is intentionally a single function rather than being broken into pre-flight/execute/finalize methods. The pipeline is sequential and every step can fail, so early returns dominate the control flow. Splitting it would just move the returns into the callers.
+Validators are stateless functions. `execute_validator` takes an invocation (validator config + input files) and produces a result. It has no knowledge of what gate it belongs to, what other validators exist, or whether it's blocking. This is by design — all orchestration lives in the gate layer.
 
-execute_validator takes Option<&BatonConfig> rather than &BatonConfig because script and human validators don't need config. This lets tests run script validators without constructing a full config. LLM validators return Status::Error immediately if config is None.
+Gates handle sequencing. `blocking` and `run_if` are both gate-level orchestration concerns, not validator properties. `blocking = true` means "if this validator fails, stop the gate." `run_if` means "only run this validator if a prior validator's result meets a condition." In many cases, `blocking` alone is sufficient — if validator A is blocking and fails, validators B and C never run. `run_if` adds value when: (a) the dependency isn't the immediately preceding validator, or (b) the dependency is non-blocking (A produces a result but doesn't stop the pipeline, and B should only run if A passed). Whether `run_if` carries its weight relative to blocking is an open question; the current design includes it because the baton-vision example uses it for non-blocking conditional chains.
 
-drive_session is extracted from execute_llm_session so the session lifecycle (create → poll → collect → teardown → parse verdict) can be tested independently via MockRuntimeAdapter, without needing HTTP or config resolution.
+execute_validator takes an optional config because script and human validators don't need provider/runtime configuration. LLM validators return an error if config is absent.
 
 ---
 
@@ -193,7 +193,7 @@ SPEC-EX-SV-006: stderr-included-in-feedback
   test: exec::tests::script_with_stderr_feedback
 
 SPEC-EX-SV-007: placeholders-resolved-in-command
-  The {artifact}, {artifact_content}, {context.X}, etc. placeholders are resolved in the command string before execution.
+  The {file}, {file.content}, {input.X}, etc. placeholders are resolved in the command string before execution.
   test: exec::tests::script_placeholder_resolution
 
 SPEC-EX-SV-008: empty-command-after-resolution-errors
@@ -469,43 +469,6 @@ This is the main entry point for gate execution. It validates inputs, runs each 
 2. Execution loop (filter, run_if, dispatch, blocking)
 3. Finalization (compute status, build verdict)
 
-### run_gate: pre-flight checks
-
-Before executing any validators, run_gate validates that the inputs are well-formed. These checks run in a fixed order. The first failure returns immediately — there is no accumulation of pre-flight errors, because downstream checks may depend on earlier ones succeeding (e.g., hash computation requires a readable file).
-
-Required-context checking happens here, not in validate_config(), because context is provided at runtime via CLI args, not in baton.toml. The config validator checks that context *slots* are well-formed but cannot know whether the user will supply them at invocation time.
-
-Edge cases to consider:
-
-- Artifact is from_string (no path) — path checks are skipped entirely
-- Context item whose path doesn't exist vs. context item with inline string
-- The ordering of checks matters: a nonexistent path should get ArtifactNotFound, not ArtifactIsDirectory
-
-SPEC-EX-RG-001: artifact-path-must-exist
-  When the artifact is file-backed (artifact.path is Some) and the path does not exist on disk, run_gate returns Err(ArtifactNotFound) containing the path string. When the artifact is from_string (path is None), this check is skipped entirely.
-  test: exec::tests::run_gate_artifact_not_found
-
-SPEC-EX-RG-002: artifact-path-rejects-directory
-  When artifact.path points to a directory, run_gate returns Err(ArtifactIsDirectory). This check runs after existence, so a nonexistent path always gets ArtifactNotFound, never ArtifactIsDirectory.
-  test: exec::tests::run_gate_artifact_is_directory
-
-SPEC-EX-RG-003: required-context-enforced
-  For each context slot in gate.context where required=true, if the provided context map does not contain that key, run_gate returns Err(MissingRequiredContext) naming both the slot and the gate. Only the first missing context triggers the error (early return).
-  test: exec::tests::gate_required_context_missing
-
-SPEC-EX-RG-004: unexpected-context-warns-not-errors
-  For each key in the provided context that is not declared in gate.context, a warning is printed to stderr. This is not an error; execution continues. The warning includes the item name and gate name. This allows forward-compatible context (passing extra items that a future version of the gate might use).
-  test: UNTESTED
-
-SPEC-EX-RG-005: context-path-must-exist
-  For each context item backed by a file path, if the path does not exist, run_gate returns Err(ContextNotFound) with the item name and path. If the path is a directory, returns Err(ContextIsDirectory). Context items with inline string content skip this check.
-  test: exec::tests::run_gate_context_not_found
-  test: exec::tests::run_gate_context_is_directory
-
-SPEC-EX-RG-006: hashes-computed-before-execution
-  After pre-flight validation passes, artifact_hash and context_hash are computed before any validators run. This ensures the verdict records the exact input state, even if a validator modifies files on disk during execution. Artifact hash is SHA-256 of file content (triggers lazy load). Context hash is SHA-256 of the sorted concatenation of all context item contents.
-  test: IMPLICIT via exec::tests::gate_all_pass (verdict contains hashes)
-
 ### run_gate: execution loop
 
 Validators run in the order they appear in the gate config. For each validator, the loop applies filters, evaluates run_if, dispatches execution, and checks blocking status.
@@ -537,10 +500,6 @@ SPEC-EX-RG-014: blocking-validator-stops-pipeline
 SPEC-EX-RG-015: non-blocking-failure-continues
   When a validator has blocking=false and fails, execution continues to the next validator. The failure is recorded in history and contributes to the final status computation.
   test: exec::tests::gate_non_blocking_failure_passes
-
-SPEC-EX-RG-016: run-all-overrides-blocking
-  When options.run_all is true, blocking=true is ignored. All validators execute regardless of intermediate failures. The final status is computed from all results via compute_final_status().
-  test: exec::tests::gate_all_mode_runs_everything
 
 SPEC-EX-RG-017: suppression-applied-before-blocking-check
   Status suppression (suppress_warnings, suppress_errors) is applied before the blocking check. A validator that returns Error with blocking=true will not stop the pipeline if Error is suppressed. The suppressed status is treated as Pass for blocking purposes.
@@ -586,9 +545,90 @@ SPEC-EX-RG-025: suppression-in-run-all-mode
   test: exec::tests::gate_suppress_errors_with_all_mode, gate_suppress_all_in_all_mode
 
 SPEC-EX-RG-026: llm-completion-in-gate
-  LLM completion validators work within run_gate, using the config's provider for HTTP calls.
+  LLM completion validators work within run_gate, using the config's provider for HTTP calls. The LLM validator receives its prompt input from the `Invocation`'s input files, not from a single artifact + context.
   test: exec::tests::llm_completion_in_gate_run
 
 SPEC-EX-RG-027: llm-fail-blocks-gate
   A blocking LLM validator that returns FAIL stops the pipeline, same as a script validator.
   test: exec::tests::llm_completion_fail_blocks_gate
+
+---
+
+## File collector
+
+Builds the input pool. All positional args are files or directories. Directories are walked recursively. `--diff` and `--files` add more paths. The pool is deduplicated by canonical path. This is the entry point — everything downstream operates on this pool.
+
+SPEC-EX-FC-001: positional-args-populate-pool
+  File and directory paths from positional CLI args are added to the input pool. Directories are walked recursively by default.
+  test: exec::tests::file_collector_single_file
+  test: exec::tests::file_collector_directory_walk
+
+SPEC-EX-FC-002: diff-flag-adds-changed-files
+  `--diff <refspec>` runs `git diff --name-only <refspec>` and adds the result to the pool.
+  test: TODO
+
+SPEC-EX-FC-003: files-flag-reads-file-list
+  `--files <path | ->` reads newline-separated paths from a file or stdin.
+  test: exec::tests::file_collector_reads_file_list
+
+SPEC-EX-FC-004: deduplication-by-canonical-path
+  The pool is deduplicated by canonical (absolute, symlink-resolved) path.
+  test: exec::tests::file_collector_deduplication
+
+SPEC-EX-FC-005: no-recursive-flag
+  `--no-recursive` disables recursive directory walking.
+  test: TODO
+
+---
+
+## Dispatch planner
+
+Turns the file pool into invocations. For each validator, the planner examines its `input` declaration and matches files from the pool. The result is zero or more Invocation objects per validator — each one a concrete "run this validator with these specific files."
+
+The planner is where the four input forms (no-input, per-file, batch, multi-input) become concrete. A validator never sees the pool directly; it sees only the files the planner selected for its invocation.
+
+SPEC-EX-DP-001: no-input-produces-single-invocation
+  A validator with no `input` field produces exactly one invocation with no files.
+  test: exec::tests::dispatch_no_input_produces_single_invocation
+
+SPEC-EX-DP-002: per-file-produces-one-invocation-per-match
+  A per-file input produces one invocation per file matching the glob against the pool.
+  test: exec::tests::dispatch_per_file_produces_one_per_match
+
+SPEC-EX-DP-003: batch-produces-single-invocation
+  A batch input (`collect = true`) produces one invocation with all matching files.
+  test: exec::tests::dispatch_batch_produces_single_invocation
+
+SPEC-EX-DP-004: keyed-inputs-joined-by-key
+  Named inputs with `key` expressions are grouped by matching key values. One invocation per distinct key.
+  test: exec::tests::dispatch_keyed_inputs_grouped_by_key
+
+SPEC-EX-DP-005: incomplete-group-skips-with-warning
+  If a key value appears in one input slot but not another, the group is skipped and a warning is emitted.
+  test: TODO
+
+SPEC-EX-DP-006: fixed-inputs-injected-into-every-invocation
+  An input with `path` (fixed) is present in every invocation, regardless of key grouping.
+  test: TODO
+
+SPEC-EX-DP-007: no-matching-files-skips-validator
+  If a validator requires file input but no files in the pool match, the validator is skipped with a warning.
+  test: exec::tests::dispatch_no_matching_files_produces_empty
+
+---
+
+## Execution pipeline
+
+Gate-level orchestration. After the file collector and dispatch planner have done their work, this layer iterates gates, applies `--only`/`--skip` filtering, runs validators in pipeline order, and enforces blocking and `run_if` rules. This is where stateless validators meet sequential orchestration.
+
+SPEC-EX-PL-001: gates-iterated-after-only-skip-filtering
+  Gates are filtered by `--only` / `--skip` before iteration.
+  test: TODO
+
+SPEC-EX-PL-002: per-invocation-blocking
+  If any invocation of a blocking validator fails, the gate stops. Not just one invocation — any.
+  test: exec::tests::pipeline_per_invocation_blocking
+
+SPEC-EX-PL-003: per-invocation-verdict-recorded
+  Each invocation produces a separate `ValidatorResult` with its group key and input file hashes.
+  test: TODO

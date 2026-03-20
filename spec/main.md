@@ -20,7 +20,6 @@ CLI entry point for baton. Provides subcommand dispatch, argument parsing, confi
 
 | Function | Called by |
 |---|---|
-| `parse_context_arg` | clap `value_parser` for `--context` args |
 | `load_config` | All `cmd_*` functions that need baton.toml |
 | `cmd_check` | `main` |
 | `cmd_init` | `main` |
@@ -43,20 +42,6 @@ main.rs is a thin orchestration layer. It owns no domain logic — all validatio
 Exit code conventions: 0 = success or passing verdict, 1 = user-recoverable error or failing verdict, 2 = infrastructure/config error. These are wired through each `cmd_*` function's `-> i32` return, and `main()` passes the value to `process::exit()`.
 
 All stderr output uses `eprintln!` directly. Stdout is reserved for machine-parseable output (JSON verdicts, history lines, version info, gate listings).
-
----
-
-## parse_context_arg
-
-Parses a single `name=path` string from the `--context` CLI flag into a `(String, String)` tuple.
-
-SPEC-MN-CA-001: valid-name-equals-path
-  A string containing exactly one `=` is split into (name, path). The split uses `splitn(2, '=')` so paths containing `=` are preserved intact.
-  test: cli::multiple_context_args_accepted
-
-SPEC-MN-CA-002: missing-equals-returns-error
-  A string without `=` returns `Err` with a message containing "Invalid context format" and the offending value.
-  test: UNTESTED
 
 ---
 
@@ -116,118 +101,132 @@ SPEC-MN-CK-001: config-error-exits-2
   If `load_config` fails, prints "Error: {e}" to stderr and returns exit code 2.
   test: IMPLICIT via cli tests with missing config
 
-SPEC-MN-CK-002: unknown-gate-exits-2
-  If the gate name is not found in the config, prints "Error: Gate '{name}' not found. Available gates: ..." to stderr and returns exit code 2. The error message lists all available gate names.
-  test: cli::unknown_gate_fails
-
-### --only / --skip validation
-
-SPEC-MN-CK-010: only-unknown-validator-exits-2
-  If `--only` references a validator name not present in the gate, prints "Error: --only references unknown validator '{name}'" and returns exit code 2.
-  test: cli::only_unknown_validator_fails
-
-SPEC-MN-CK-011: skip-unknown-validator-warns
-  If `--skip` references a validator name not present in the gate, prints "Warning: --skip references unknown validator '{name}'" to stderr but does NOT exit — processing continues. This is intentional: --skip is lenient because validators may be conditionally present.
-  test: cli::skip_unknown_validator_warns
-
-### Artifact construction
-
-SPEC-MN-CK-020: stdin-artifact
-  When `artifact_path` is `"-"`, stdin is read to completion, written to a temp file in `config.defaults.tmp_dir`, and loaded via `Artifact::from_file`. The temp file is cleaned up after the verdict is output.
-  test: cli::stdin_artifact_works
-
-SPEC-MN-CK-021: file-artifact
-  When `artifact_path` is not `"-"`, it is passed directly to `Artifact::from_file`.
-  test: IMPLICIT via most cli check tests
-
-SPEC-MN-CK-022: artifact-error-exits-2
-  If `Artifact::from_file` fails (file not found, is directory, etc.), prints the error and returns exit code 2.
-  test: cli::nonexistent_artifact_fails
-
-### Context construction
-
-SPEC-MN-CK-030: context-args-loaded-as-files
-  Each `--context name=path` argument is loaded via `context.add_file(name, path)`. The path is resolved relative to the current working directory.
-  test: cli::multiple_context_args_accepted
-
-SPEC-MN-CK-031: context-file-error-exits-2
-  If any context file cannot be loaded (not found, is directory), prints the error and returns exit code 2.
-  test: UNTESTED
-
 ### Dry run
 
-SPEC-MN-CK-040: dry-run-lists-validators-exits-0
-  When `--dry-run` is set, prints each validator with its type and status (would-run or skipped-by-reason) to stderr, prints "Dry run: N validator(s) would run" to stderr, and returns exit code 0. No validators are executed, no verdict is produced, nothing is written to stdout.
+SPEC-MN-CK-040: dry-run-shows-invocation-plan-exits-0
+  When `--dry-run` is set, prints the invocation plan (which validators would run, with what inputs) to stderr and returns exit code 0. No validators are executed, no verdict is produced, nothing is written to stdout.
   test: cli::dry_run_lists_validators_and_exits_zero
 
 SPEC-MN-CK-041: dry-run-shows-skip-reasons
-  In dry-run mode, validators excluded by `--only`, `--skip`, or `--tags` are shown with their skip reason (e.g., "--only", "--skip", "--tags").
+  In dry-run mode, validators excluded by `--only` or `--skip` are shown with their skip reason.
   test: cli::dry_run_shows_skip_reasons
 
 SPEC-MN-CK-042: dry-run-shows-run-if-expressions
-  In dry-run mode, validators with `run_if` expressions show the expression in parentheses. If `--all` is set, the display notes that the expression "depends on runtime" since run_if cannot be pre-evaluated.
+  In dry-run mode, validators with `run_if` expressions show the expression in parentheses.
   test: UNTESTED
+
+### New CLI flags
+
+SPEC-MN-CK-050: positional-args-are-input-files
+  Zero or more positional args are treated as input files. Directories walked recursively.
+  test: TODO
+
+SPEC-MN-CK-051: only-accepts-selectors
+  `--only` accepts gate names, `gate.validator` dot paths, and `@tag` selectors.
+  test: TODO
+
+SPEC-MN-CK-052: skip-accepts-selectors
+  `--skip` accepts the same selector syntax as `--only`.
+  test: TODO
+
+SPEC-MN-CK-053: skip-applied-after-only
+  `--skip` removes from whatever set `--only` selected.
+  test: TODO
+
+SPEC-MN-CK-054: diff-flag-adds-git-changed-files
+  `--diff <refspec>` adds changed files to the input pool.
+  test: TODO
+
+SPEC-MN-CK-055: files-flag-reads-paths
+  `--files <path | ->` reads newline-separated file paths.
+  test: TODO
+
+SPEC-MN-CK-056: no-positional-args-runs-project-level
+  With no files, validators that don't need input run; those that do skip.
+  test: TODO
+
+### Removed flags
+
+SPEC-MN-CK-060: gate-flag-removed
+  `--gate` is removed. Use `--only <gate-name>`.
+  test: TODO
+
+SPEC-MN-CK-061: artifact-flag-removed
+  `--artifact` is removed. Use positional args.
+  test: TODO
+
+SPEC-MN-CK-062: context-flag-removed
+  `--context` is removed. Input is declared in baton.toml.
+  test: TODO
+
+SPEC-MN-CK-063: all-flag-removed
+  `--all` is removed. Replacement TBD.
+  test: TODO
+
+SPEC-MN-CK-064: tags-flag-removed
+  `--tags` is removed. Use `--only @tag` / `--skip @tag`.
+  test: TODO
 
 ### Suppression flags
 
-SPEC-MN-CK-050: suppress-warnings-adds-warn-to-suppressed
+SPEC-MN-CK-070: suppress-warnings-adds-warn-to-suppressed
   `--suppress-warnings` adds `Status::Warn` to `RunOptions.suppressed_statuses`.
   test: cli::suppress_warnings_flag
 
-SPEC-MN-CK-051: suppress-errors-adds-error-to-suppressed
+SPEC-MN-CK-071: suppress-errors-adds-error-to-suppressed
   `--suppress-errors` adds `Status::Error` to `RunOptions.suppressed_statuses`.
   test: UNTESTED
 
-SPEC-MN-CK-052: suppress-all-adds-warn-error-fail
+SPEC-MN-CK-072: suppress-all-adds-warn-error-fail
   `--suppress-all` adds `Status::Warn`, `Status::Error`, and `Status::Fail` to `RunOptions.suppressed_statuses`.
   test: UNTESTED
 
 ### Gate execution and verdict
 
-SPEC-MN-CK-060: run-gate-error-exits-2
+SPEC-MN-CK-080: run-gate-error-exits-2
   If `run_gate()` returns `Err`, prints "Error: {e}" and returns exit code 2.
   test: IMPLICIT via cli tests with broken validators
 
-SPEC-MN-CK-061: verdict-stored-in-history
-  When `options.log` is true, the verdict is stored via `history::init_db` + `history::store_verdict`. History directory is created if needed.
+SPEC-MN-CK-081: verdict-stored-in-history
+  When `options.log` is true, the verdict is stored via `history::init_db` + `history::store_invocation`. History directory is created if needed.
   test: cli::history_without_gate_filter (verifies stored verdict is queryable)
 
-SPEC-MN-CK-062: no-log-skips-history
+SPEC-MN-CK-082: no-log-skips-history
   When `--no-log` is set, `options.log` is false and history storage is skipped entirely.
   test: IMPLICIT via cli tests using `--no-log`
 
-SPEC-MN-CK-063: history-errors-are-warnings
+SPEC-MN-CK-083: history-errors-are-warnings
   If history database initialization or verdict storage fails, the error is printed as a "Warning:" to stderr. The command does NOT fail — the verdict is still output normally.
   test: UNTESTED
 
 ### Output formatting
 
-SPEC-MN-CK-070: format-json-to-stdout
+SPEC-MN-CK-090: format-json-to-stdout
   `--format json` (the default) prints `verdict.to_json()` to stdout.
   test: IMPLICIT via most cli check tests (they parse JSON from stdout)
 
-SPEC-MN-CK-071: format-human-to-stderr
+SPEC-MN-CK-091: format-human-to-stderr
   `--format human` prints `verdict.to_human()` to stderr.
   test: cli::human_format_output
 
-SPEC-MN-CK-072: format-summary-to-stderr
+SPEC-MN-CK-092: format-summary-to-stderr
   `--format summary` prints `verdict.to_summary()` to stderr.
   test: cli::summary_format_output
 
-SPEC-MN-CK-073: unknown-format-falls-back-to-json
+SPEC-MN-CK-093: unknown-format-falls-back-to-json
   An unrecognized `--format` value prints "Unknown format: {other}. Using json." to stderr and outputs JSON to stdout.
   test: UNTESTED
 
 ### Exit code from verdict
 
-SPEC-MN-CK-080: exit-code-from-verdict-status
+SPEC-MN-CK-100: exit-code-from-verdict-status
   The exit code is `verdict.status.exit_code()`: 0 for pass, 1 for fail, 2 for error.
   test: cli::pass_exits_zero
   test: cli::fail_exits_one
 
 ### Stdin cleanup
 
-SPEC-MN-CK-090: stdin-temp-file-removed
+SPEC-MN-CK-110: stdin-temp-file-removed
   When the artifact was read from stdin, the temp file is removed after the verdict is output. Removal failure is silently ignored.
   test: UNTESTED (cleanup is best-effort)
 
@@ -296,7 +295,7 @@ SPEC-MN-LS-011: shows-gate-name-and-description
   test: UNTESTED
 
 SPEC-MN-LS-012: shows-validator-details
-  Each validator is printed with its name, type, blocking status, run_if expression (if any), and tags (if any).
+  `cmd_list` now shows top-level validators from the `[validators]` section. The `--gate` flag shows which validators a gate references and with what `blocking`/`run_if` settings.
   test: cli::list_shows_validators
 
 ### Config error
@@ -319,24 +318,32 @@ SPEC-MN-HY-002: db-init-error-exits-2
   If `history::init_db` fails, returns exit code 2.
   test: UNTESTED
 
-SPEC-MN-HY-003: artifact-hash-uses-query-by-artifact
-  When `--artifact-hash` is provided, `history::query_by_artifact` is called instead of `query_recent`. The `--limit`, `--gate`, and `--status` flags are ignored in this path.
-  test: UNTESTED
+SPEC-MN-HY-003: file-flag-uses-query-by-file
+  When `--file` is provided, `history::query_by_file` is called to search validator runs by file path.
+  test: TODO
 
-SPEC-MN-HY-004: default-uses-query-recent
-  Without `--artifact-hash`, calls `history::query_recent` with the limit, gate, and status filters.
+SPEC-MN-HY-004: hash-flag-uses-query-by-hash
+  When `--hash` is provided, `history::query_by_hash` is called to search validator runs by content hash.
+  test: TODO
+
+SPEC-MN-HY-005: invocation-flag-uses-query-invocation
+  When `--invocation <id>` is provided, `history::query_invocation` is called for detail on a specific invocation.
+  test: TODO
+
+SPEC-MN-HY-006: default-uses-query-recent
+  Without `--file`, `--hash`, or `--invocation`, calls `history::query_recent` with the limit, gate, and status filters.
   test: cli::history_without_gate_filter
   test: cli::history_respects_limit
 
-SPEC-MN-HY-005: empty-results-prints-message
+SPEC-MN-HY-007: empty-results-prints-message
   When no verdicts are found, prints "No verdicts found." to stdout and returns exit code 0.
   test: UNTESTED
 
-SPEC-MN-HY-006: result-format
-  Each result is printed as a single line to stdout: `{timestamp} {gate} {status} {duration_ms}ms{failed_info}` where failed_info is `(failed at: {name})` if present.
+SPEC-MN-HY-008: result-format
+  Output format reflects the new schema fields (invocation-based, not verdict-based).
   test: cli::history_without_gate_filter
 
-SPEC-MN-HY-007: default-limit-is-20
+SPEC-MN-HY-009: default-limit-is-20
   The `--limit` flag defaults to 20 when omitted.
   test: IMPLICIT via clap default_value
 
@@ -513,7 +520,7 @@ SPEC-MN-VR-001: prints-version-from-cargo
   test: cli::version_flag_outputs_version
 
 SPEC-MN-VR-002: prints-spec-version
-  Second line is "spec version: 0.4" (hardcoded).
+  Second line is "spec version: 0.5" (hardcoded).
   test: UNTESTED
 
 SPEC-MN-VR-003: config-found

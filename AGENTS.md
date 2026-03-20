@@ -4,7 +4,7 @@ Instructions for AI coding agents working in this repository.
 
 ## What is Baton?
 
-A composable validation gate for AI agent outputs. Accepts an artifact (file to validate) + context (reference docs), runs validators (script/LLM/human), produces a structured verdict (pass/fail/error), and persists results in SQLite.
+A composable validation gate for AI agent outputs. Accepts input files (from positional args, `--diff`, `--files`, or source declarations), runs validators (script/LLM/human) against them via a dispatch planner, produces structured results (pass/fail/error per gate), and persists invocation history in SQLite.
 
 ## Commands
 
@@ -29,7 +29,7 @@ This ordering keeps the spec, tests, and code in sync. The spec drives everythin
 
 ## Architecture
 
-**Data flow:** CLI → config discovery/parse/validate → load artifact & context → `run_gate()` → store verdict in SQLite → output (JSON/human/summary)
+**Data flow:** CLI → config discovery/parse/validate → collect input files → dispatch planner → gate execution → store invocation in SQLite → output (JSON/human/summary)
 
 **Module dependency layers** (top → bottom, never import upward):
 
@@ -49,8 +49,9 @@ See `docs/ARCHITECTURE.md` for the full dependency table and design rationale (t
 ## Key Conventions
 
 - `BTreeMap` over `HashMap` for any data affecting output or hashing
-- Lazy content loading: `Artifact`/`Context` read files only when accessed
+- Lazy content loading: `InputFile` reads files only when accessed via `OnceCell`
 - Two-stage config: `parse_config()` (TOML deser) then `validate_config()` (semantic checks) — never merge these
+- Validators are defined top-level in `[validators]`; gates reference them with optional `blocking`/`run_if` overrides
 - Error messages must include the offending value and enough context to act on
 - All tests in `#[cfg(test)] mod tests` at bottom of each module, using `tempfile` for filesystem tests
 

@@ -216,3 +216,21 @@ SPEC-PR-RP-006: inline-prompt-defaults-to-verdict
 SPEC-PR-RP-007: inline-prompt-name-is-inline
   Inline prompts always have name "inline" regardless of content. This distinguishes them from file-backed templates in logging and error messages.
   test: prompt::tests::resolve_prompt_inline_name_is_inline
+
+---
+
+## Template validation
+
+Validates that placeholder usage in templates is consistent with the validator's declared input mode and named input slots.
+
+SPEC-PR-TV-001: named-input-placeholder-requires-declaration
+  A template referencing `{input.<name>}` must be used by a validator that declares `input.<name>`. If the placeholder references a name not present in the validator's input declarations, it is a config validation error.
+  test: TODO
+
+SPEC-PR-TV-002: file-placeholder-requires-per-file-mode
+  `{file}` and `{file.*}` placeholders require the validator to be in per-file input mode. Using `{file}` in a batch-mode or named-input validator is a config validation error.
+  test: TODO
+
+SPEC-PR-TV-003: batch-placeholder-requires-batch-mode
+  `{input}` (bare, without a named sub-key) requires the validator to be in batch input mode. Using `{input}` in a per-file-mode validator is a config validation error.
+  test: TODO

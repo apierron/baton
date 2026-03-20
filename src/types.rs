@@ -218,6 +218,80 @@ impl Context {
     }
 }
 
+// ─── InputFile ────────────────────────────────────────────
+
+/// A file to be validated, with lazy content loading and cached SHA-256 hashing.
+///
+/// Uses the same lazy-loading pattern as the original Artifact type: content and
+/// hash are computed on first access via `&mut self` methods and cached in Options.
+#[derive(Debug, Clone)]
+pub struct InputFile {
+    pub path: PathBuf,
+    content: Option<String>,
+    hash: Option<String>,
+}
+
+impl InputFile {
+    /// Creates an InputFile from a path. Does not read the file.
+    pub fn new(path: PathBuf) -> Self {
+        InputFile {
+            path,
+            content: None,
+            hash: None,
+        }
+    }
+
+    /// Returns file content, lazily reading from disk on first access.
+    pub fn get_content(&mut self) -> Result<&str> {
+        if self.content.is_none() {
+            self.content = Some(std::fs::read_to_string(&self.path)?);
+        }
+        Ok(self.content.as_ref().unwrap())
+    }
+
+    /// Returns SHA-256 hash of file content, computing and caching on first access.
+    pub fn get_hash(&mut self) -> Result<&str> {
+        if self.hash.is_none() {
+            let content = self.get_content()?;
+            let mut hasher = Sha256::new();
+            hasher.update(content.as_bytes());
+            self.hash = Some(hex::encode(hasher.finalize()));
+        }
+        Ok(self.hash.as_ref().unwrap())
+    }
+}
+
+// ─── Invocation ──────────────────────────────────────────
+
+/// A planned execution of a validator against a specific set of input files.
+#[derive(Debug, Clone)]
+pub struct Invocation {
+    pub validator_name: String,
+    pub group_key: Option<String>,
+    pub inputs: BTreeMap<String, Vec<InputFile>>,
+}
+
+// ─── GateResult ──────────────────────────────────────────
+
+/// Result of running all validators in a single gate.
+#[derive(Debug, Clone)]
+pub struct GateResult {
+    pub gate_name: String,
+    pub status: Status,
+    pub validator_results: Vec<ValidatorResult>,
+    pub duration: std::time::Duration,
+}
+
+// ─── InvocationResult ────────────────────────────────────
+
+/// Top-level result of a single baton invocation (running one or more gates).
+#[derive(Debug, Clone)]
+pub struct InvocationResult {
+    pub id: String,
+    pub gate_results: Vec<GateResult>,
+    pub duration: std::time::Duration,
+}
+
 // ─── Cost ────────────────────────────────────────────────
 
 /// Token usage and cost metadata from an LLM validator call.
@@ -428,122 +502,167 @@ mod tests {
     // (all tests in this module exercise public types and methods)
     // ═══════════════════════════════════════════════════════════════
 
-    // ─── Artifact tests ──────────────────────────────
+    // ─── InputFile ──────────────────────────────────
 
     #[test]
-    fn artifact_from_file_not_found() {
-        let result = Artifact::from_file("/nonexistent/file.txt");
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("not found"), "Error: {err}");
+    fn input_file_fields() {
+        // SPEC-TY-IF-001: InputFile has path, content (Option), hash (Option)
+        let path = PathBuf::from("/tmp/test.txt");
+        let input = InputFile::new(path.clone());
+        assert_eq!(input.path, path);
+        // Content and hash are not loaded yet
+        assert!(input.content.is_none());
+        assert!(input.hash.is_none());
     }
 
     #[test]
-    fn artifact_from_file_is_directory() {
-        let dir = tempfile::tempdir().unwrap();
-        let result = Artifact::from_file(dir.path());
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("directory"), "Error: {err}");
-    }
-
-    #[test]
-    fn artifact_from_file_success() {
+    fn input_file_lazy_content_loading() {
+        // SPEC-TY-IF-002: Content loaded on first access, not at construction
         let mut f = NamedTempFile::new().unwrap();
         write!(f, "hello world").unwrap();
-        let mut art = Artifact::from_file(f.path()).unwrap();
-        assert!(art.path.is_some());
-        let content = art.get_content().unwrap();
-        assert_eq!(content, b"hello world");
+
+        let mut input = InputFile::new(f.path().to_path_buf());
+        // Not loaded yet
+        assert!(input.content.is_none());
+        // First access loads it
+        let content = input.get_content().unwrap();
+        assert_eq!(content, "hello world");
+        // Second access returns cached value
+        let content2 = input.get_content().unwrap();
+        assert_eq!(content2, "hello world");
     }
 
     #[test]
-    fn artifact_from_string() {
-        let mut art = Artifact::from_string("test content");
-        let content = art.get_content().unwrap();
-        assert_eq!(content, b"test content");
+    fn input_file_lazy_hash_computation() {
+        // SPEC-TY-IF-003: Hash computed on first access, cached, SHA-256 hex
+        let mut f = NamedTempFile::new().unwrap();
+        write!(f, "deterministic content").unwrap();
+
+        let mut input = InputFile::new(f.path().to_path_buf());
+        assert!(input.hash.is_none());
+
+        let hash = input.get_hash().unwrap().to_string();
+        // SHA-256 produces 64 hex chars
+        assert_eq!(hash.len(), 64);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+
+        // Second call returns same cached value
+        let hash2 = input.get_hash().unwrap();
+        assert_eq!(hash, hash2);
     }
 
     #[test]
-    fn artifact_hash_deterministic() {
-        let mut a1 = Artifact::from_string("hello");
-        let mut a2 = Artifact::from_string("hello");
-        assert_eq!(a1.get_hash().unwrap(), a2.get_hash().unwrap());
+    fn input_file_hash_is_deterministic() {
+        // Same content should produce the same hash
+        let mut f1 = NamedTempFile::new().unwrap();
+        let mut f2 = NamedTempFile::new().unwrap();
+        write!(f1, "same content").unwrap();
+        write!(f2, "same content").unwrap();
+
+        let mut i1 = InputFile::new(f1.path().to_path_buf());
+        let mut i2 = InputFile::new(f2.path().to_path_buf());
+        assert_eq!(i1.get_hash().unwrap(), i2.get_hash().unwrap());
     }
 
     #[test]
-    fn artifact_hash_differs_for_different_content() {
-        let mut a1 = Artifact::from_string("hello");
-        let mut a2 = Artifact::from_string("world");
-        assert_ne!(a1.get_hash().unwrap(), a2.get_hash().unwrap());
+    fn input_file_different_content_different_hash() {
+        let mut f1 = NamedTempFile::new().unwrap();
+        let mut f2 = NamedTempFile::new().unwrap();
+        write!(f1, "content A").unwrap();
+        write!(f2, "content B").unwrap();
+
+        let mut i1 = InputFile::new(f1.path().to_path_buf());
+        let mut i2 = InputFile::new(f2.path().to_path_buf());
+        assert_ne!(i1.get_hash().unwrap(), i2.get_hash().unwrap());
     }
 
     #[test]
-    fn artifact_empty_file_is_valid() {
-        let f = NamedTempFile::new().unwrap();
-        let mut art = Artifact::from_file(f.path()).unwrap();
-        let content = art.get_content().unwrap();
-        assert!(content.is_empty());
+    fn input_file_nonexistent_returns_error() {
+        let mut input = InputFile::new(PathBuf::from("/nonexistent/file.txt"));
+        assert!(input.get_content().is_err());
+        assert!(input.get_hash().is_err());
     }
 
-    // ─── Context tests ───────────────────────────────
+    // ─── Invocation ─────────────────────────────────
 
     #[test]
-    fn context_item_from_file_not_found() {
-        let result = ContextItem::from_file("spec".into(), "/nonexistent.md");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn context_item_from_file_is_directory() {
-        let dir = tempfile::tempdir().unwrap();
-        let result = ContextItem::from_file("spec".into(), dir.path());
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("directory"), "Error: {err}");
+    fn invocation_fields() {
+        // SPEC-TY-IN-001: Invocation has validator_name, group_key, inputs
+        let inv = Invocation {
+            validator_name: "lint".into(),
+            group_key: Some("src/main.rs".into()),
+            inputs: BTreeMap::new(),
+        };
+        assert_eq!(inv.validator_name, "lint");
+        assert_eq!(inv.group_key, Some("src/main.rs".into()));
+        assert!(inv.inputs.is_empty());
     }
 
     #[test]
-    fn context_item_from_string() {
-        let mut item = ContextItem::from_string("spec".into(), "requirement: xyz".into());
-        assert_eq!(item.get_content().unwrap(), "requirement: xyz");
+    fn invocation_with_input_files() {
+        // Invocation can hold multiple named input slots with multiple files each
+        let mut inputs = BTreeMap::new();
+        inputs.insert(
+            "code".into(),
+            vec![InputFile::new(PathBuf::from("/tmp/a.py"))],
+        );
+        inputs.insert(
+            "spec".into(),
+            vec![InputFile::new(PathBuf::from("/tmp/spec.md"))],
+        );
+
+        let inv = Invocation {
+            validator_name: "check".into(),
+            group_key: None,
+            inputs,
+        };
+        assert_eq!(inv.inputs.len(), 2);
+        assert_eq!(inv.inputs["code"].len(), 1);
+        assert_eq!(inv.inputs["spec"].len(), 1);
     }
 
+    // ─── GateResult ─────────────────────────────────
+
     #[test]
-    fn context_hash_empty() {
-        let mut ctx = Context::new();
-        let hash = ctx.get_hash().unwrap();
-        // SHA-256 of empty string
-        let mut hasher = Sha256::new();
-        hasher.update(b"");
-        let expected = hex::encode(hasher.finalize());
-        // When no items, joined hashes is "" and sha256("") is computed
-        assert_eq!(hash, expected);
+    fn gate_result_fields() {
+        // SPEC-TY-GR-001: GateResult has gate_name, status, validator_results, duration
+        let gr = GateResult {
+            gate_name: "code-review".into(),
+            status: Status::Pass,
+            validator_results: vec![ValidatorResult {
+                name: "lint".into(),
+                status: Status::Pass,
+                feedback: None,
+                duration_ms: 50,
+                cost: None,
+            }],
+            duration: std::time::Duration::from_millis(100),
+        };
+        assert_eq!(gr.gate_name, "code-review");
+        assert_eq!(gr.status, Status::Pass);
+        assert_eq!(gr.validator_results.len(), 1);
+        assert_eq!(gr.duration.as_millis(), 100);
     }
 
-    #[test]
-    fn context_hash_deterministic() {
-        let mut ctx1 = Context::new();
-        ctx1.add_string("a".into(), "alpha".into());
-        ctx1.add_string("b".into(), "beta".into());
-
-        let mut ctx2 = Context::new();
-        // Insert in different order — BTreeMap sorts by key
-        ctx2.add_string("b".into(), "beta".into());
-        ctx2.add_string("a".into(), "alpha".into());
-
-        assert_eq!(ctx1.get_hash().unwrap(), ctx2.get_hash().unwrap());
-    }
+    // ─── InvocationResult ───────────────────────────
 
     #[test]
-    fn context_hash_differs_with_different_content() {
-        let mut ctx1 = Context::new();
-        ctx1.add_string("a".into(), "alpha".into());
-
-        let mut ctx2 = Context::new();
-        ctx2.add_string("a".into(), "bravo".into());
-
-        assert_ne!(ctx1.get_hash().unwrap(), ctx2.get_hash().unwrap());
+    fn invocation_result_fields() {
+        // SPEC-TY-IR-001: InvocationResult has id, gate_results, duration
+        let ir = InvocationResult {
+            id: "test-id-123".into(),
+            gate_results: vec![GateResult {
+                gate_name: "review".into(),
+                status: Status::Fail,
+                validator_results: vec![],
+                duration: std::time::Duration::from_millis(200),
+            }],
+            duration: std::time::Duration::from_millis(300),
+        };
+        assert_eq!(ir.id, "test-id-123");
+        assert_eq!(ir.gate_results.len(), 1);
+        assert_eq!(ir.gate_results[0].status, Status::Fail);
+        assert_eq!(ir.duration.as_millis(), 300);
     }
 
     // ─── Verdict tests ───────────────────────────────
@@ -662,138 +781,6 @@ mod tests {
             history: vec![],
         };
         assert_eq!(v.to_summary(), "FAIL at lint: bad code");
-    }
-
-    // ─── Artifact: from_bytes ───────────────────────
-
-    #[test]
-    fn artifact_from_bytes() {
-        let mut art = Artifact::from_bytes(vec![0xDE, 0xAD, 0xBE, 0xEF]);
-        let content = art.get_content().unwrap();
-        assert_eq!(content, &[0xDE, 0xAD, 0xBE, 0xEF]);
-        assert!(art.path.is_none());
-    }
-
-    // ─── Artifact: lossy UTF-8 ──────────────────────
-
-    #[test]
-    fn artifact_get_content_as_string_lossy() {
-        // 0xFF is not valid UTF-8 — should be replaced with U+FFFD
-        let mut art = Artifact::from_bytes(vec![b'h', b'i', 0xFF, b'!']);
-        let s = art.get_content_as_string().unwrap();
-        assert!(s.starts_with("hi"));
-        assert!(s.ends_with('!'));
-        assert!(s.contains('\u{FFFD}'));
-    }
-
-    // ─── Artifact: hash caching ─────────────────────
-
-    #[test]
-    fn artifact_hash_cached_on_second_call() {
-        let mut f = NamedTempFile::new().unwrap();
-        write!(f, "original").unwrap();
-        let mut art = Artifact::from_file(f.path()).unwrap();
-        let h1 = art.get_hash().unwrap();
-        // Overwrite file after first hash — cached hash should be unchanged
-        std::fs::write(f.path(), "modified").unwrap();
-        let h2 = art.get_hash().unwrap();
-        assert_eq!(h1, h2);
-    }
-
-    // ─── Artifact: hash format ──────────────────────
-
-    #[test]
-    fn artifact_hash_is_64_hex_chars() {
-        let mut art = Artifact::from_string("anything");
-        let hash = art.get_hash().unwrap();
-        assert_eq!(hash.len(), 64);
-        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
-    }
-
-    // ─── Artifact: absolute_path / parent_dir ───────
-
-    #[test]
-    fn artifact_absolute_path_from_file() {
-        let f = NamedTempFile::new().unwrap();
-        let art = Artifact::from_file(f.path()).unwrap();
-        let abs = art.absolute_path().unwrap();
-        assert!(std::path::Path::new(&abs).is_absolute());
-        assert!(abs.ends_with(f.path().file_name().unwrap().to_str().unwrap()));
-    }
-
-    #[test]
-    fn artifact_parent_dir_from_file() {
-        let f = NamedTempFile::new().unwrap();
-        let art = Artifact::from_file(f.path()).unwrap();
-        let dir = art.parent_dir().unwrap();
-        assert!(std::path::Path::new(&dir).is_dir());
-    }
-
-    #[test]
-    fn artifact_absolute_path_from_string_is_none() {
-        let art = Artifact::from_string("inline");
-        assert!(art.absolute_path().is_none());
-        assert!(art.parent_dir().is_none());
-    }
-
-    // ─── Context: add_file success ──────────────────
-
-    #[test]
-    fn context_add_file_success() {
-        let mut f = NamedTempFile::new().unwrap();
-        write!(f, "spec content").unwrap();
-        let mut ctx = Context::new();
-        ctx.add_file("spec".into(), f.path()).unwrap();
-        assert!(ctx.items.contains_key("spec"));
-        let item = ctx.items.get_mut("spec").unwrap();
-        assert_eq!(item.get_content().unwrap(), "spec content");
-    }
-
-    // ─── Context: key name affects hash ─────────────
-
-    #[test]
-    fn context_hash_differs_with_different_key_names() {
-        let mut ctx1 = Context::new();
-        ctx1.add_string("alpha".into(), "same content".into());
-
-        let mut ctx2 = Context::new();
-        ctx2.add_string("bravo".into(), "same content".into());
-
-        // Same content under different names → different hash
-        // because items are hashed individually and the per-item hash
-        // depends on content, but the *position* in the joined string
-        // is determined by sorted key order, and "alpha" vs "bravo"
-        // happen to produce the same individual hash here.
-        // Actually the individual hash of "same content" is the same
-        // regardless of key name, so the *joined* hash is also the
-        // same (one item → one hash → same join). But with TWO items
-        // it would differ. Let's test the two-item case.
-        let mut ctx3 = Context::new();
-        ctx3.add_string("a".into(), "one".into());
-        ctx3.add_string("b".into(), "two".into());
-
-        let mut ctx4 = Context::new();
-        ctx4.add_string("a".into(), "two".into());
-        ctx4.add_string("b".into(), "one".into());
-
-        // Same values swapped between keys → different hash
-        assert_ne!(ctx3.get_hash().unwrap(), ctx4.get_hash().unwrap());
-    }
-
-    // ─── Context: item absolute_path ────────────────
-
-    #[test]
-    fn context_item_absolute_path() {
-        let f = NamedTempFile::new().unwrap();
-        let item = ContextItem::from_file("spec".into(), f.path()).unwrap();
-        let abs = item.absolute_path().unwrap();
-        assert!(std::path::Path::new(&abs).is_absolute());
-    }
-
-    #[test]
-    fn context_item_from_string_has_no_path() {
-        let item = ContextItem::from_string("spec".into(), "content".into());
-        assert!(item.absolute_path().is_none());
     }
 
     // ─── Status: FromStr rejects non-lowercase ──────
@@ -1089,59 +1076,6 @@ mod tests {
     fn run_options_default_disables_logging() {
         let opts = RunOptions::default();
         assert!(!opts.log);
-    }
-
-    // ─── Spec coverage (UNTESTED) ──────────────────────
-
-    #[test]
-    fn artifact_from_file_stores_absolute_path() {
-        // SPEC-TY-AF-075: Relative path → absolute storage
-        let f = NamedTempFile::new().unwrap();
-        let art = Artifact::from_file(f.path()).unwrap();
-        assert!(art.path.as_ref().unwrap().is_absolute());
-    }
-
-    #[test]
-    fn context_item_from_file_stores_absolute_path() {
-        // SPEC-TY-CI-179: ContextItem::from_file stores absolute path
-        let f = NamedTempFile::new().unwrap();
-        let item = ContextItem::from_file("spec".into(), f.path()).unwrap();
-        assert!(item.path.as_ref().unwrap().is_absolute());
-    }
-
-    #[test]
-    fn context_item_get_hash_recomputes_same_value() {
-        // SPEC-TY-CI-207: ContextItem hash not cached — calling get_hash twice
-        // recomputes and returns the same value
-        let mut item = ContextItem::from_string("spec".into(), "deterministic content".into());
-        let h1 = item.get_hash().unwrap();
-        let h2 = item.get_hash().unwrap();
-        assert_eq!(h1, h2);
-    }
-
-    #[test]
-    fn context_add_duplicate_replaces_silently() {
-        // SPEC-TY-CX-239: Adding two items with the same name replaces silently
-        let mut ctx = Context::new();
-        ctx.add_string("dup".into(), "first".into());
-        ctx.add_string("dup".into(), "second".into());
-        assert_eq!(ctx.items.len(), 1);
-        let content = ctx.items.get_mut("dup").unwrap().get_content().unwrap();
-        assert_eq!(content, "second");
-    }
-
-    #[test]
-    fn context_single_item_hash_ignores_key_name() {
-        // SPEC-TY-CX-263: Single-item context hash — two contexts with different
-        // key names but same content produce the same hash (because the hash is
-        // computed from content hashes only, not key names)
-        let mut ctx1 = Context::new();
-        ctx1.add_string("alpha".into(), "same content".into());
-
-        let mut ctx2 = Context::new();
-        ctx2.add_string("bravo".into(), "same content".into());
-
-        assert_eq!(ctx1.get_hash().unwrap(), ctx2.get_hash().unwrap());
     }
 
     #[test]

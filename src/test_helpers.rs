@@ -111,6 +111,7 @@ impl ValidatorBuilder {
                 runtime: None,
                 sandbox: None,
                 max_iterations: None,
+                input: InputDecl::None,
             },
         }
     }
@@ -254,6 +255,7 @@ pub fn config_for_gate(g: GateConfig) -> BatonConfig {
         },
         providers: BTreeMap::new(),
         runtimes: BTreeMap::new(),
+        sources: BTreeMap::new(),
         gates,
         config_dir: "/tmp".into(),
     }
@@ -294,6 +296,7 @@ pub fn config_with_provider(api_base: &str) -> BatonConfig {
         },
         providers,
         runtimes: BTreeMap::new(),
+        sources: BTreeMap::new(),
         gates,
         config_dir: "/tmp".into(),
     }

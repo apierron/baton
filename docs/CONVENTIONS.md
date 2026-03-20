@@ -36,17 +36,17 @@ Serde default functions (`fn default_timeout() -> u64 { 300 }`) live immediately
 
 - Tests for `config.rs` live in `config.rs`, not in a separate `tests/` directory.
 - Integration tests (testing the compiled binary) use `assert_cmd` and live in `tests/`.
-- Shared test helpers live in `src/test_helpers.rs` (`#[cfg(test)]` gated, `pub mod` in `lib.rs`). This module provides `ValidatorBuilder`, result/gate/config factories, and `MockRuntimeAdapter`. Import as `use crate::test_helpers as th;`. If a helper is only needed by one module, keep it local to that module's `mod tests`.
+- Shared test helpers live in `src/test_helpers.rs` (`#[cfg(test)]` gated, `pub mod` in `lib.rs`). This module provides `ValidatorBuilder`, result/gate/config factories, `MockRuntimeAdapter`, and factories for `InputFile` and `Invocation`. Import as `use crate::test_helpers as th;`. If a helper is only needed by one module, keep it local to that module's `mod tests`.
 
 ## Placeholder Resolution Is Lazy
 
-Files referenced by placeholders (`{artifact_content}`, `{context.spec.content}`) are read only when the placeholder is actually used. Never eagerly load content "in case" a validator needs it.
+Files referenced by placeholders (`{file.content}`, `{input.spec.content}`) are read only when the placeholder is actually used via `InputFile`'s lazy loading. Never eagerly load content "in case" a validator needs it.
 
 ## CLI Argument Parsing
 
 - Use clap derive macros, not the builder API.
 - Subcommands are variants of a single `Commands` enum.
-- Repeated key-value args (like `--context name=path`) use a custom `value_parser` function.
+- Positional args are input files/directories; `--only`/`--skip` accept gate names, `gate.validator` dot paths, and `@tag` selectors.
 
 ## Version: Single Source of Truth
 

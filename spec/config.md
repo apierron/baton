@@ -125,32 +125,24 @@ Each gate must have at least one validator. Validators are validated in declarat
 
 The validator name regex check and duplicate check happen before type-specific field validation. This means a validator with an invalid name is rejected before the parser checks whether it has a command or prompt field.
 
-SPEC-CF-PC-030: gate-must-have-validators
-  A gate with an empty validators array returns ConfigError with the gate name and "no validators".
-  test: config::tests::parse_gate_no_validators
-
-SPEC-CF-PC-031: validator-name-must-match-pattern
-  Validator names must match `[A-Za-z0-9_-]+` (ASCII alphanumeric, underscore, hyphen). An empty name or a name containing spaces, punctuation, or other characters returns ConfigError containing "invalid characters".
-  test: config::tests::invalid_validator_name
-
-SPEC-CF-PC-032: validator-names-unique-within-gate
-  Validator names must be unique within a single gate. A duplicate name returns ConfigError containing "duplicate" and both the gate name and validator name. Duplicate detection uses a HashSet with case-sensitive comparison; the first occurrence wins and the second triggers the error.
-  test: config::tests::duplicate_validator_name
+SPEC-CF-PC-030: gate-validators-array-must-have-refs
+  A gate's `validators` array must contain at least one `ref` entry. An empty array returns ConfigError with the gate name.
+  test: config::tests::gate_empty_validators_rejected
 
 SPEC-CF-PC-033: validator-type-must-be-known
   The `type` field must be "script", "llm", or "human". Any other value returns ConfigError containing "unknown type" and the rejected value.
   test: config::tests::unknown_validator_type
 
 SPEC-CF-PC-034: script-requires-command
-  A validator with type "script" must have a `command` field. If missing, returns ConfigError containing "command".
+  A `[validators.X]` entry with type "script" must have a `command` field. If missing, returns ConfigError containing "command".
   test: config::tests::script_missing_command
 
 SPEC-CF-PC-035: llm-requires-prompt
-  A validator with type "llm" must have a `prompt` field. If missing, returns ConfigError containing "prompt".
+  A `[validators.X]` entry with type "llm" must have a `prompt` field. If missing, returns ConfigError containing "prompt".
   test: config::tests::llm_missing_prompt
 
 SPEC-CF-PC-036: human-requires-prompt
-  A validator with type "human" must have a `prompt` field. If missing, returns ConfigError containing "prompt".
+  A `[validators.X]` entry with type "human" must have a `prompt` field. If missing, returns ConfigError containing "prompt".
   test: config::tests::human_missing_prompt
 
 SPEC-CF-PC-037: mode-defaults-to-completion
@@ -165,13 +157,13 @@ SPEC-CF-PC-039: warn-exit-codes-rejects-zero
   The `warn_exit_codes` array must not contain 0. Exit code 0 is unconditionally "pass" and cannot be reclassified as a warning. If 0 is present, returns ConfigError with "warn_exit_codes must not contain 0".
   test: config::tests::warn_exit_codes_contains_zero
 
-SPEC-CF-PC-040: validator-inherits-blocking-from-defaults
-  When `blocking` is not set on a validator (Option is None), it inherits the value from `defaults.blocking`. When explicitly set, the validator's value takes precedence via `unwrap_or`.
+SPEC-CF-PC-040: blocking-defaults-from-defaults-section
+  When `blocking` is not set on a gate validator reference, it inherits from `[defaults].blocking`. When explicitly set on the gate ref, the ref's value takes precedence.
   test: config::tests::defaults_applied
   test: config::tests::validator_overrides_defaults
 
-SPEC-CF-PC-041: validator-inherits-timeout-from-defaults
-  When `timeout_seconds` is not set on a validator (Option is None), it inherits the value from `defaults.timeout_seconds`. When explicitly set, the validator's value takes precedence.
+SPEC-CF-PC-041: timeout-inheritable-at-gate-ref
+  When `timeout_seconds` is not set on a validator, it inherits from `defaults.timeout_seconds`. Timeout can also be overridden at the gate ref level.
   test: config::tests::defaults_applied
   test: config::tests::validator_overrides_defaults
 
@@ -183,20 +175,12 @@ SPEC-CF-PC-043: temperature-defaults-to-zero
   When `temperature` is not set on a validator, it defaults to 0.0. This is a deliberate choice for reproducibility in code review tasks.
   test: IMPLICIT via config::tests::parse_full_config (asserts temperature == 0.0)
 
-SPEC-CF-PC-044: context-slots-parsed
-  Gate context slots are parsed into a BTreeMap with description and required fields. The BTreeMap ordering is deterministic (alphabetical by key).
-  test: IMPLICIT via config::tests::parse_full_config (asserts context["spec"].required)
-
 SPEC-CF-PC-045: config-dir-stored
   The config_dir path is stored on BatonConfig for later use in path resolution (e.g., resolving working_dir references at execution time).
   test: config::tests::config_dir_stored
 
-SPEC-CF-PC-046: validator-name-uniqueness-is-per-gate
-  Duplicate name detection resets for each gate (the seen_names HashSet is created inside the per-gate loop). Two different gates may each have a validator named "lint" without error.
-  test: config::tests::duplicate_name_across_gates_is_ok
-
 SPEC-CF-PC-047: parse-errors-are-early-return
-  parse_config returns on the first structural error encountered. If a config has multiple problems (e.g., wrong version AND empty gates), only the first error is reported. Check order is: TOML syntax, version, empty gates, then per-gate in BTreeMap order (empty validators, per-validator checks in declaration order).
+  parse_config returns on the first structural error encountered. If a config has multiple problems (e.g., wrong version AND empty gates), only the first error is reported. Check order is: TOML syntax, version, empty gates, then three independent section parses (sources → validators → gates).
   test: UNTESTED (no test verifies error ordering when multiple errors exist)
 
 SPEC-CF-PC-048: empty-validator-name-rejected
@@ -233,10 +217,6 @@ SPEC-CF-VC-003: run-if-syntax-validated
 SPEC-CF-VC-004: run-if-self-reference-is-forward-reference
   A validator referencing itself in run_if (e.g., validator "a" with run_if "a.status == pass") is treated as a forward reference because the validator's own index equals current_idx. The check is `ref_idx >= current_idx`, so self-references produce the "later in the pipeline" error.
   test: config::tests::self_referencing_run_if
-
-SPEC-CF-VC-005: context-refs-must-reference-defined-slots
-  Each entry in a validator's `context_refs` must correspond to a key in the gate's context map. Undefined context references produce an error naming the undefined slot and the gate.
-  test: config::tests::validate_context_refs_undefined
 
 SPEC-CF-VC-006: llm-provider-must-be-defined
   For LLM validators, if the provider is not "default" and is not present in the config's providers map, an error is produced. The special name "default" is exempt -- it is resolved at execution time, not at validation time. Script and human validators are not checked.
@@ -359,3 +339,105 @@ SPEC-CF-DC-008: follows-symlinks
 SPEC-CF-DC-009: stops-at-filesystem-root
   If no .git boundary is encountered and the filesystem root is reached without finding baton.toml, traversal stops (`dir.pop()` returns false) and an error is returned.
   test: UNTESTED (impractical to test without polluting filesystem root)
+
+---
+
+## Source parsing
+
+Sources are named file sets — the bottom layer of the `sources → validators → gates` composition model. Each entry under `[sources]` gives a name to a directory, a single file, or an explicit list of files. Validators reference these names in their input declarations. Sources are optional: validators can also use glob patterns directly against the input pool.
+
+SPEC-CF-SC-001: directory-source-requires-root
+  A `[sources.X]` entry with `root` must have a valid relative path. `include` defaults to `["**/*"]`, `exclude` defaults to `[]`.
+  test: config::tests::source_directory_with_root
+
+SPEC-CF-SC-002: file-source-requires-path
+  A `[sources.X]` entry with `path` must point to a single file. `include`/`exclude` do not apply.
+  test: config::tests::source_file_with_path
+
+SPEC-CF-SC-003: file-list-source-requires-files
+  A `[sources.X]` entry with `files` must contain a non-empty list of paths.
+  test: config::tests::source_file_list
+  test: config::tests::source_empty_files_list_rejected
+
+SPEC-CF-SC-004: source-type-mutual-exclusion
+  Only one of `root`, `path`, or `files` may be set. Setting more than one is a config error.
+  test: config::tests::source_type_mutual_exclusion
+
+SPEC-CF-SC-005: source-name-pattern
+  Source names must match `[a-zA-Z0-9_-]+`. No dots (prevents ambiguity with dot-notation placeholders).
+  test: config::tests::source_name_pattern_rejects_dots
+
+SPEC-CF-SC-006: missing-root-directory-warns
+  If `root` points to a nonexistent directory, emit a validation warning (not error).
+  test: config::tests::source_missing_root_warns
+
+---
+
+## Top-level validator parsing
+
+Validators are stateless functions. They are defined as top-level entries under `[validators]` — the middle layer of the composition model. Each validator declares what it does (type, command/prompt), what files it needs (input declarations), and nothing about orchestration. The validator name is the TOML key.
+
+A validator's input declaration determines how the dispatch planner turns the file pool into invocations. There are four forms: no input (run once), per-file (run once per matching file), batch (run once with all matches), and multi-input (run once per matched key group). These are the only ways files enter a validator.
+
+SPEC-CF-VP-001: validator-name-is-toml-key
+  Validator name comes from the TOML key under `[validators]`. Must match `[A-Za-z0-9_-]+`.
+  test: config::tests::validator_name_from_toml_key
+  test: config::tests::validator_name_rejects_invalid_chars
+
+SPEC-CF-VP-002: context-refs-removed
+  The `context_refs` field is no longer recognized. If present, emit a config error directing the user to use `input` declarations instead.
+  test: config::tests::context_refs_field_rejected
+
+SPEC-CF-VP-003: input-form-no-input
+  When `input` is absent and no `{file}` placeholders exist, the validator runs once with no files.
+  test: config::tests::input_form_no_input
+
+SPEC-CF-VP-004: input-form-per-file
+  When `input` is a string, it is a glob pattern. Validator runs once per matching file.
+  test: config::tests::input_form_per_file_glob
+
+SPEC-CF-VP-005: input-form-batch
+  When `input` is an object with `match` and `collect = true`, all matching files are passed at once.
+  test: config::tests::input_form_batch
+
+SPEC-CF-VP-006: input-form-named
+  When `input` has named sub-keys (`input.code`, `input.spec`), each is a separate input slot with `match` or `path`.
+  test: config::tests::input_form_named
+
+SPEC-CF-VP-007: fixed-input-path-must-exist
+  A named input with `path` (fixed input) must reference an existing file at validation time.
+  test: config::tests::fixed_input_path_must_exist
+
+SPEC-CF-VP-008: key-expression-must-be-valid
+  Key expressions must be one of: `{stem}`, `{name}`, `{parent}`, `{relative:prefix/}`, `{regex:pattern}`. Unknown expressions are config errors.
+  test: config::tests::key_expression_must_be_valid
+  test: config::tests::key_expression_valid_forms
+
+---
+
+## Gate reference parsing
+
+Gates are the orchestration layer — the top of the composition model. A gate lists which validators to run, in what order, with what sequencing rules. Gates don't touch files and don't define validators; they reference existing validators by name and add two orchestration concerns:
+
+- **`blocking`**: Should a failure stop the pipeline? When a blocking validator fails, subsequent validators in the gate don't run. This is the primary sequencing mechanism.
+- **`run_if`**: Should this validator run at all, given a prior validator's result? This adds value beyond blocking in two cases: (a) the dependency isn't the immediately preceding validator, or (b) the dependency is non-blocking (it produces a result but doesn't stop the pipeline, and a later validator should only run if it passed). For simple "stop on failure" sequencing, `blocking` alone is sufficient and `run_if` is unnecessary.
+
+Validators are stateless functions. Gates are the only place where execution order and conditional logic live. The same validator can appear in multiple gates with different orchestration settings — the validator itself never changes.
+
+SPEC-CF-GR-001: ref-must-name-existing-validator
+  Each `ref` in a gate's `validators` array must match a key in the `[validators]` section. Missing ref is a config error.
+  test: config::tests::gate_ref_must_name_existing_validator
+
+SPEC-CF-GR-002: blocking-defaults-from-defaults-section
+  When `blocking` is not set on a gate ref, it inherits from `[defaults].blocking`.
+  test: config::tests::gate_ref_blocking_defaults_from_defaults
+  test: config::tests::gate_ref_blocking_overrides_defaults
+
+SPEC-CF-GR-003: run-if-references-validated
+  `run_if` expressions in gate refs must reference validators that appear earlier in the same gate's validator list.
+  test: config::tests::gate_ref_run_if_validated
+  test: config::tests::gate_ref_run_if_forward_reference_rejected
+
+SPEC-CF-GR-004: validator-reuse-across-gates
+  The same validator can appear in multiple gates with different `blocking` and `run_if` settings.
+  test: config::tests::validator_reuse_across_gates

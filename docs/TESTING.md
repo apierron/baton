@@ -59,12 +59,12 @@ use std::io::Write;
 use tempfile::NamedTempFile;
 
 #[test]
-fn artifact_lazy_content_loading() {
+fn input_file_lazy_content_loading() {
     let mut f = NamedTempFile::new().unwrap();
     write!(f, "hello").unwrap();
-    let mut art = Artifact::from_file(f.path()).unwrap();
-    // content not loaded yet
-    assert_eq!(art.get_content_as_string().unwrap(), "hello");
+    let input = InputFile::new(f.path().to_path_buf());
+    // content not loaded yet — lazy via OnceCell
+    assert_eq!(input.get_content().unwrap(), "hello");
 }
 ```
 
@@ -74,11 +74,10 @@ Prefer `is_err()` + `contains()` over `#[should_panic]`:
 
 ```rust
 #[test]
-fn rejects_directory_as_artifact() {
-    let dir = tempfile::tempdir().unwrap();
-    let result = Artifact::from_file(dir.path());
+fn rejects_nonexistent_input_file() {
+    let input = InputFile::new(PathBuf::from("/nonexistent/file.txt"));
+    let result = input.get_content();
     assert!(result.is_err());
-    assert!(result.unwrap_err().to_string().contains("directory"));
 }
 ```
 

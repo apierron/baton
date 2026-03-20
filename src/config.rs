@@ -22,7 +22,102 @@ pub struct RawConfig {
     pub providers: BTreeMap<String, RawProvider>,
     #[serde(default)]
     pub runtimes: BTreeMap<String, RawRuntime>,
+    #[serde(default)]
+    pub sources: BTreeMap<String, RawSource>,
+    #[serde(default)]
+    pub validators: BTreeMap<String, RawValidatorDef>,
     pub gates: BTreeMap<String, RawGate>,
+}
+
+/// Raw source entry from `[sources.<name>]`.
+#[derive(Debug, Deserialize, Clone)]
+pub struct RawSource {
+    #[serde(default)]
+    pub root: Option<String>,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub files: Option<Vec<String>>,
+    #[serde(default)]
+    pub include: Option<Vec<String>>,
+    #[serde(default)]
+    pub exclude: Option<Vec<String>>,
+}
+
+/// Raw top-level validator definition from `[validators.<name>]`.
+#[derive(Debug, Deserialize, Clone)]
+pub struct RawValidatorDef {
+    #[serde(rename = "type")]
+    pub validator_type: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub timeout_seconds: Option<u64>,
+
+    // Script fields
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub warn_exit_codes: Vec<i32>,
+    #[serde(default)]
+    pub working_dir: Option<String>,
+    #[serde(default)]
+    pub env: BTreeMap<String, String>,
+
+    // LLM fields
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(default)]
+    pub provider: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub temperature: Option<f64>,
+    #[serde(default)]
+    pub response_format: Option<String>,
+    #[serde(default)]
+    pub max_tokens: Option<u32>,
+    #[serde(default)]
+    pub system_prompt: Option<String>,
+
+    // Session fields
+    #[serde(default)]
+    pub runtime: Option<String>,
+    #[serde(default)]
+    pub sandbox: Option<bool>,
+    #[serde(default)]
+    pub max_iterations: Option<u32>,
+
+    // Input declarations
+    #[serde(default)]
+    pub input: Option<toml::Value>,
+
+    // Deprecated — must produce error if present
+    #[serde(default)]
+    pub context_refs: Option<Vec<String>>,
+}
+
+/// Raw gate reference: `{ ref = "name", blocking = true, ... }`.
+#[derive(Debug, Deserialize, Clone)]
+pub struct RawGateRef {
+    #[serde(rename = "ref")]
+    pub validator_ref: String,
+    #[serde(default)]
+    pub blocking: Option<bool>,
+    #[serde(default)]
+    pub run_if: Option<String>,
+    #[serde(default)]
+    pub timeout_seconds: Option<u64>,
+}
+
+/// A gate entry: either a reference to a top-level validator or an inline definition.
+#[derive(Debug, Deserialize, Clone)]
+#[serde(untagged)]
+pub enum RawGateEntry {
+    Ref(RawGateRef),
+    Inline(Box<RawValidator>),
 }
 
 /// Raw default settings from `[defaults]`.
@@ -104,7 +199,7 @@ pub struct RawGate {
     pub description: Option<String>,
     #[serde(default)]
     pub context: BTreeMap<String, RawContextSlot>,
-    pub validators: Vec<RawValidator>,
+    pub validators: Vec<RawGateEntry>,
 }
 
 /// Raw context slot declaration on a gate.
@@ -179,6 +274,7 @@ pub struct BatonConfig {
     pub defaults: Defaults,
     pub providers: BTreeMap<String, Provider>,
     pub runtimes: BTreeMap<String, Runtime>,
+    pub sources: BTreeMap<String, SourceConfig>,
     pub gates: BTreeMap<String, GateConfig>,
     pub config_dir: PathBuf,
 }
@@ -252,6 +348,52 @@ pub enum ResponseFormat {
     Freeform,
 }
 
+/// Validated source configuration.
+#[derive(Debug, Clone)]
+pub struct SourceConfig {
+    pub name: String,
+    pub source_type: SourceType,
+}
+
+/// The type of a source: directory, single file, or file list.
+#[derive(Debug, Clone)]
+pub enum SourceType {
+    Directory {
+        root: String,
+        include: Vec<String>,
+        exclude: Vec<String>,
+    },
+    File {
+        path: String,
+    },
+    FileList {
+        files: Vec<String>,
+    },
+}
+
+/// Input declaration on a validator.
+#[derive(Debug, Clone, Default)]
+pub enum InputDecl {
+    /// No input — validator runs once with no files.
+    #[default]
+    None,
+    /// Per-file — validator runs once per matching file.
+    PerFile { pattern: String },
+    /// Batch — all matching files at once.
+    Batch { pattern: String },
+    /// Named inputs — multiple named slots.
+    Named(BTreeMap<String, InputSlot>),
+}
+
+/// A single named input slot in a multi-input validator.
+#[derive(Debug, Clone)]
+pub struct InputSlot {
+    pub match_pattern: Option<String>,
+    pub path: Option<String>,
+    pub key: Option<String>,
+    pub collect: bool,
+}
+
 /// Fully resolved validator configuration with defaults applied.
 #[derive(Debug, Clone)]
 pub struct ValidatorConfig {
@@ -283,6 +425,9 @@ pub struct ValidatorConfig {
     pub runtime: Option<String>,
     pub sandbox: Option<bool>,
     pub max_iterations: Option<u32>,
+
+    // Input declarations (v2)
+    pub input: InputDecl,
 }
 
 // ─── Validation result ───────────────────────────────────
@@ -367,6 +512,93 @@ pub fn parse_config(toml_str: &str, config_dir: &Path) -> Result<BatonConfig> {
         );
     }
 
+    // ── Parse sources ──────────────────────────────────
+    let mut sources = BTreeMap::new();
+    for (name, raw_s) in &raw.sources {
+        // Validate source name
+        let valid_name = !name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        if !valid_name {
+            return Err(BatonError::ConfigError(format!(
+                "Source name '{name}' is invalid. Must match [a-zA-Z0-9_-]+ (no dots)."
+            )));
+        }
+
+        // Mutual exclusion: only one of root, path, files
+        let has_root = raw_s.root.is_some();
+        let has_path = raw_s.path.is_some();
+        let has_files = raw_s.files.is_some();
+        let count = has_root as u8 + has_path as u8 + has_files as u8;
+        if count > 1 {
+            return Err(BatonError::ConfigError(format!(
+                "Source '{name}': only one of 'root', 'path', or 'files' may be set."
+            )));
+        }
+        if count == 0 {
+            return Err(BatonError::ConfigError(format!(
+                "Source '{name}': one of 'root', 'path', or 'files' must be set."
+            )));
+        }
+
+        let source_type = if let Some(ref root) = raw_s.root {
+            SourceType::Directory {
+                root: root.clone(),
+                include: raw_s.include.clone().unwrap_or_else(|| vec!["**/*".into()]),
+                exclude: raw_s.exclude.clone().unwrap_or_default(),
+            }
+        } else if let Some(ref path) = raw_s.path {
+            SourceType::File { path: path.clone() }
+        } else if let Some(ref files) = raw_s.files {
+            if files.is_empty() {
+                return Err(BatonError::ConfigError(format!(
+                    "Source '{name}': 'files' must not be empty."
+                )));
+            }
+            SourceType::FileList {
+                files: files.clone(),
+            }
+        } else {
+            unreachable!()
+        };
+
+        sources.insert(
+            name.clone(),
+            SourceConfig {
+                name: name.clone(),
+                source_type,
+            },
+        );
+    }
+
+    // ── Parse top-level validators ────────────────────
+    let mut top_validators: BTreeMap<String, ValidatorConfig> = BTreeMap::new();
+    for (name, raw_v) in &raw.validators {
+        let valid_name = !name.is_empty()
+            && name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        if !valid_name {
+            return Err(BatonError::ConfigError(format!(
+                "Validator name '{name}' contains invalid characters. Must match [A-Za-z0-9_-]+."
+            )));
+        }
+
+        // Reject context_refs
+        if let Some(ref crefs) = raw_v.context_refs {
+            if !crefs.is_empty() {
+                return Err(BatonError::ConfigError(format!(
+                    "Validator '{name}': 'context_refs' is no longer supported. Use 'input' declarations instead."
+                )));
+            }
+        }
+
+        let vc = parse_validator_def(name, raw_v, &defaults)?;
+        top_validators.insert(name.clone(), vc);
+    }
+
+    // ── Parse gates ───────────────────────────────────
     let mut gates = BTreeMap::new();
     for (gate_name, raw_gate) in &raw.gates {
         if raw_gate.validators.is_empty() {
@@ -392,120 +624,53 @@ pub fn parse_config(toml_str: &str, config_dir: &Path) -> Result<BatonConfig> {
         let mut validators = Vec::new();
         let mut seen_names: HashSet<String> = HashSet::new();
 
-        for raw_v in &raw_gate.validators {
-            // Validate name
-            let valid_name = raw_v
-                .name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-                && !raw_v.name.is_empty();
-            if !valid_name {
-                return Err(BatonError::ConfigError(format!(
-                    "Validator name '{}' contains invalid characters. Must match [A-Za-z0-9_-]+.",
-                    raw_v.name
-                )));
-            }
-            if !seen_names.insert(raw_v.name.clone()) {
-                return Err(BatonError::ConfigError(format!(
-                    "Gate '{gate_name}': duplicate validator name '{}'.",
-                    raw_v.name
-                )));
-            }
-
-            let vtype = match raw_v.validator_type.as_str() {
-                "script" => ValidatorType::Script,
-                "llm" => ValidatorType::Llm,
-                "human" => ValidatorType::Human,
-                other => {
-                    return Err(BatonError::ConfigError(format!(
-                        "Validator '{}': unknown type '{other}'. Expected 'script', 'llm', or 'human'.",
-                        raw_v.name
-                    )));
+        for entry in &raw_gate.validators {
+            match entry {
+                RawGateEntry::Ref(gate_ref) => {
+                    // Look up in top-level validators
+                    let base = top_validators.get(&gate_ref.validator_ref).ok_or_else(|| {
+                        BatonError::ConfigError(format!(
+                            "Gate '{gate_name}': ref '{}' not found in [validators].",
+                            gate_ref.validator_ref
+                        ))
+                    })?;
+                    let mut vc = base.clone();
+                    // Apply gate-level overrides
+                    if let Some(blocking) = gate_ref.blocking {
+                        vc.blocking = blocking;
+                    }
+                    if gate_ref.run_if.is_some() {
+                        vc.run_if = gate_ref.run_if.clone();
+                    }
+                    if let Some(timeout) = gate_ref.timeout_seconds {
+                        vc.timeout_seconds = timeout;
+                    }
+                    validators.push(vc);
                 }
-            };
-
-            // Validate required fields per type
-            match &vtype {
-                ValidatorType::Script => {
-                    if raw_v.command.is_none() {
+                RawGateEntry::Inline(raw_v) => {
+                    // Old inline format
+                    let valid_name = raw_v
+                        .name
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+                        && !raw_v.name.is_empty();
+                    if !valid_name {
                         return Err(BatonError::ConfigError(format!(
-                            "Validator '{}': missing required field 'command'.",
+                            "Validator name '{}' contains invalid characters. Must match [A-Za-z0-9_-]+.",
                             raw_v.name
                         )));
                     }
-                }
-                ValidatorType::Llm => {
-                    if raw_v.prompt.is_none() {
+                    if !seen_names.insert(raw_v.name.clone()) {
                         return Err(BatonError::ConfigError(format!(
-                            "Validator '{}': missing required field 'prompt'.",
+                            "Gate '{gate_name}': duplicate validator name '{}'.",
                             raw_v.name
                         )));
                     }
-                }
-                ValidatorType::Human => {
-                    if raw_v.prompt.is_none() {
-                        return Err(BatonError::ConfigError(format!(
-                            "Validator '{}': missing required field 'prompt'.",
-                            raw_v.name
-                        )));
-                    }
+
+                    let vc = parse_inline_validator(raw_v, &defaults)?;
+                    validators.push(vc);
                 }
             }
-
-            let mode = match raw_v.mode.as_deref() {
-                Some("session") => LlmMode::Session,
-                Some("completion") | None => LlmMode::Completion,
-                Some(other) => {
-                    return Err(BatonError::ConfigError(format!(
-                        "Validator '{}': invalid mode '{other}'. Expected 'completion' or 'session'.",
-                        raw_v.name
-                    )));
-                }
-            };
-
-            let response_format = match raw_v.response_format.as_deref() {
-                Some("freeform") => ResponseFormat::Freeform,
-                Some("verdict") | None => ResponseFormat::Verdict,
-                Some(other) => {
-                    return Err(BatonError::ConfigError(format!(
-                        "Validator '{}': invalid response_format '{other}'.",
-                        raw_v.name
-                    )));
-                }
-            };
-
-            // warn_exit_codes must not contain 0
-            if raw_v.warn_exit_codes.contains(&0) {
-                return Err(BatonError::ConfigError(format!(
-                    "Validator '{}': warn_exit_codes must not contain 0 (exit code 0 is always pass).",
-                    raw_v.name
-                )));
-            }
-
-            validators.push(ValidatorConfig {
-                name: raw_v.name.clone(),
-                validator_type: vtype,
-                blocking: raw_v.blocking.unwrap_or(defaults.blocking),
-                run_if: raw_v.run_if.clone(),
-                timeout_seconds: raw_v.timeout_seconds.unwrap_or(defaults.timeout_seconds),
-                tags: raw_v.tags.clone(),
-                command: raw_v.command.clone(),
-                warn_exit_codes: raw_v.warn_exit_codes.clone(),
-                working_dir: raw_v.working_dir.clone(),
-                env: raw_v.env.clone(),
-                mode,
-                provider: raw_v.provider.clone().unwrap_or("default".into()),
-                model: raw_v.model.clone(),
-                prompt: raw_v.prompt.clone(),
-                context_refs: raw_v.context_refs.clone(),
-                temperature: raw_v.temperature.unwrap_or(0.0),
-                response_format,
-                max_tokens: raw_v.max_tokens,
-                system_prompt: raw_v.system_prompt.clone(),
-                runtime: raw_v.runtime.clone(),
-                sandbox: raw_v.sandbox,
-                max_iterations: raw_v.max_iterations,
-            });
         }
 
         gates.insert(
@@ -524,9 +689,286 @@ pub fn parse_config(toml_str: &str, config_dir: &Path) -> Result<BatonConfig> {
         defaults,
         providers,
         runtimes,
+        sources,
         gates,
         config_dir: config_dir.to_path_buf(),
     })
+}
+
+/// Parse a top-level validator definition into a ValidatorConfig.
+fn parse_validator_def(
+    name: &str,
+    raw_v: &RawValidatorDef,
+    defaults: &Defaults,
+) -> Result<ValidatorConfig> {
+    let vtype = match raw_v.validator_type.as_str() {
+        "script" => ValidatorType::Script,
+        "llm" => ValidatorType::Llm,
+        "human" => ValidatorType::Human,
+        other => {
+            return Err(BatonError::ConfigError(format!(
+                "Validator '{name}': unknown type '{other}'. Expected 'script', 'llm', or 'human'."
+            )));
+        }
+    };
+
+    match &vtype {
+        ValidatorType::Script => {
+            if raw_v.command.is_none() {
+                return Err(BatonError::ConfigError(format!(
+                    "Validator '{name}': missing required field 'command'."
+                )));
+            }
+        }
+        ValidatorType::Llm | ValidatorType::Human => {
+            if raw_v.prompt.is_none() {
+                return Err(BatonError::ConfigError(format!(
+                    "Validator '{name}': missing required field 'prompt'."
+                )));
+            }
+        }
+    }
+
+    let mode = match raw_v.mode.as_deref() {
+        Some("session") => LlmMode::Session,
+        Some("completion") | None => LlmMode::Completion,
+        Some(other) => {
+            return Err(BatonError::ConfigError(format!(
+                "Validator '{name}': invalid mode '{other}'. Expected 'completion' or 'session'."
+            )));
+        }
+    };
+
+    let response_format = match raw_v.response_format.as_deref() {
+        Some("freeform") => ResponseFormat::Freeform,
+        Some("verdict") | None => ResponseFormat::Verdict,
+        Some(other) => {
+            return Err(BatonError::ConfigError(format!(
+                "Validator '{name}': invalid response_format '{other}'."
+            )));
+        }
+    };
+
+    if raw_v.warn_exit_codes.contains(&0) {
+        return Err(BatonError::ConfigError(format!(
+            "Validator '{name}': warn_exit_codes must not contain 0 (exit code 0 is always pass)."
+        )));
+    }
+
+    let input = parse_input_decl(name, &raw_v.input)?;
+
+    Ok(ValidatorConfig {
+        name: name.to_string(),
+        validator_type: vtype,
+        blocking: defaults.blocking,
+        run_if: None,
+        timeout_seconds: raw_v.timeout_seconds.unwrap_or(defaults.timeout_seconds),
+        tags: raw_v.tags.clone(),
+        command: raw_v.command.clone(),
+        warn_exit_codes: raw_v.warn_exit_codes.clone(),
+        working_dir: raw_v.working_dir.clone(),
+        env: raw_v.env.clone(),
+        mode,
+        provider: raw_v.provider.clone().unwrap_or("default".into()),
+        model: raw_v.model.clone(),
+        prompt: raw_v.prompt.clone(),
+        context_refs: vec![],
+        temperature: raw_v.temperature.unwrap_or(0.0),
+        response_format,
+        max_tokens: raw_v.max_tokens,
+        system_prompt: raw_v.system_prompt.clone(),
+        runtime: raw_v.runtime.clone(),
+        sandbox: raw_v.sandbox,
+        max_iterations: raw_v.max_iterations,
+        input,
+    })
+}
+
+/// Parse an inline validator (old format) into a ValidatorConfig.
+fn parse_inline_validator(raw_v: &RawValidator, defaults: &Defaults) -> Result<ValidatorConfig> {
+    let vtype = match raw_v.validator_type.as_str() {
+        "script" => ValidatorType::Script,
+        "llm" => ValidatorType::Llm,
+        "human" => ValidatorType::Human,
+        other => {
+            return Err(BatonError::ConfigError(format!(
+                "Validator '{}': unknown type '{other}'. Expected 'script', 'llm', or 'human'.",
+                raw_v.name
+            )));
+        }
+    };
+
+    match &vtype {
+        ValidatorType::Script => {
+            if raw_v.command.is_none() {
+                return Err(BatonError::ConfigError(format!(
+                    "Validator '{}': missing required field 'command'.",
+                    raw_v.name
+                )));
+            }
+        }
+        ValidatorType::Llm | ValidatorType::Human => {
+            if raw_v.prompt.is_none() {
+                return Err(BatonError::ConfigError(format!(
+                    "Validator '{}': missing required field 'prompt'.",
+                    raw_v.name
+                )));
+            }
+        }
+    }
+
+    let mode = match raw_v.mode.as_deref() {
+        Some("session") => LlmMode::Session,
+        Some("completion") | None => LlmMode::Completion,
+        Some(other) => {
+            return Err(BatonError::ConfigError(format!(
+                "Validator '{}': invalid mode '{other}'. Expected 'completion' or 'session'.",
+                raw_v.name
+            )));
+        }
+    };
+
+    let response_format = match raw_v.response_format.as_deref() {
+        Some("freeform") => ResponseFormat::Freeform,
+        Some("verdict") | None => ResponseFormat::Verdict,
+        Some(other) => {
+            return Err(BatonError::ConfigError(format!(
+                "Validator '{}': invalid response_format '{other}'.",
+                raw_v.name
+            )));
+        }
+    };
+
+    if raw_v.warn_exit_codes.contains(&0) {
+        return Err(BatonError::ConfigError(format!(
+            "Validator '{}': warn_exit_codes must not contain 0 (exit code 0 is always pass).",
+            raw_v.name
+        )));
+    }
+
+    Ok(ValidatorConfig {
+        name: raw_v.name.clone(),
+        validator_type: vtype,
+        blocking: raw_v.blocking.unwrap_or(defaults.blocking),
+        run_if: raw_v.run_if.clone(),
+        timeout_seconds: raw_v.timeout_seconds.unwrap_or(defaults.timeout_seconds),
+        tags: raw_v.tags.clone(),
+        command: raw_v.command.clone(),
+        warn_exit_codes: raw_v.warn_exit_codes.clone(),
+        working_dir: raw_v.working_dir.clone(),
+        env: raw_v.env.clone(),
+        mode,
+        provider: raw_v.provider.clone().unwrap_or("default".into()),
+        model: raw_v.model.clone(),
+        prompt: raw_v.prompt.clone(),
+        context_refs: raw_v.context_refs.clone(),
+        temperature: raw_v.temperature.unwrap_or(0.0),
+        response_format,
+        max_tokens: raw_v.max_tokens,
+        system_prompt: raw_v.system_prompt.clone(),
+        runtime: raw_v.runtime.clone(),
+        sandbox: raw_v.sandbox,
+        max_iterations: raw_v.max_iterations,
+        input: InputDecl::None,
+    })
+}
+
+/// Parse input declarations from a TOML value.
+fn parse_input_decl(name: &str, input: &Option<toml::Value>) -> Result<InputDecl> {
+    let input = match input {
+        None => return Ok(InputDecl::None),
+        Some(v) => v,
+    };
+
+    match input {
+        toml::Value::String(pattern) => Ok(InputDecl::PerFile {
+            pattern: pattern.clone(),
+        }),
+        toml::Value::Table(table) => {
+            // If it has "match", it's a batch or single unnamed input
+            if table.contains_key("match") {
+                let pattern = table
+                    .get("match")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| {
+                        BatonError::ConfigError(format!(
+                            "Validator '{name}': input.match must be a string."
+                        ))
+                    })?
+                    .to_string();
+                let collect = table
+                    .get("collect")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                if collect {
+                    Ok(InputDecl::Batch { pattern })
+                } else {
+                    Ok(InputDecl::PerFile { pattern })
+                }
+            } else {
+                // Named inputs: each key is an input slot
+                let mut slots = BTreeMap::new();
+                for (slot_name, slot_val) in table {
+                    let slot_table = slot_val.as_table().ok_or_else(|| {
+                        BatonError::ConfigError(format!(
+                            "Validator '{name}': input.{slot_name} must be a table."
+                        ))
+                    })?;
+                    let match_pattern = slot_table
+                        .get("match")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let path = slot_table
+                        .get("path")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let key = slot_table
+                        .get("key")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let collect = slot_table
+                        .get("collect")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+
+                    // Validate key expression if present
+                    if let Some(ref key_expr) = key {
+                        validate_key_expression(name, slot_name, key_expr)?;
+                    }
+
+                    slots.insert(
+                        slot_name.clone(),
+                        InputSlot {
+                            match_pattern,
+                            path,
+                            key,
+                            collect,
+                        },
+                    );
+                }
+                Ok(InputDecl::Named(slots))
+            }
+        }
+        _ => Err(BatonError::ConfigError(format!(
+            "Validator '{name}': 'input' must be a string or table."
+        ))),
+    }
+}
+
+/// Validate a key expression.
+fn validate_key_expression(validator_name: &str, slot_name: &str, expr: &str) -> Result<()> {
+    let valid = expr == "{stem}"
+        || expr == "{name}"
+        || expr == "{parent}"
+        || expr.starts_with("{relative:") && expr.ends_with('}')
+        || expr.starts_with("{regex:") && expr.ends_with('}');
+    if !valid {
+        return Err(BatonError::ConfigError(format!(
+            "Validator '{validator_name}': input.{slot_name} has invalid key expression '{expr}'. \
+             Expected one of: {{stem}}, {{name}}, {{parent}}, {{relative:prefix/}}, {{regex:pattern}}."
+        )));
+    }
+    Ok(())
 }
 
 /// Validate a config and return errors/warnings without aborting.
@@ -593,6 +1035,38 @@ pub fn validate_config(config: &BatonConfig) -> ConfigValidation {
                         "Validator '{}': blocking has no effect with response_format 'freeform' (freeform always returns warn).",
                         val.name
                     ));
+                }
+            }
+        }
+    }
+
+    // Check sources
+    for (name, source) in &config.sources {
+        if let SourceType::Directory { ref root, .. } = source.source_type {
+            let root_path = config.config_dir.join(root);
+            if !root_path.exists() {
+                v.warnings.push(format!(
+                    "Source '{name}': root directory '{}' does not exist.",
+                    root_path.display()
+                ));
+            }
+        }
+    }
+
+    // Check fixed input paths
+    for gate in config.gates.values() {
+        for val in &gate.validators {
+            if let InputDecl::Named(ref slots) = val.input {
+                for (slot_name, slot) in slots {
+                    if let Some(ref path) = slot.path {
+                        let resolved = config.config_dir.join(path);
+                        if !resolved.exists() && !std::path::Path::new(path).exists() {
+                            v.errors.push(format!(
+                                "Validator '{}': input.{slot_name} path '{}' does not exist.",
+                                val.name, path
+                            ));
+                        }
+                    }
                 }
             }
         }
@@ -821,20 +1295,6 @@ version = "0.4"
         assert!(err.contains("No gates"), "Error: {err}");
     }
 
-    #[test]
-    fn parse_gate_no_validators() {
-        let toml = r#"
-version = "0.4"
-[gates.test]
-description = "Empty gate"
-validators = []
-"#;
-        let result = parse_config(toml, &config_dir());
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("no validators"), "Error: {err}");
-    }
-
     // ─── Validator name validation ───────────────────
 
     #[test]
@@ -851,26 +1311,6 @@ command = "echo ok"
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("invalid characters"), "Error: {err}");
-    }
-
-    #[test]
-    fn duplicate_validator_name() {
-        let toml = r#"
-version = "0.4"
-[gates.test]
-[[gates.test.validators]]
-name = "check"
-type = "script"
-command = "echo ok"
-[[gates.test.validators]]
-name = "check"
-type = "script"
-command = "echo ok2"
-"#;
-        let result = parse_config(toml, &config_dir());
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("duplicate"), "Error: {err}");
     }
 
     // ─── Validator type validation ───────────────────
@@ -1067,23 +1507,6 @@ command = "echo ok"
         let validation = validate_config(&config);
         assert!(validation.has_errors());
         assert!(validation.errors[0].contains("later in the pipeline"));
-    }
-
-    #[test]
-    fn validate_context_refs_undefined() {
-        let toml = r#"
-version = "0.4"
-[gates.test]
-[[gates.test.validators]]
-name = "check"
-type = "llm"
-prompt = "Review this"
-context_refs = ["nonexistent"]
-"#;
-        let config = parse_config(toml, &config_dir()).unwrap();
-        let validation = validate_config(&config);
-        assert!(validation.has_errors());
-        assert!(validation.errors[0].contains("nonexistent"));
     }
 
     #[test]
@@ -1533,27 +1956,6 @@ command = "echo ok"
     }
 
     #[test]
-    fn duplicate_name_across_gates_is_ok() {
-        let toml = r#"
-version = "0.4"
-[gates.alpha]
-[[gates.alpha.validators]]
-name = "lint"
-type = "script"
-command = "echo ok"
-
-[gates.beta]
-[[gates.beta.validators]]
-name = "lint"
-type = "script"
-command = "echo ok"
-"#;
-        let config = parse_config(toml, &config_dir()).unwrap();
-        assert_eq!(config.gates["alpha"].validators[0].name, "lint");
-        assert_eq!(config.gates["beta"].validators[0].name, "lint");
-    }
-
-    #[test]
     fn empty_validator_name() {
         let toml = r#"
 version = "0.4"
@@ -1715,5 +2117,497 @@ context_refs = ["undefined-ctx"]
             tokens,
             vec!["command.status == pass", "and", "mentor.status == fail"]
         );
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // v2 migration: Source parsing (SPEC-CF-SC-*)
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn source_directory_with_root() {
+        // SPEC-CF-SC-001: directory source requires root, include defaults to ["**/*"]
+        let toml = r#"
+version = "0.4"
+[sources.code]
+root = "src"
+
+[gates.review]
+[[gates.review.validators]]
+name = "lint"
+type = "script"
+command = "echo ok"
+"#;
+        let config = parse_config(toml, &config_dir());
+        assert!(config.is_ok(), "Error: {:?}", config.err());
+    }
+
+    #[test]
+    fn source_file_with_path() {
+        // SPEC-CF-SC-002: file source requires path
+        let toml = r#"
+version = "0.4"
+[sources.readme]
+path = "README.md"
+
+[gates.review]
+[[gates.review.validators]]
+name = "lint"
+type = "script"
+command = "echo ok"
+"#;
+        let config = parse_config(toml, &config_dir());
+        assert!(config.is_ok(), "Error: {:?}", config.err());
+    }
+
+    #[test]
+    fn source_file_list() {
+        // SPEC-CF-SC-003: file list source requires non-empty files array
+        let toml = r#"
+version = "0.4"
+[sources.docs]
+files = ["README.md", "CHANGELOG.md"]
+
+[gates.review]
+[[gates.review.validators]]
+name = "lint"
+type = "script"
+command = "echo ok"
+"#;
+        let config = parse_config(toml, &config_dir());
+        assert!(config.is_ok(), "Error: {:?}", config.err());
+    }
+
+    #[test]
+    fn source_empty_files_list_rejected() {
+        // SPEC-CF-SC-003: empty files list is an error
+        let toml = r#"
+version = "0.4"
+[sources.docs]
+files = []
+
+[gates.review]
+[[gates.review.validators]]
+name = "lint"
+type = "script"
+command = "echo ok"
+"#;
+        let result = parse_config(toml, &config_dir());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn source_type_mutual_exclusion() {
+        // SPEC-CF-SC-004: only one of root, path, or files may be set
+        let toml = r#"
+version = "0.4"
+[sources.mixed]
+root = "src"
+path = "README.md"
+
+[gates.review]
+[[gates.review.validators]]
+name = "lint"
+type = "script"
+command = "echo ok"
+"#;
+        let result = parse_config(toml, &config_dir());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn source_name_pattern_rejects_dots() {
+        // SPEC-CF-SC-005: source names must match [a-zA-Z0-9_-]+, no dots
+        let toml = r#"
+version = "0.4"
+[sources."my.source"]
+root = "src"
+
+[gates.review]
+[[gates.review.validators]]
+name = "lint"
+type = "script"
+command = "echo ok"
+"#;
+        let result = parse_config(toml, &config_dir());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn source_missing_root_warns() {
+        // SPEC-CF-SC-006: nonexistent root directory emits validation warning
+        let toml = r#"
+version = "0.4"
+[sources.code]
+root = "/nonexistent/path/that/does/not/exist"
+
+[gates.review]
+[[gates.review.validators]]
+name = "lint"
+type = "script"
+command = "echo ok"
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        let validation = validate_config(&config);
+        assert!(
+            !validation.warnings.is_empty(),
+            "Expected a warning about nonexistent root"
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // v2 migration: Top-level validator parsing (SPEC-CF-VP-*)
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn validator_name_from_toml_key() {
+        // SPEC-CF-VP-001: validator name comes from the TOML key under [validators]
+        let toml = r#"
+version = "0.4"
+[validators.my-lint]
+type = "script"
+command = "echo ok"
+
+[gates.review]
+validators = [{ ref = "my-lint" }]
+"#;
+        let config = parse_config(toml, &config_dir());
+        assert!(config.is_ok(), "Error: {:?}", config.err());
+    }
+
+    #[test]
+    fn validator_name_rejects_invalid_chars() {
+        // SPEC-CF-VP-001: validator name must match [A-Za-z0-9_-]+
+        let toml = r#"
+version = "0.4"
+[validators."bad name!"]
+type = "script"
+command = "echo ok"
+
+[gates.review]
+validators = [{ ref = "bad name!" }]
+"#;
+        let result = parse_config(toml, &config_dir());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn context_refs_field_rejected() {
+        // SPEC-CF-VP-002: context_refs field produces an error
+        let toml = r#"
+version = "0.4"
+[validators.check]
+type = "script"
+command = "echo ok"
+context_refs = ["spec"]
+
+[gates.review]
+validators = [{ ref = "check" }]
+"#;
+        let result = parse_config(toml, &config_dir());
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("input"),
+            "Expected error about input declarations, got: {err}"
+        );
+    }
+
+    #[test]
+    fn input_form_no_input() {
+        // SPEC-CF-VP-003: absent input means validator runs once with no files
+        let toml = r#"
+version = "0.4"
+[validators.check]
+type = "script"
+command = "echo ok"
+
+[gates.review]
+validators = [{ ref = "check" }]
+"#;
+        let config = parse_config(toml, &config_dir());
+        assert!(config.is_ok(), "Error: {:?}", config.err());
+    }
+
+    #[test]
+    fn input_form_per_file_glob() {
+        // SPEC-CF-VP-004: input as string is a glob pattern
+        let toml = r#"
+version = "0.4"
+[validators.lint]
+type = "script"
+command = "ruff check {file}"
+input = "*.py"
+
+[gates.review]
+validators = [{ ref = "lint" }]
+"#;
+        let config = parse_config(toml, &config_dir());
+        assert!(config.is_ok(), "Error: {:?}", config.err());
+    }
+
+    #[test]
+    fn input_form_batch() {
+        // SPEC-CF-VP-005: input with match + collect = true
+        let toml = r#"
+version = "0.4"
+[validators.lint]
+type = "script"
+command = "echo ok"
+input = { match = "*.py", collect = true }
+
+[gates.review]
+validators = [{ ref = "lint" }]
+"#;
+        let config = parse_config(toml, &config_dir());
+        assert!(config.is_ok(), "Error: {:?}", config.err());
+    }
+
+    #[test]
+    fn input_form_named() {
+        // SPEC-CF-VP-006: input with named sub-keys
+        let toml = r#"
+version = "0.4"
+[validators.check]
+type = "llm"
+prompt = "check code"
+model = "test"
+[validators.check.input]
+code = { match = "*.py" }
+spec = { path = "spec.md" }
+
+[gates.review]
+validators = [{ ref = "check" }]
+"#;
+        let config = parse_config(toml, &config_dir());
+        assert!(config.is_ok(), "Error: {:?}", config.err());
+    }
+
+    #[test]
+    fn fixed_input_path_must_exist() {
+        // SPEC-CF-VP-007: named input with path must reference existing file
+        let toml = r#"
+version = "0.4"
+[validators.check]
+type = "script"
+command = "echo ok"
+[validators.check.input]
+spec = { path = "/nonexistent/spec.md" }
+
+[gates.review]
+validators = [{ ref = "check" }]
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        let validation = validate_config(&config);
+        assert!(
+            validation.has_errors(),
+            "Expected error about nonexistent fixed input path"
+        );
+    }
+
+    #[test]
+    fn key_expression_must_be_valid() {
+        // SPEC-CF-VP-008: unknown key expressions are config errors
+        let toml = r#"
+version = "0.4"
+[validators.check]
+type = "script"
+command = "echo ok"
+[validators.check.input]
+code = { match = "*.py", key = "{unknown_expr}" }
+
+[gates.review]
+validators = [{ ref = "check" }]
+"#;
+        let result = parse_config(toml, &config_dir());
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn key_expression_valid_forms() {
+        // SPEC-CF-VP-008: valid key expressions
+        for expr in &[
+            "{stem}",
+            "{name}",
+            "{parent}",
+            "{relative:src/}",
+            "{regex:[a-z]+}",
+        ] {
+            let toml = format!(
+                "version = \"0.4\"\n\
+                 [validators.check]\n\
+                 type = \"script\"\n\
+                 command = \"echo ok\"\n\
+                 [validators.check.input]\n\
+                 code = {{ match = \"*.py\", key = \"{}\" }}\n\
+                 \n\
+                 [gates.review]\n\
+                 validators = [{{ ref = \"check\" }}]\n",
+                expr
+            );
+            let result = parse_config(&toml, &config_dir());
+            assert!(
+                result.is_ok(),
+                "Key expression {} should be valid, got: {:?}",
+                expr,
+                result.err()
+            );
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // v2 migration: Gate reference parsing (SPEC-CF-GR-*)
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn gate_ref_must_name_existing_validator() {
+        // SPEC-CF-GR-001: ref must match a key in [validators]
+        let toml = r#"
+version = "0.4"
+[validators.lint]
+type = "script"
+command = "echo ok"
+
+[gates.review]
+validators = [{ ref = "nonexistent" }]
+"#;
+        let result = parse_config(toml, &config_dir());
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("nonexistent"),
+            "Error should name the missing validator: {err}"
+        );
+    }
+
+    #[test]
+    fn gate_ref_blocking_defaults_from_defaults() {
+        // SPEC-CF-GR-002: blocking inherits from [defaults].blocking when not set
+        let toml = r#"
+version = "0.4"
+[defaults]
+blocking = false
+
+[validators.lint]
+type = "script"
+command = "echo ok"
+
+[gates.review]
+validators = [{ ref = "lint" }]
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        let gate = &config.gates["review"];
+        // The lint validator within this gate should inherit blocking=false
+        assert!(!gate.validators[0].blocking);
+    }
+
+    #[test]
+    fn gate_ref_blocking_overrides_defaults() {
+        // SPEC-CF-GR-002: explicit blocking on gate ref takes precedence
+        let toml = r#"
+version = "0.4"
+[defaults]
+blocking = false
+
+[validators.lint]
+type = "script"
+command = "echo ok"
+
+[gates.review]
+validators = [{ ref = "lint", blocking = true }]
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        let gate = &config.gates["review"];
+        assert!(gate.validators[0].blocking);
+    }
+
+    #[test]
+    fn gate_ref_run_if_validated() {
+        // SPEC-CF-GR-003: run_if must reference earlier validators in same gate
+        let toml = r#"
+version = "0.4"
+[validators.lint]
+type = "script"
+command = "echo ok"
+[validators.format]
+type = "script"
+command = "echo ok"
+
+[gates.review]
+validators = [
+    { ref = "lint" },
+    { ref = "format", run_if = "lint.status == pass" },
+]
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        let validation = validate_config(&config);
+        assert!(
+            !validation.has_errors(),
+            "Valid run_if should not produce errors: {:?}",
+            validation.errors
+        );
+    }
+
+    #[test]
+    fn gate_ref_run_if_forward_reference_rejected() {
+        // SPEC-CF-GR-003: run_if referencing a later validator is an error
+        let toml = r#"
+version = "0.4"
+[validators.lint]
+type = "script"
+command = "echo ok"
+[validators.format]
+type = "script"
+command = "echo ok"
+
+[gates.review]
+validators = [
+    { ref = "lint", run_if = "format.status == pass" },
+    { ref = "format" },
+]
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        let validation = validate_config(&config);
+        assert!(
+            validation.has_errors(),
+            "Forward reference in run_if should produce an error"
+        );
+    }
+
+    #[test]
+    fn validator_reuse_across_gates() {
+        // SPEC-CF-GR-004: same validator in multiple gates with different settings
+        let toml = r#"
+version = "0.4"
+[validators.lint]
+type = "script"
+command = "echo ok"
+
+[gates.fast]
+validators = [{ ref = "lint", blocking = false }]
+
+[gates.strict]
+validators = [{ ref = "lint", blocking = true }]
+"#;
+        let config = parse_config(toml, &config_dir());
+        assert!(config.is_ok(), "Error: {:?}", config.err());
+        let config = config.unwrap();
+        assert!(!config.gates["fast"].validators[0].blocking);
+        assert!(config.gates["strict"].validators[0].blocking);
+    }
+
+    #[test]
+    fn gate_empty_validators_rejected() {
+        // SPEC-CF-PC-030: gate validators array must have at least one ref
+        let toml = r#"
+version = "0.4"
+[validators.lint]
+type = "script"
+command = "echo ok"
+
+[gates.review]
+validators = []
+"#;
+        let result = parse_config(toml, &config_dir());
+        assert!(result.is_err());
     }
 }

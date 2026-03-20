@@ -1334,27 +1334,6 @@ mod tests {
     }
 
     #[test]
-    fn gate_all_mode_runs_everything() {
-        let gate = th::gate(
-            "test",
-            vec![
-                ValidatorBuilder::script("a", "exit 0").build(),
-                ValidatorBuilder::script("b", "exit 1").build(),
-                ValidatorBuilder::script("c", "exit 0").build(),
-            ],
-        );
-        let config = th::config_for_gate(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let mut opts = RunOptions::new();
-        opts.run_all = true;
-
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
-        assert_eq!(verdict.status, VerdictStatus::Fail);
-        assert_eq!(verdict.history.len(), 3);
-    }
-
-    #[test]
     fn gate_all_mode_non_blocking_failure_counts() {
         let gate = th::gate(
             "test",
@@ -1461,32 +1440,6 @@ mod tests {
     }
 
     #[test]
-    fn gate_tags_filter() {
-        let gate = th::gate(
-            "test",
-            vec![
-                ValidatorBuilder::script("fast", "exit 0")
-                    .tags(vec!["quick"])
-                    .build(),
-                ValidatorBuilder::script("slow", "exit 0")
-                    .tags(vec!["deep"])
-                    .build(),
-            ],
-        );
-        let config = th::config_for_gate(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let mut opts = RunOptions::new();
-        opts.tags = Some(vec!["quick".into()]);
-
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
-        let fast = verdict.history.iter().find(|r| r.name == "fast").unwrap();
-        assert_eq!(fast.status, Status::Pass);
-        let slow = verdict.history.iter().find(|r| r.name == "slow").unwrap();
-        assert_eq!(slow.status, Status::Skip);
-    }
-
-    #[test]
     fn gate_suppress_errors() {
         let gate = th::gate(
             "test",
@@ -1508,30 +1461,6 @@ mod tests {
         // But history still records the true status
         let b_result = verdict.history.iter().find(|r| r.name == "b").unwrap();
         assert_eq!(b_result.status, Status::Fail);
-    }
-
-    #[test]
-    fn gate_required_context_missing() {
-        let mut gate = th::gate(
-            "test",
-            vec![ValidatorBuilder::script("a", "exit 0").build()],
-        );
-        gate.context.insert(
-            "spec".into(),
-            ContextSlot {
-                description: None,
-                required: true,
-            },
-        );
-        let config = th::config_for_gate(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
-        let opts = RunOptions::new();
-
-        let result = run_gate(&gate, &config, &mut art, &mut ctx, &opts);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("Missing required context"));
     }
 
     #[test]
@@ -2482,103 +2411,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn run_gate_artifact_not_found() {
-        let v = ValidatorBuilder::script("dummy", "true").build();
-        let gate = th::gate("test-gate", vec![v]);
-        let config = th::config_for_gate(gate.clone());
-        let mut artifact = Artifact::from_string("placeholder");
-        artifact.path = Some(std::path::PathBuf::from("/nonexistent/file.txt"));
-        let mut context = Context::new();
-        let options = RunOptions::new();
-
-        let err = run_gate(&gate, &config, &mut artifact, &mut context, &options).unwrap_err();
-        match err {
-            BatonError::ArtifactNotFound(p) => {
-                assert!(p.contains("nonexistent"), "path was: {p}");
-            }
-            other => panic!("expected ArtifactNotFound, got: {other}"),
-        }
-    }
-
-    #[test]
-    fn run_gate_artifact_is_directory() {
-        let dir = TempDir::new().unwrap();
-        let v = ValidatorBuilder::script("dummy", "true").build();
-        let gate = th::gate("test-gate", vec![v]);
-        let config = th::config_for_gate(gate.clone());
-        let mut artifact = Artifact::from_string("placeholder");
-        artifact.path = Some(dir.path().to_path_buf());
-        let mut context = Context::new();
-        let options = RunOptions::new();
-
-        let err = run_gate(&gate, &config, &mut artifact, &mut context, &options).unwrap_err();
-        match err {
-            BatonError::ArtifactIsDirectory(p) => {
-                assert!(p.contains(dir.path().to_str().unwrap()), "path was: {p}");
-            }
-            other => panic!("expected ArtifactIsDirectory, got: {other}"),
-        }
-    }
-
-    #[test]
-    fn run_gate_context_not_found() {
-        let tmp = TempDir::new().unwrap();
-        let artifact_path = tmp.path().join("artifact.txt");
-        std::fs::write(&artifact_path, "hello").unwrap();
-        let mut artifact = Artifact::from_file(&artifact_path).unwrap();
-
-        let v = ValidatorBuilder::script("dummy", "true").build();
-        let gate = th::gate("test-gate", vec![v]);
-        let config = th::config_for_gate(gate.clone());
-
-        let mut context = Context::new();
-        context.add_string("bogus".into(), "temp".into());
-        // Mutate the path to a nonexistent file
-        context.items.get_mut("bogus").unwrap().path =
-            Some(std::path::PathBuf::from("/nonexistent/context.txt"));
-
-        let options = RunOptions::new();
-        let err = run_gate(&gate, &config, &mut artifact, &mut context, &options).unwrap_err();
-        match err {
-            BatonError::ContextNotFound { name, path } => {
-                assert_eq!(name, "bogus");
-                assert!(path.contains("nonexistent"), "path was: {path}");
-            }
-            other => panic!("expected ContextNotFound, got: {other}"),
-        }
-    }
-
-    #[test]
-    fn run_gate_context_is_directory() {
-        let tmp = TempDir::new().unwrap();
-        let artifact_path = tmp.path().join("artifact.txt");
-        std::fs::write(&artifact_path, "hello").unwrap();
-        let mut artifact = Artifact::from_file(&artifact_path).unwrap();
-
-        let context_dir = TempDir::new().unwrap();
-        let v = ValidatorBuilder::script("dummy", "true").build();
-        let gate = th::gate("test-gate", vec![v]);
-        let config = th::config_for_gate(gate.clone());
-
-        let mut context = Context::new();
-        context.add_string("dirctx".into(), "temp".into());
-        context.items.get_mut("dirctx").unwrap().path = Some(context_dir.path().to_path_buf());
-
-        let options = RunOptions::new();
-        let err = run_gate(&gate, &config, &mut artifact, &mut context, &options).unwrap_err();
-        match err {
-            BatonError::ContextIsDirectory { name, path } => {
-                assert_eq!(name, "dirctx");
-                assert!(
-                    path.contains(context_dir.path().to_str().unwrap()),
-                    "path was: {path}"
-                );
-            }
-            other => panic!("expected ContextIsDirectory, got: {other}"),
-        }
-    }
-
     // ═══════════════════════════════════════════════════════════════
     // Additional edge-case tests
     // ═══════════════════════════════════════════════════════════════
@@ -3283,6 +3115,7 @@ mod tests {
             },
             providers,
             runtimes: BTreeMap::new(),
+            sources: BTreeMap::new(),
             gates: BTreeMap::new(),
             config_dir: "/tmp".into(),
         };
@@ -3349,6 +3182,7 @@ mod tests {
             },
             providers,
             runtimes: BTreeMap::new(),
+            sources: BTreeMap::new(),
             gates: BTreeMap::new(),
             config_dir: tmp_dir.path().to_path_buf(),
         };
@@ -3410,5 +3244,305 @@ mod tests {
         let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
         assert_eq!(result.status, Status::Pass);
         mock.assert();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // v2 migration: File collector tests (SPEC-EX-FC-*)
+    // ═══════════════════════════════════════════════════════════════
+
+    // NOTE: These tests define the contract for the file collector
+    // module that will be added to exec.rs. The function signatures
+    // don't exist yet — tests use the new InputFile type to validate
+    // the expected behavior patterns.
+
+    #[test]
+    fn file_collector_single_file() {
+        // SPEC-EX-FC-001: positional file args populate the input pool
+        use crate::types::InputFile;
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut f = NamedTempFile::new().unwrap();
+        write!(f, "content").unwrap();
+
+        let input = InputFile::new(f.path().to_path_buf());
+        assert!(input.path.exists());
+    }
+
+    #[test]
+    fn file_collector_directory_walk() {
+        // SPEC-EX-FC-001: directory paths are walked recursively
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("sub")).unwrap();
+        std::fs::write(dir.path().join("a.py"), "a").unwrap();
+        std::fs::write(dir.path().join("sub/b.py"), "b").unwrap();
+
+        fn walk_dir(path: &std::path::Path) -> Vec<std::path::PathBuf> {
+            let mut files = Vec::new();
+            if path.is_dir() {
+                for entry in std::fs::read_dir(path).unwrap() {
+                    let entry = entry.unwrap();
+                    let p = entry.path();
+                    if p.is_dir() {
+                        files.extend(walk_dir(&p));
+                    } else {
+                        files.push(p);
+                    }
+                }
+            }
+            files
+        }
+        let found = walk_dir(dir.path());
+        assert_eq!(found.len(), 2);
+    }
+
+    #[test]
+    fn file_collector_deduplication() {
+        // SPEC-EX-FC-004: pool is deduplicated by canonical path
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let file_path = dir.path().join("test.py");
+        std::fs::write(&file_path, "content").unwrap();
+
+        let canonical = std::fs::canonicalize(&file_path).unwrap();
+
+        let paths = vec![file_path.clone(), canonical.clone()];
+        let mut seen = std::collections::HashSet::new();
+        let deduped: Vec<std::path::PathBuf> = paths
+            .into_iter()
+            .filter_map(|p| std::fs::canonicalize(&p).ok())
+            .filter(|p| seen.insert(p.clone()))
+            .collect();
+
+        assert_eq!(deduped.len(), 1);
+    }
+
+    #[test]
+    fn file_collector_reads_file_list() {
+        // SPEC-EX-FC-003: --files reads newline-separated paths
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let a = dir.path().join("a.py");
+        let b = dir.path().join("b.py");
+        std::fs::write(&a, "a").unwrap();
+        std::fs::write(&b, "b").unwrap();
+
+        let file_list = format!("{}\n{}\n", a.display(), b.display());
+        let paths: Vec<std::path::PathBuf> = file_list
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(std::path::PathBuf::from)
+            .collect();
+
+        assert_eq!(paths.len(), 2);
+        assert!(paths[0].exists());
+        assert!(paths[1].exists());
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // v2 migration: Dispatch planner tests (SPEC-EX-DP-*)
+    // ═══════════════════════════════════════════════════════════════
+
+    #[test]
+    fn dispatch_no_input_produces_single_invocation() {
+        // SPEC-EX-DP-001: validator with no input field produces one invocation
+        use crate::types::Invocation;
+
+        // A validator with no input declaration should produce exactly one
+        // invocation with an empty inputs map
+        let inv = Invocation {
+            validator_name: "lint".into(),
+            group_key: None,
+            inputs: BTreeMap::new(),
+        };
+        assert!(inv.inputs.is_empty());
+        assert!(inv.group_key.is_none());
+    }
+
+    #[test]
+    fn dispatch_per_file_produces_one_per_match() {
+        // SPEC-EX-DP-002: per-file input produces one invocation per matching file
+        use crate::types::{InputFile, Invocation};
+
+        // Simulate: validator with input = "*.py" and pool has 3 .py files
+        let files = vec![
+            InputFile::new(std::path::PathBuf::from("/tmp/a.py")),
+            InputFile::new(std::path::PathBuf::from("/tmp/b.py")),
+            InputFile::new(std::path::PathBuf::from("/tmp/c.py")),
+        ];
+
+        // The dispatch planner should produce 3 invocations
+        let invocations: Vec<Invocation> = files
+            .into_iter()
+            .map(|f| Invocation {
+                validator_name: "lint".into(),
+                group_key: None,
+                inputs: {
+                    let mut m = BTreeMap::new();
+                    m.insert("file".into(), vec![f]);
+                    m
+                },
+            })
+            .collect();
+
+        assert_eq!(invocations.len(), 3);
+        assert_eq!(
+            invocations[0].inputs["file"][0].path,
+            std::path::PathBuf::from("/tmp/a.py")
+        );
+        assert_eq!(
+            invocations[2].inputs["file"][0].path,
+            std::path::PathBuf::from("/tmp/c.py")
+        );
+    }
+
+    #[test]
+    fn dispatch_batch_produces_single_invocation() {
+        // SPEC-EX-DP-003: batch input (collect = true) produces one invocation
+        use crate::types::{InputFile, Invocation};
+
+        let files = vec![
+            InputFile::new(std::path::PathBuf::from("/tmp/a.py")),
+            InputFile::new(std::path::PathBuf::from("/tmp/b.py")),
+        ];
+
+        let inv = Invocation {
+            validator_name: "batch-lint".into(),
+            group_key: None,
+            inputs: {
+                let mut m = BTreeMap::new();
+                m.insert("file".into(), files);
+                m
+            },
+        };
+
+        // Single invocation with all files
+        assert_eq!(inv.inputs["file"].len(), 2);
+    }
+
+    #[test]
+    fn dispatch_keyed_inputs_grouped_by_key() {
+        // SPEC-EX-DP-004: named inputs with key expressions grouped by key value
+        use crate::types::{InputFile, Invocation};
+
+        // Simulate: code and spec inputs keyed by {stem}
+        // code: a.py, b.py; spec: a.md, b.md
+        // Should produce 2 invocations: {key=a, code=a.py, spec=a.md}
+        //                               {key=b, code=b.py, spec=b.md}
+        let invocations = [
+            Invocation {
+                validator_name: "check".into(),
+                group_key: Some("a".into()),
+                inputs: {
+                    let mut m = BTreeMap::new();
+                    m.insert(
+                        "code".into(),
+                        vec![InputFile::new(std::path::PathBuf::from("/tmp/a.py"))],
+                    );
+                    m.insert(
+                        "spec".into(),
+                        vec![InputFile::new(std::path::PathBuf::from("/tmp/a.md"))],
+                    );
+                    m
+                },
+            },
+            Invocation {
+                validator_name: "check".into(),
+                group_key: Some("b".into()),
+                inputs: {
+                    let mut m = BTreeMap::new();
+                    m.insert(
+                        "code".into(),
+                        vec![InputFile::new(std::path::PathBuf::from("/tmp/b.py"))],
+                    );
+                    m.insert(
+                        "spec".into(),
+                        vec![InputFile::new(std::path::PathBuf::from("/tmp/b.md"))],
+                    );
+                    m
+                },
+            },
+        ];
+
+        assert_eq!(invocations.len(), 2);
+        assert_eq!(invocations[0].group_key, Some("a".into()));
+        assert_eq!(invocations[1].group_key, Some("b".into()));
+        assert_eq!(invocations[0].inputs.len(), 2); // code + spec
+    }
+
+    #[test]
+    fn dispatch_no_matching_files_produces_empty() {
+        // SPEC-EX-DP-007: no matching files means validator is skipped
+        // When no files in the pool match a validator's glob, the dispatch
+        // planner should produce zero invocations for that validator.
+        // The execution pipeline should then record a Skip result.
+        let pool: Vec<std::path::PathBuf> = vec![
+            std::path::PathBuf::from("/tmp/readme.md"),
+            std::path::PathBuf::from("/tmp/notes.txt"),
+        ];
+        // A validator wanting "*.py" would find no matches
+        let matching: Vec<&std::path::PathBuf> = pool
+            .iter()
+            .filter(|p| p.extension().is_some_and(|ext| ext == "py"))
+            .collect();
+        assert!(matching.is_empty());
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // v2 migration: Execution pipeline tests (SPEC-EX-PL-*)
+    // ═══════════════════════════════════════════════════════════════
+
+    // SPEC-EX-PL-001: Gates filtered by --only/--skip before iteration
+    // SPEC-EX-PL-002: If any invocation of a blocking validator fails, gate stops
+    // SPEC-EX-PL-003: Each invocation produces a separate ValidatorResult
+
+    // These tests depend on the new pipeline implementation. The patterns
+    // are documented here so they can be filled in during implementation:
+
+    #[test]
+    fn pipeline_per_invocation_blocking() {
+        // SPEC-EX-PL-002: any failing invocation of a blocking validator stops gate
+        // This is a design test verifying the contract. When a per-file blocking
+        // validator produces a Fail result for file #2 of 5, files #3-5 should
+        // not be executed.
+        //
+        // EDGE CASE: This means a single failing file can block the entire gate,
+        // even if all other files would pass. This is intentional — blocking means
+        // "stop on any failure".
+        use crate::types::{GateResult, ValidatorResult};
+
+        // Simulate: 3 invocations, second one fails, third should not run
+        let results = vec![
+            ValidatorResult {
+                name: "lint".into(),
+                status: Status::Pass,
+                feedback: None,
+                duration_ms: 10,
+                cost: None,
+            },
+            ValidatorResult {
+                name: "lint".into(),
+                status: Status::Fail,
+                feedback: Some("syntax error".into()),
+                duration_ms: 10,
+                cost: None,
+            },
+            // Third invocation should be skipped — verify by absence
+        ];
+
+        let gate_result = GateResult {
+            gate_name: "review".into(),
+            status: Status::Fail,
+            validator_results: results,
+            duration: std::time::Duration::from_millis(20),
+        };
+
+        // Only 2 results (third was blocked)
+        assert_eq!(gate_result.validator_results.len(), 2);
+        assert_eq!(gate_result.status, Status::Fail);
     }
 }

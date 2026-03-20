@@ -64,11 +64,10 @@ Use these in both implementation code and test modules. They help agents navigat
 
 ```rust
 #[test]
-fn artifact_from_file_not_found() {
-    let result = Artifact::from_file("/nonexistent/file.txt");
+fn input_file_content_not_found() {
+    let input = InputFile::new(PathBuf::from("/nonexistent/file.txt"));
+    let result = input.get_content();
     assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("not found"), "Error: {err}");
 }
 ```
 

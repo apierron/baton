@@ -68,22 +68,6 @@ blocking = {blocking}
     )
 }
 
-fn script_validator_with_tags(name: &str, command: &str, tags: &[&str]) -> String {
-    let tags_str = tags
-        .iter()
-        .map(|t| format!("\"{t}\""))
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        r#"[[gates.review.validators]]
-name = "{name}"
-type = "script"
-command = "{command}"
-tags = [{tags_str}]
-"#
-    )
-}
-
 fn parse_verdict(stdout: &str) -> serde_json::Value {
     serde_json::from_str(stdout).expect("Failed to parse JSON verdict")
 }
@@ -493,40 +477,6 @@ fn skip_excludes_validators() {
 }
 
 #[test]
-fn tags_filters_validators() {
-    let validators = [
-        script_validator_with_tags("fast", "echo PASS", &["quick"]),
-        script_validator_with_tags("slow", "echo PASS", &["thorough"]),
-    ]
-    .join("\n");
-    let toml = minimal_toml("review", &validators);
-    let dir = setup_project(&toml, "hello");
-
-    let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-            "--tags",
-            "quick",
-        ])
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-
-    assert!(output.status.success());
-    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
-    let history = verdict["history"].as_array().unwrap();
-    let slow = history.iter().find(|v| v["name"] == "slow").unwrap();
-    assert_eq!(slow["status"], "skip");
-    let fast = history.iter().find(|v| v["name"] == "fast").unwrap();
-    assert_eq!(fast["status"], "pass");
-}
-
-#[test]
 fn only_invalid_validator_exits_2() {
     let toml = minimal_toml("review", &script_validator("v1", "echo PASS"));
     let dir = setup_project(&toml, "hello");
@@ -547,25 +497,6 @@ fn only_invalid_validator_exits_2() {
         .stderr(predicate::str::contains(
             "--only references unknown validator",
         ));
-}
-
-// ─── Stdin Artifact ──────────────────────────────────────
-
-#[test]
-fn stdin_artifact() {
-    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
-    let dir = setup_project(&toml, "");
-
-    let output = baton()
-        .args(["check", "--gate", "review", "--artifact", "-", "--no-log"])
-        .current_dir(dir.path())
-        .write_stdin("stdin content here")
-        .output()
-        .unwrap();
-
-    assert!(output.status.success());
-    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
-    assert_eq!(verdict["status"], "pass");
 }
 
 // ─── Missing Config ──────────────────────────────────────
@@ -1419,39 +1350,6 @@ fn skip_unknown_only_warns() {
     assert!(stderr.contains("Warning: --skip references unknown validator 'bogus'"));
 }
 
-// ─── Dry Run with Tags ──────────────────────────────────
-
-#[test]
-fn dry_run_with_tags_filter() {
-    let validators = [
-        script_validator_with_tags("tagged", "echo PASS", &["ci"]),
-        script_validator_with_tags("untagged", "echo PASS", &["local"]),
-    ]
-    .join("\n");
-    let toml = minimal_toml("review", &validators);
-    let dir = setup_project(&toml, "hello");
-
-    let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--dry-run",
-            "--tags",
-            "ci",
-        ])
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-
-    assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("untagged"));
-    assert!(stderr.contains("--tags"));
-}
-
 // ─── Empty Gate (No Validators) ──────────────────────────
 
 #[test]
@@ -2057,110 +1955,6 @@ fn history_without_gate_filter() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("review"));
     assert!(stdout.contains("pass"));
-}
-
-// ─── Multiple context args ───────────────────────────────
-
-#[test]
-fn multiple_context_args_accepted() {
-    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
-    let dir = setup_project(&toml, "hello");
-    fs::write(dir.path().join("spec.md"), "spec").unwrap();
-    fs::write(dir.path().join("readme.md"), "readme").unwrap();
-
-    let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-            "--context",
-            "spec=spec.md",
-            "--context",
-            "readme=readme.md",
-        ])
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-
-    assert!(output.status.success());
-    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
-    assert_eq!(verdict["status"], "pass");
-    // context_hash should be set since we have context
-    let ctx_hash = verdict["context_hash"].as_str().unwrap();
-    assert!(!ctx_hash.is_empty());
-}
-
-// ═══════════════════════════════════════════════════════════════
-// Wave 4: CLI Integration Test Gaps
-// ═══════════════════════════════════════════════════════════════
-
-// ─── cmd_check gaps ──────────────────────────────────────
-
-#[test]
-fn context_missing_equals_exits_2() {
-    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
-    let dir = setup_project(&toml, "hello");
-
-    baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--context",
-            "noequals",
-            "--no-log",
-        ])
-        .current_dir(dir.path())
-        .assert()
-        .code(2)
-        .stderr(predicate::str::contains("Invalid context format"));
-}
-
-#[test]
-fn context_file_not_found_warns() {
-    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
-    let dir = setup_project(&toml, "hello");
-
-    // Unknown context items are warnings, not errors
-    baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--context",
-            "spec=/nonexistent/file.md",
-            "--no-log",
-        ])
-        .current_dir(dir.path())
-        .assert()
-        .success()
-        .stderr(predicate::str::contains("warning"));
-}
-
-#[test]
-fn nonexistent_artifact_file_exits_2() {
-    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
-    let dir = setup_project(&toml, "hello");
-
-    baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "/nonexistent/artifact.txt",
-            "--no-log",
-        ])
-        .current_dir(dir.path())
-        .assert()
-        .code(2);
 }
 
 #[test]

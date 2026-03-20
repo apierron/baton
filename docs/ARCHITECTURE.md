@@ -24,6 +24,8 @@ placeholder prompt
     │
     ▼
   error
+
+Note: exec includes the dispatch planner (file collection, input matching, invocation planning) as part of its execution pipeline.
 ```
 
 **Allowed dependency direction (top → bottom):**
@@ -55,36 +57,39 @@ This separation exists so that tooling (editors, linters) can report all config 
 
 ## Execution Pipeline
 
-`run_gate()` in `exec.rs` is the core orchestrator. The pipeline for a single gate:
+Execution follows a three-stage pipeline: **collect → plan → execute**.
 
-1. Resolve which validators to run (apply `--only`, `--skip`, `--tags` filters)
-2. For each validator in order:
-   a. Evaluate `run_if` — skip if condition is false
-   b. Resolve `{placeholders}` in command/prompt
-   c. Execute (script: subprocess, LLM: HTTP, human: fail with review-requested)
-   d. If `blocking=true` and validator failed → stop pipeline (unless `--all`)
-   e. Record `ValidatorResult`
-3. Compute `VerdictStatus` from all results (error > fail > pass)
-4. Build and return `Verdict`
+1. **File collector** — Gathers input files from positional args, `--diff`, `--files`, and source declarations. Directories are walked recursively. The pool is deduplicated by canonical path.
+2. **Dispatch planner** — For each validator, matches the input pool against the validator's `input` declaration to produce `Invocation`s. Per-file inputs produce one invocation per matching file; batch inputs produce a single invocation with all matches; named inputs are grouped by key expression.
+3. **Gate execution** — Gates are filtered by `--only` / `--skip` selectors. For each gate:
+   a. Resolve which validators to run (apply selectors)
+   b. For each validator's invocations in order:
+      - Evaluate `run_if` — skip if condition is false
+      - Resolve `{placeholders}` in command/prompt using the invocation's input files
+      - Execute (script: subprocess, LLM: HTTP, human: fail with review-requested)
+      - If `blocking=true` and any invocation failed → stop pipeline
+      - Record `ValidatorResult` per invocation
+   c. Compute `VerdictStatus` from all results (error > fail > pass)
+   d. Build `GateResult`
+4. Assemble `InvocationResult` from all gate results
 
 ## Lazy Loading Pattern
 
-`Artifact` and `Context` use lazy loading: file content and SHA-256 hash are computed on first access, not at construction time. This means:
+`InputFile` uses lazy loading: file content and SHA-256 hash are computed on first access, not at construction time. This means:
 
-- Creating an `Artifact::from_file()` only checks existence, not readability
-- `get_content()` / `get_hash()` perform I/O and cache the result
-- Placeholders like `{artifact_content}` trigger the load — if a validator doesn't reference content, the file is never read
+- Constructing an `InputFile` only records the path
+- `get_content()` / `get_hash()` perform I/O and cache the result via `OnceCell`
+- Placeholders like `{file.content}` trigger the load — if a validator doesn't reference content, the file is never read
 
-This matters for large artifacts and for validators that only need the file path (e.g., `ruff check {artifact}`).
+This matters for large input files and for validators that only need the file path (e.g., `ruff check {file}`).
 
-## Status vs VerdictStatus
+## Status
 
-Two separate enums exist intentionally:
+`Status` (5 values: pass, fail, warn, skip, error) is the single status type used at every level — validators, gates, and invocations. A gate can be skipped (filtered by `--skip`) and can produce a warning (all validators passed but some warned).
 
-- **`Status`** (5 values: pass, fail, warn, skip, error) — validator-level granularity. Validators can warn or skip.
-- **`VerdictStatus`** (3 values: pass, fail, error) — gate-level result. Maps to exit codes 0/1/2. A gate cannot "warn" or "skip" — it must commit to a verdict.
+`VerdictStatus` (3 values: pass, fail, error) exists for backward compatibility with the v1 Verdict output format and CLI exit codes (0/1/2). It is a lossy reduction and should be phased out in favor of `Status` everywhere.
 
-The mapping from validator statuses to gate verdict is in `compute_final_status()`. Status suppression (`suppress_errors`, `suppress_warnings`) can override individual validator statuses before aggregation.
+Status suppression (`suppress_errors`, `suppress_warnings`) can override individual validator statuses before aggregation.
 
 ## LLM Validators
 

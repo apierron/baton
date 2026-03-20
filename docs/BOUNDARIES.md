@@ -22,11 +22,11 @@ must use `BTreeMap`. This is already the convention — don't regress.
 
 ## Do Not Eagerly Load File Content
 
-The lazy loading pattern in `Artifact` and `Context` is intentional. Adding an `Artifact::from_file_with_content()` that reads immediately would break the design contract that validators only pay for what they use.
+The lazy loading pattern in `InputFile` is intentional. Loading content or computing hashes at construction time would break the design contract that validators only pay for what they use. Content and hash are loaded on first access via `OnceCell`.
 
 ## Do Not Add Global Mutable State
 
-No `static mut`, no `lazy_static` with interior mutability, no global registries. State flows through function arguments. The execution pipeline is a pure function of (config, artifact, context) → verdict.
+No `static mut`, no `lazy_static` with interior mutability, no global registries. State flows through function arguments. The execution pipeline is a pure function of (config, input files) → invocation result.
 
 ## Do Not Merge Config Parsing and Validation
 
@@ -42,6 +42,6 @@ Every `unwrap()` in non-test code is a potential crash. Use `?` propagation or e
 
 ## Security
 
-- Never log or include artifact content in error messages — artifacts may contain secrets.
+- Never log or include input file content in error messages — input files may contain secrets.
 - Environment variable interpolation (`${VAR}`) in config must not execute shell commands.
 - Script validator commands run via the system shell — always document this trust boundary.

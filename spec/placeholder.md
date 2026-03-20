@@ -1,8 +1,8 @@
 # module: placeholder
 
-Template placeholder resolution. Substitutes `{artifact}`, `{context.<name>}`, `{verdict.<name>.status}`, and similar placeholders in command strings and prompt templates. Also provides environment variable interpolation for config strings.
+Template placeholder resolution. Substitutes placeholders in command strings and prompt templates using the invocation's input files and prior validator results. Bare references (`{file}`, `{input}`, `{input.<name>}`) resolve to file content. Dotted variants (`{file.path}`, `{input.paths}`, `{input.<name>.path}`) resolve to paths or other metadata. Also provides environment variable interpolation for config strings.
 
-This module is intentionally lenient: most resolution failures produce warnings and empty strings rather than errors. The rationale is that placeholder resolution happens inside validators that are already running — aborting the entire gate because of a missing context reference would be more disruptive than emitting an empty string and letting the validator produce a meaningful failure on its own terms.
+This module is intentionally lenient: most resolution failures produce warnings and empty strings rather than errors. The rationale is that placeholder resolution happens inside validators that are already running — aborting the entire gate because of a missing input reference would be more disruptive than emitting an empty string and letting the validator produce a meaningful failure on its own terms.
 
 ## Public functions
 
@@ -20,7 +20,9 @@ This module is intentionally lenient: most resolution failures produce warnings 
 
 ## Design notes
 
-resolve_placeholders takes `&mut Artifact` and `&mut Context` rather than shared references because resolving `{artifact_content}` and `{context.<name>.content}` triggers lazy content loading. This is a side effect of resolution, but the alternative — requiring all content to be pre-loaded — would force eager loading of potentially large files that might never be referenced.
+resolve_placeholders takes the invocation's input files. Resolving `{file}`, `{input}`, and `{input.<name>}` triggers lazy content loading on the relevant InputFile. This is a side effect of resolution, but the alternative — requiring all content to be pre-loaded — would force eager loading of potentially large files that might never be referenced.
+
+The bare forms (`{file}`, `{input}`, `{input.<name>}`) all resolve to content. This is the common case for LLM prompts: you want the file's text in your prompt. The `.path` variants exist for scripts that need to operate on the file by path.
 
 resolve_env_vars is a standalone utility separate from resolve_placeholders. It uses `${VAR}` syntax (shell-style) while resolve_placeholders uses `{placeholder}` syntax (single-brace). The two are never composed — env vars are resolved during config parsing, placeholders during execution. This separation prevents ambiguity and double-resolution issues.
 
@@ -30,15 +32,16 @@ Missing verdict status defaults to "skip" rather than producing an error. This i
 
 ## resolve_placeholders
 
-Resolves all `{...}` placeholders in a template string against the current artifact, context, and prior validator results. Returns the resolved string. Warnings are accumulated in the `ResolutionWarnings` struct rather than printed, allowing callers to decide how to surface them.
+Resolves all `{...}` placeholders in a template string against the current invocation's input files and prior validator results. Returns the resolved string. Warnings are accumulated in the `ResolutionWarnings` struct rather than printed, allowing callers to decide how to surface them.
 
 ### Sections
 
 1. Brace parsing and dispatch
-2. Artifact placeholders
-3. Context placeholders
-4. Verdict placeholders
-5. Unrecognized and malformed placeholders
+2. Per-file placeholders (`{file}`, `{file.*}`)
+3. Batch placeholders (`{input}`, `{input.paths}`)
+4. Named input placeholders (`{input.<name>}`, `{input.<name>.*}`)
+5. Verdict placeholders
+6. Unrecognized and malformed placeholders
 
 ### resolve_placeholders: brace parsing and dispatch
 
@@ -59,42 +62,6 @@ SPEC-PH-RP-003: no-placeholders-passthrough
 SPEC-PH-RP-004: multiple-placeholders-in-one-template
   Multiple placeholders in a single template are each resolved independently. Text between placeholders is preserved literally.
   test: placeholder::tests::resolve_verdict_status (two placeholders in one template)
-
-### resolve_placeholders: artifact placeholders
-
-SPEC-PH-RP-010: artifact-resolves-to-absolute-path
-  `{artifact}` resolves to the absolute path of the artifact file via `artifact.absolute_path()`. When the artifact is from_string (no file path), `absolute_path()` returns None, and the placeholder resolves to an empty string.
-  test: placeholder::tests::artifact_file_backed_resolves_to_path
-  test: placeholder::tests::artifact_from_string_resolves_to_empty
-
-SPEC-PH-RP-011: artifact-dir-resolves-to-parent
-  `{artifact_dir}` resolves to the parent directory of the artifact file via `artifact.parent_dir()`. When the artifact is from_string, resolves to an empty string.
-  test: placeholder::tests::artifact_dir_resolves_to_parent
-
-SPEC-PH-RP-012: artifact-content-resolves-to-inline-content
-  `{artifact_content}` resolves to the artifact's content as a lossy UTF-8 string via `artifact.get_content_as_string()`. This triggers lazy content loading for file-backed artifacts. If content loading fails, resolves to an empty string (via `unwrap_or_default`). For from_string artifacts, returns the string content directly.
-  test: placeholder::tests::resolve_artifact_content
-
-### resolve_placeholders: context placeholders
-
-Context placeholder names are extracted by stripping the `context.` prefix. The `.content` suffix, if present, is checked first to avoid ambiguity with context item names that contain dots.
-
-SPEC-PH-RP-020: context-path-resolves-to-absolute-path
-  `{context.<name>}` resolves to the absolute path of the named context item via `item.absolute_path()`. For string-content context items (no file path), `absolute_path()` returns None, resolving to an empty string.
-  test: placeholder::tests::context_file_backed_resolves_to_path
-  test: placeholder::tests::context_string_resolves_to_empty_path
-
-SPEC-PH-RP-021: context-content-resolves-to-inline-content
-  `{context.<name>.content}` resolves to the content of the named context item via `item.get_content()`. This triggers lazy loading for file-backed items. Returns the content as a string.
-  test: placeholder::tests::resolve_context_content
-
-SPEC-PH-RP-022: missing-context-warns-and-returns-empty
-  When `{context.<name>}` or `{context.<name>.content}` references a name not present in the context map, the placeholder resolves to an empty string and a warning is added. The warning message includes the full placeholder expression and the missing context name.
-  test: placeholder::tests::resolve_missing_context_warns
-
-SPEC-PH-RP-023: context-content-suffix-checked-before-path
-  The `.content` suffix is stripped before checking for the context item. This means a context item named `foo.content` cannot be referenced by path — `{context.foo.content}` will always be interpreted as a content request for context item `foo`. This is a known limitation of the simple suffix-stripping approach.
-  test: UNTESTED
 
 ### resolve_placeholders: verdict placeholders
 
@@ -123,12 +90,116 @@ SPEC-PH-RP-034: unrecognized-verdict-subpath-warns
 ### resolve_placeholders: unrecognized and malformed placeholders
 
 SPEC-PH-RP-040: unrecognized-placeholder-left-as-literal
-  When a placeholder does not match any known pattern (`artifact`, `artifact_dir`, `artifact_content`, `context.*`, `verdict.*`), it is emitted as a literal including its braces (e.g., `{typo}` remains `{typo}` in the output) and a warning is added. This preserves the original text for debugging while signaling the issue through warnings.
+  When a placeholder does not match any known pattern (`file`, `file.*`, `input`, `input.*`, `verdict.*`), it is emitted as a literal including its braces (e.g., `{typo}` remains `{typo}` in the output) and a warning is added. `{artifact}` is now unrecognized and left as literal. This preserves the original text for debugging while signaling the issue through warnings.
   test: placeholder::tests::resolve_unrecognized_placeholder
 
 SPEC-PH-RP-041: warnings-accumulate-across-placeholders
   Multiple resolution warnings from different placeholders in the same template are all collected in the `ResolutionWarnings` struct. The caller receives the full list.
   test: placeholder::tests::multiple_warnings_in_one_call
+
+---
+
+## Per-file placeholders
+
+Placeholders available when a validator operates in per-file mode (one invocation per matching file).
+
+SPEC-PH-FP-001: file-resolves-to-content
+  `{file}` resolves to the file's text content (UTF-8). This is the default for consistency with `{input}` and `{input.<name>}`, which also resolve to content. Use `{file.path}` when the path is needed (e.g., passing to a script command).
+  test: placeholder::tests::resolve_file_path_placeholder
+
+SPEC-PH-FP-002: file-path-resolves-to-absolute-path
+  `{file.path}` resolves to the absolute path of the current file.
+  test: placeholder::tests::resolve_file_properties
+
+SPEC-PH-FP-003: file-dir-resolves-to-parent
+  `{file.dir}` resolves to the parent directory.
+  test: placeholder::tests::resolve_file_properties
+
+SPEC-PH-FP-004: file-name-resolves-to-filename
+  `{file.name}` resolves to the filename with extension.
+  test: IMPLICIT via placeholder::tests::resolve_file_properties
+
+SPEC-PH-FP-005: file-stem-resolves-to-stem
+  `{file.stem}` resolves to the filename without extension.
+  test: IMPLICIT via placeholder::tests::resolve_file_properties
+
+SPEC-PH-FP-006: file-ext-resolves-to-extension
+  `{file.ext}` resolves to the extension without dot.
+  test: IMPLICIT via placeholder::tests::resolve_file_properties
+
+SPEC-PH-FP-007: file-content-is-explicit-alias
+  `{file.content}` is an explicit alias for `{file}`. Both resolve to the file's text content.
+  test: placeholder::tests::resolve_file_content_placeholder
+
+SPEC-PH-FP-008: file-placeholder-requires-per-file-mode
+  Using `{file}` or `{file.*}` in a batch or named-input validator is a config validation error.
+  test: TODO
+
+---
+
+## Batch placeholders
+
+Placeholders available when a validator operates in batch mode (`collect = true`).
+
+SPEC-PH-BP-001: input-resolves-to-concatenated-content
+  `{input}` in batch mode resolves to the concatenated contents of all matched files.
+  test: TODO
+
+SPEC-PH-BP-002: input-paths-resolves-to-space-separated
+  `{input.paths}` resolves to space-separated absolute paths.
+  test: TODO
+
+---
+
+## Named input placeholders
+
+Placeholders available when a validator has named input slots (`input.code`, `input.spec`, etc.).
+
+SPEC-PH-NP-001: named-input-resolves-to-content
+  `{input.<name>}` resolves to the file's text content. This is consistent with `{file}` and `{input}` — bare references always mean content. Use `{input.<name>.path}` for the path.
+  test: TODO
+
+SPEC-PH-NP-002: named-input-path
+  `{input.<name>.path}` resolves to the absolute path.
+  test: TODO
+
+SPEC-PH-NP-003: named-input-name
+  `{input.<name>.name}` resolves to the filename.
+  test: TODO
+
+SPEC-PH-NP-004: named-input-stem
+  `{input.<name>.stem}` resolves to the stem.
+  test: TODO
+
+SPEC-PH-NP-005: named-input-content
+  `{input.<name>.content}` resolves to the file content.
+  test: placeholder::tests::resolve_named_input_content
+
+SPEC-PH-NP-006: named-input-paths-plural
+  `{input.<name>.paths}` resolves to space-separated paths when the slot has multiple files.
+  test: TODO
+
+SPEC-PH-NP-007: missing-named-input-warns
+  Referencing an `{input.<name>}` that doesn't exist in the validator's declarations produces a warning and resolves to empty string.
+  test: TODO
+
+---
+
+## Placeholder validation
+
+Static checks on placeholder usage relative to the validator's input mode.
+
+SPEC-PH-VL-001: template-placeholders-validated-against-inputs
+  `baton validate-config` checks that every placeholder in a template matches the validator's declared inputs.
+  test: TODO
+
+SPEC-PH-VL-002: file-placeholder-in-named-mode-errors
+  Using `{file}` when the validator has named inputs (no unnamed input) is a config validation error.
+  test: TODO
+
+SPEC-PH-VL-003: batch-placeholder-in-per-file-mode-errors
+  Using `{input}` (batch) when the validator has per-file input is a config validation error.
+  test: TODO
 
 ---
 

@@ -14,8 +14,8 @@ Like in a relay race, you're only done after you ***pass the baton***.
 ## Design Principles
 
 - **User-defined.** You describe what "valid" means for your domain. It all runs through a single config file, baton.toml.
-- **Context-isolated.** Baton only sees what you explicitly provide. This makes validation a stateless function: `artifact + context = verdict`.
-- **Observable.** Every step produces structured output. Verdict history is queryable and persisted locally in SQLite. This also allows for previous verification runs to optionally be used as context.
+- **Input-driven.** Baton collects input files from CLI args, git diffs, or source declarations, then dispatches them to validators based on pattern matching.
+- **Observable.** Every step produces structured output. Invocation history is queryable and persisted locally in SQLite.
 
 ## Installation
 
@@ -105,59 +105,64 @@ baton init
 
 This creates a `baton.toml` config, a `.baton/` directory for history and logs, and a `prompts/` directory with starter prompt templates. Run with `--minimal` to initialize without example prompts.
 
-### 2. Define a gate
+### 2. Define validators and gates
 
 Edit `baton.toml`:
 
 ```toml
-version = "0.4"
+version = "0.5"
+
+[validators.lint]
+type = "script"
+command = "ruff check {file.path}"
+input = "*.py"
+
+[validators.tests]
+type = "script"
+command = "pytest --tb=short"
 
 [gates.code-review]
-description = "Validates a code patch against a task spec"
-
-  [gates.code-review.context.spec]
-  description = "The task specification"
-  required = true
-
-  [[gates.code-review.validators]]
-  name = "lint"
-  type = "script"
-  command = "ruff check {artifact}"
-
-  [[gates.code-review.validators]]
-  name = "tests"
-  type = "script"
-  command = "pytest --tb=short"
-  blocking = true
+description = "Validates code changes"
+validators = [
+  { ref = "lint" },
+  { ref = "tests", blocking = true },
+]
 ```
 
-### 3. Run a gate
+### 3. Run validators
 
 ```bash
-baton check --gate code-review --artifact ./output.py --context spec=./task.md
+baton check ./output.py
 ```
 
-Pipe from stdin:
+Use `--diff` to validate changed files:
 
 ```bash
-cat output.py | baton check --gate code-review --artifact - --context spec=./task.md
+baton check --diff HEAD~1
+```
+
+Or pipe a file list:
+
+```bash
+git diff --name-only HEAD~1 | baton check --files -
 ```
 
 ### 4. View results
 
-The verdict is printed as JSON by default:
+The result is printed as JSON by default:
 
 ```json
 {
-  "status": "pass",
-  "gate": "code-review",
-  "artifact_hash": "sha256:...",
-  "context_hash": "sha256:...",
-  "duration_ms": 1234,
-  "warnings": [],
-  "history": [
-    { "name": "lint", "status": "pass", "duration_ms": 450 },
-    { "name": "tests", "status": "pass", "duration_ms": 784 }
+  "gate_results": [
+    {
+      "gate": "code-review",
+      "status": "pass",
+      "duration_ms": 1234,
+      "validator_results": [
+        { "name": "lint", "status": "pass", "duration_ms": 450 },
+        { "name": "tests", "status": "pass", "duration_ms": 784 }
+      ]
+    }
   ]
 }
 ```
@@ -167,7 +172,7 @@ Use `--format human` for a readable summary or `--format summary` for a one-line
 ## CLI Reference
 
 ```text
-baton check            Run a gate against an artifact
+baton check            Run validators against input files
 baton init             Scaffold a new baton project
 baton list             List gates and validators in a config
 baton history          Query verdict history from the SQLite database
@@ -184,16 +189,14 @@ baton version          Print version information
 
 | Flag | Description |
 | ---- | ----------- |
-| `--gate <name>` | Gate to run (required) |
-| `--artifact <path>` | Path to artifact, or `-` for stdin (required) |
-| `--context <name>=<path>` | Context item (repeatable) |
+| `<files...>` | Positional args: input files/directories (dirs walked recursively) |
+| `--diff <refspec>` | Add git-changed files to the input pool |
+| `--files <path\|->` | Read newline-separated file paths from a file or stdin |
+| `--only <selector>` | Run only matching gates/validators (`gate`, `gate.validator`, `@tag`) |
+| `--skip <selector>` | Skip matching gates/validators (same syntax as `--only`) |
 | `--config <path>` | Path to `baton.toml` (default: auto-discover) |
 | `--format <json\|human\|summary>` | Output format |
-| `--dry-run` | Print validators that would run and exit |
-| `--all` | Run all validators even if a blocking one fails |
-| `--only <names>` | Run only named validators (comma-separated) |
-| `--skip <names>` | Skip named validators (comma-separated) |
-| `--tags <tags>` | Run only validators with these tags |
+| `--dry-run` | Print invocation plan and exit |
 | `--timeout <seconds>` | Override default timeout for all validators |
 | `--no-log` | Don't write to history database |
 | `--verbose` | Print each validator's result as it completes |
@@ -207,10 +210,10 @@ baton version          Print version information
 Runs a shell command. Exit code 0 = pass, nonzero = fail. An optional `warn_exit_codes` list maps specific exit codes to `warn`. Stdout/stderr is captured as feedback.
 
 ```toml
-[[gates.my-gate.validators]]
-name = "lint"
+[validators.lint]
 type = "script"
-command = "ruff check {artifact}"
+command = "ruff check {file.path}"
+input = "*.py"
 warn_exit_codes = [2]
 ```
 
@@ -218,17 +221,17 @@ warn_exit_codes = [2]
 
 Invokes a language model for validation in one of two modes:
 
-- **completion** — Sends the artifact and a prompt template to a model. The response is parsed for a structured verdict keyword (PASS/FAIL/WARN).
+- **completion** — Sends input files and a prompt template to a model. The response is parsed for a structured verdict keyword (PASS/FAIL/WARN).
 - **session** — Launches a multi-turn agent session via a runtime adapter. The agent can use tools, read files, and produce a verdict grounded in observation.
 
 ```toml
-[[gates.my-gate.validators]]
-name = "spec-check"
+[validators.spec-check]
 type = "llm"
 mode = "completion"
 prompt = "spec-compliance"
 provider = "default"
 model = "claude-haiku"
+input = { code = "*.py", spec = { path = "spec.md" } }
 ```
 
 ### Human
@@ -236,11 +239,9 @@ model = "claude-haiku"
 Halts the pipeline and reports a failure with a human-review prompt as feedback. Baton does not block waiting for input — it fails with a clear signal that human review was requested.
 
 ```toml
-[[gates.my-gate.validators]]
-name = "human-review"
+[validators.human-review]
 type = "human"
-prompt = "Review this artifact for correctness"
-blocking = false
+prompt = "Review this code for correctness"
 ```
 
 ## Configuration
@@ -263,38 +264,45 @@ Prompt templates use a `+++`-delimited TOML frontmatter format:
 ```text
 +++
 name = "spec-compliance"
-description = "Check artifact against a specification"
+description = "Check code against a specification"
 expects = "verdict"
 +++
 
-Review the following artifact against the provided specification.
+Review the following code against the provided specification.
 
-**Artifact:**
-{artifact_content}
+**Code:**
+{input.code.content}
 
 **Specification:**
-{context.spec.content}
+{input.spec.content}
 
-Respond with PASS if the artifact meets the specification, or FAIL with an explanation.
+Respond with PASS if the code meets the specification, or FAIL with an explanation.
 ```
 
-Available placeholders: `{artifact}`, `{artifact_dir}`, `{artifact_content}`, `{context.<name>}`, `{context.<name>.content}`, `{verdict.<name>.status}`, `{verdict.<name>.feedback}`.
+Available placeholders:
+- Per-file: `{file}` (content), `{file.path}`, `{file.dir}`, `{file.name}`, `{file.stem}`, `{file.ext}`, `{file.content}` (alias for `{file}`)
+- Batch: `{input}`, `{input.paths}`
+- Named: `{input.<name>}`, `{input.<name>.path}`, `{input.<name>.name}`, `{input.<name>.content}`
+- Verdict: `{verdict.<name>.status}`, `{verdict.<name>.feedback}`
 
 Three starter templates are included with `baton init`: spec-compliance, adversarial-review, and doc-completeness.
 
-## Verdict History
+## Invocation History
 
-Baton persists every verdict to a local SQLite database (`.baton/history.db`). Query it:
+Baton persists every invocation to a local SQLite database (`.baton/history.db`). Query it:
 
 ```bash
-# Last 10 verdicts
+# Last 10 invocations
 baton history --limit 10
 
-# Filter by gate
-baton history --gate code-review
+# Filter by file
+baton history --file src/main.rs
 
-# Filter by status
-baton history --status fail
+# Filter by content hash
+baton history --hash sha256:abc123
+
+# Detail for a specific invocation
+baton history --invocation <id>
 ```
 
 ## Testing

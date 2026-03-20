@@ -95,8 +95,10 @@ The module prefix is a two-letter code identifying the source module. The sectio
 | exec | `EX` |
 | history | `HI` |
 | runtime | `RT` |
+| provider | `PV` |
+| main | `MN` |
 
-Section prefixes are specific to each module. For example, in `config.md`: `PC` for parse_config, `VC` for validate_config, `SR` for split_run_if, `DC` for discover_config.
+Section prefixes are specific to each module. For example, in `config.md`: `PC` for parse_config, `VC` for validate_config, `SC` for source parsing, `VP` for validator parsing, `GR` for gate reference parsing, `SR` for split_run_if, `DC` for discover_config. In `exec.md`: `FC` for file collector, `DP` for dispatch planner, `PL` for execution pipeline.
 
 **Test reference** is one of:
 
@@ -130,24 +132,24 @@ These notes are prose, not assertions. They don't have IDs or test references. T
 The space between the `---` divider and the first assertion in each section is for decision-tree prose. This is where you describe the logic flow, ordering constraints, and edge cases that the assertions individually verify:
 
 ```markdown
-## run_gate: pre-flight checks
+## Dispatch planner
 
-Before executing any validators, run_gate validates that the inputs
-are well-formed. These checks run in a fixed order. The first failure
-returns immediately — there is no accumulation of pre-flight errors,
-because downstream checks may depend on earlier ones succeeding
-(e.g., hash computation requires a readable file).
+The dispatch planner matches the input file pool against each validator's
+input declaration to produce Invocations. Each invocation is a concrete
+unit of work: one validator + one set of input files.
 
-Required-context checking happens here, not in validate_config(),
-because context is provided at runtime via CLI args, not in baton.toml.
+The planner handles four input forms:
+- No input: single invocation with no files
+- Per-file: one invocation per matching file
+- Batch: single invocation with all matching files
+- Named: grouped by key expression, one invocation per distinct key
 
 Edge cases to consider:
-- Artifact is from_string (no path) — path checks are skipped entirely
-- Context item whose path doesn't exist vs. context item with inline string
-- The ordering of checks matters: a nonexistent path should get
-  ArtifactNotFound, not ArtifactIsDirectory
+- No files match a validator's glob — validator is skipped with a warning
+- Incomplete key group (key appears in one input slot but not another) — skipped
+- Fixed inputs (path) are injected into every invocation regardless of grouping
 
-SPEC-EX-RG-001: artifact-path-must-exist
+SPEC-EX-DP-001: no-input-produces-single-invocation
   ...
 ```
 

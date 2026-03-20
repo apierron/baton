@@ -1,43 +1,30 @@
 # module: types
 
-Core data types for baton: artifacts, context, verdicts, and run options.
+Core data types for baton: input files, invocations, verdicts, and run options.
 
-This module defines the value-layer types that every other module depends on. It has no dependencies on other baton modules (except `error`), making it the leaf of the dependency graph. The key abstractions are Artifact (lazy-loaded file/string with SHA-256 hashing), ContextItem and Context (named reference documents in a deterministic collection), Status/VerdictStatus (validator-level vs gate-level outcomes), ValidatorResult, Verdict (with JSON/human/summary output), and RunOptions.
+This module defines the value-layer types that every other module depends on. It sits at the bottom of the dependency graph. The key abstractions follow the three-layer composition model: InputFile (a file from the pool), Invocation (a single run of a stateless validator against specific files), GateResult/InvocationResult (orchestration outcomes), Verdict (backward-compatible gate-level output), Status/VerdictStatus (validator-level vs gate-level outcomes), ValidatorResult, and RunOptions.
 
 ## Public types and functions
 
 | Type/Function                  | Purpose                                                 |
 |--------------------------------|---------------------------------------------------------|
-| `Artifact::from_file`          | Create artifact from filesystem path                    |
-| `Artifact::from_string`        | Create artifact from inline string                      |
-| `Artifact::from_bytes`         | Create artifact from raw bytes                          |
-| `Artifact::get_content`        | Lazy content loading (reads file on first access)       |
-| `Artifact::get_hash`           | SHA-256 hash, computed and cached on first call         |
-| `Artifact::get_content_as_string` | Lossy UTF-8 conversion of content                    |
-| `Artifact::absolute_path`      | Returns absolute path string if file-backed             |
-| `Artifact::parent_dir`         | Returns parent directory string if file-backed          |
-| `ContextItem::from_file`       | Create context item from filesystem path                |
-| `ContextItem::from_string`     | Create context item from inline string                  |
-| `ContextItem::get_content`     | Lazy content loading (reads file on first access)       |
-| `ContextItem::get_hash`        | SHA-256 hash of content (not cached)                    |
-| `ContextItem::absolute_path`   | Returns absolute path string if file-backed             |
-| `Context::new`                 | Empty BTreeMap collection                               |
-| `Context::add_file`            | Add file-backed context item                            |
-| `Context::add_string`          | Add inline string context item                          |
-| `Context::get_hash`            | Combined hash of all items in sorted key order          |
+| `InputFile`                    | A file from the input pool: path, lazy content, lazy hash |
+| `InputFile::get_content`       | Lazy content loading (reads file on first access)       |
+| `InputFile::get_hash`          | SHA-256 hash, computed and cached on first call         |
+| `Invocation`                   | Validator name + group key + input files map            |
 | `Status`                       | 5-variant enum: Pass, Fail, Warn, Skip, Error           |
 | `VerdictStatus`                | 3-variant enum: Pass, Fail, Error                       |
 | `ValidatorResult`              | Single validator outcome with name, status, feedback    |
+| `GateResult`                   | Gate-level result with status and validator results     |
+| `InvocationResult`             | Top-level result with gate results and duration         |
 | `Verdict`                      | Gate-level result with history and output formatters    |
 | `RunOptions`                   | Runtime options for filtering and reporting              |
 
 ## Design notes
 
-Artifact uses lazy content and hash loading. Content is not read from disk until `get_content` is called, and the hash is not computed until `get_hash` is called. Once computed, the hash is cached in the struct so subsequent calls return the same value even if the underlying file changes. This is intentional: the hash captures the artifact state at the time of first access, which is when baton records it in the verdict.
+InputFile uses lazy content and hash loading. Content is not read from disk until first access, and the hash is not computed until first access. Both are cached after first computation so subsequent accesses return the same value even if the underlying file changes on disk. This is intentional: the hash captures the file state at validation time.
 
-Context uses BTreeMap rather than HashMap so that iteration order is deterministic (sorted by key name). This matters because `get_hash` joins individual item hashes in iteration order — a HashMap would produce different combined hashes depending on internal bucket ordering, making verdicts non-reproducible.
-
-VerdictStatus has only three variants (Pass, Fail, Error) while Status has five (adding Warn, Skip). This is a deliberate gate-level vs validator-level distinction. A single validator can warn or be skipped, but a gate as a whole either passes, fails, or errors. The mapping from validator statuses to a gate verdict is handled by `exec::compute_final_status`, not by this module.
+Status is the single status type used at every level: validators, gates, and the top-level invocation. All five variants (Pass, Fail, Warn, Skip, Error) are valid everywhere. A gate can be skipped (e.g., filtered out by `--skip`) and can produce a warning (e.g., all validators passed but some warned). VerdictStatus exists for backward compatibility with v1 output format but should be phased out — it is a lossy reduction of Status to three values (Pass, Fail, Error) and loses skip/warn information.
 
 Status::FromStr only accepts exact lowercase strings. This prevents ambiguity (e.g., "PASS" vs "Pass" vs "pass") and matches the serde representation. The error message includes the rejected value to aid debugging.
 
@@ -47,220 +34,52 @@ RunOptions::new() enables logging while Default (derived) disables it. The `new(
 
 ---
 
-## Artifact
+## InputFile
 
-Represents a file or in-memory content to be validated. Supports lazy content loading from disk and cached SHA-256 hashing.
+Represents a file from the input pool. Content and hash are loaded lazily and cached.
 
-### Sections
+SPEC-TY-IF-001: fields
+  An InputFile tracks its filesystem path, its text content (lazy), and its SHA-256 hash (lazy). Construction records the path without reading the file.
+  test: types::tests::input_file_fields
 
-1. Construction (from_file, from_string, from_bytes)
-2. Content access (get_content, get_content_as_string)
-3. Hashing (get_hash)
-4. Path accessors (absolute_path, parent_dir)
+SPEC-TY-IF-002: lazy-content-loading
+  Content is loaded on first access via `get_content()`, not at construction time.
+  test: types::tests::input_file_lazy_content_loading
 
-### Artifact: construction
-
-Artifacts can be created from three sources: a filesystem path, an inline string, or raw bytes. File-backed artifacts validate the path at construction time but defer reading content until first access.
-
-SPEC-TY-AF-001: from-file-rejects-nonexistent-path
-  When the path does not exist on disk, `from_file` returns `Err(BatonError::ArtifactNotFound)` containing the path string. The existence check runs before the directory check.
-  test: types::tests::artifact_from_file_not_found
-
-SPEC-TY-AF-002: from-file-rejects-directory
-  When the path exists but is a directory, `from_file` returns `Err(BatonError::ArtifactIsDirectory)` containing the path string. This check runs after the existence check, so a nonexistent path always gets ArtifactNotFound, never ArtifactIsDirectory.
-  test: types::tests::artifact_from_file_is_directory
-
-SPEC-TY-AF-003: from-file-converts-relative-to-absolute
-  When a relative path is provided, `from_file` resolves it to an absolute path using `std::env::current_dir()`. The stored `path` field is always absolute after successful construction.
-  test: types::tests::artifact_from_file_stores_absolute_path
-
-SPEC-TY-AF-004: from-file-defers-content-read
-  A successful `from_file` call sets `content` to None and `hash` to None. Content is not read from disk until `get_content` is called. This allows constructing an artifact for path validation without incurring I/O cost.
-  test: IMPLICIT via types::tests::artifact_from_file_success (content only read after get_content call)
-
-SPEC-TY-AF-005: from-file-stores-path
-  After successful construction, `artifact.path` is `Some` containing the absolute path.
-  test: types::tests::artifact_from_file_success
-
-SPEC-TY-AF-006: from-string-stores-content-immediately
-  `from_string` converts the string to bytes and stores it in `content` immediately. The `path` field is None. No filesystem access occurs.
-  test: types::tests::artifact_from_string
-
-SPEC-TY-AF-007: from-string-has-no-path
-  An artifact created via `from_string` has `path` set to None.
-  test: types::tests::artifact_absolute_path_from_string_is_none
-
-SPEC-TY-AF-008: from-bytes-stores-content-immediately
-  `from_bytes` takes ownership of a `Vec<u8>` and stores it directly in `content`. The `path` field is None.
-  test: types::tests::artifact_from_bytes
-
-SPEC-TY-AF-009: from-bytes-has-no-path
-  An artifact created via `from_bytes` has `path` set to None.
-  test: types::tests::artifact_from_bytes
-
-SPEC-TY-AF-010: empty-file-is-valid-artifact
-  A file with zero bytes is a valid artifact. `from_file` succeeds and `get_content` returns an empty slice.
-  test: types::tests::artifact_empty_file_is_valid
-
-### Artifact: content access
-
-SPEC-TY-AF-020: get-content-reads-file-on-first-call
-  For file-backed artifacts, `get_content` reads the file from disk on its first invocation and caches the bytes. Subsequent calls return the cached content without re-reading.
-  test: types::tests::artifact_from_file_success
-
-SPEC-TY-AF-021: get-content-returns-cached-for-string-artifacts
-  For string/bytes artifacts, `get_content` returns the content that was provided at construction time. No filesystem access occurs.
-  test: types::tests::artifact_from_string
-
-SPEC-TY-AF-022: get-content-panics-if-no-path-and-no-content
-  If both `path` and `content` are None, `get_content` panics with "Artifact must have path or content". This state is unreachable through the public API — all constructors set at least one of path or content.
-  test: UNTESTED (unreachable through public API)
-
-SPEC-TY-AF-023: get-content-as-string-uses-lossy-utf8
-  `get_content_as_string` converts the raw bytes to a String using `String::from_utf8_lossy`. Invalid UTF-8 sequences are replaced with U+FFFD (replacement character). This never fails — it always returns Ok.
-  test: types::tests::artifact_get_content_as_string_lossy
-
-### Artifact: hashing
-
-SPEC-TY-AF-030: get-hash-returns-sha256-hex
-  `get_hash` returns the SHA-256 digest of the content as a lowercase hex-encoded string. The hash is always exactly 64 characters of ASCII hex digits.
-  test: types::tests::artifact_hash_is_64_hex_chars
-
-SPEC-TY-AF-031: get-hash-is-deterministic
-  Two artifacts with identical content produce identical hashes, regardless of construction method.
-  test: types::tests::artifact_hash_deterministic
-
-SPEC-TY-AF-032: get-hash-differs-for-different-content
-  Two artifacts with different content produce different hashes.
-  test: types::tests::artifact_hash_differs_for_different_content
-
-SPEC-TY-AF-033: get-hash-is-cached
-  Once computed, the hash is cached in the struct. Subsequent calls to `get_hash` return the cached value. If the underlying file is modified after the first `get_hash` call, the returned hash does not change.
-  test: types::tests::artifact_hash_cached_on_second_call
-
-SPEC-TY-AF-034: get-hash-triggers-lazy-content-load
-  Calling `get_hash` on a file-backed artifact that has not yet had `get_content` called will trigger the lazy content read as a side effect, because the hash is computed from the content bytes.
-  test: IMPLICIT via types::tests::artifact_hash_deterministic (hash computed without prior get_content)
-
-### Artifact: path accessors
-
-SPEC-TY-AF-040: absolute-path-returns-string-for-file-backed
-  For file-backed artifacts, `absolute_path` returns `Some(String)` containing the absolute path. The path is always absolute because `from_file` normalizes it.
-  test: types::tests::artifact_absolute_path_from_file
-
-SPEC-TY-AF-041: absolute-path-returns-none-for-non-file
-  For string or bytes artifacts, `absolute_path` returns None.
-  test: types::tests::artifact_absolute_path_from_string_is_none
-
-SPEC-TY-AF-042: parent-dir-returns-parent-for-file-backed
-  For file-backed artifacts, `parent_dir` returns `Some(String)` containing the parent directory of the file path. The returned path is a valid directory.
-  test: types::tests::artifact_parent_dir_from_file
-
-SPEC-TY-AF-043: parent-dir-returns-none-for-non-file
-  For string or bytes artifacts, `parent_dir` returns None.
-  test: types::tests::artifact_absolute_path_from_string_is_none
+SPEC-TY-IF-003: lazy-hash-computation
+  Hash is computed on first access via `get_hash()`. Returns SHA-256 as lowercase hex. Cached after first computation.
+  test: types::tests::input_file_lazy_hash_computation
 
 ---
 
-## ContextItem
+## Invocation
 
-A named reference document provided as context for validation. Mirrors Artifact's lazy-loading pattern but stores content as String (UTF-8) rather than raw bytes, and includes a name field.
+A planned execution of a single stateless validator against a specific set of input files. The dispatch planner produces one Invocation per "run" of a validator — one per matching file for per-file validators, one total for batch validators, one per key-group for multi-input validators.
 
-SPEC-TY-CI-001: from-file-rejects-nonexistent-path
-  When the path does not exist on disk, `from_file` returns `Err(BatonError::ContextNotFound)` containing both the item name and the path string.
-  test: types::tests::context_item_from_file_not_found
-
-SPEC-TY-CI-002: from-file-rejects-directory
-  When the path exists but is a directory, `from_file` returns `Err(BatonError::ContextIsDirectory)` containing both the item name and the path string.
-  test: types::tests::context_item_from_file_is_directory
-
-SPEC-TY-CI-003: from-file-converts-relative-to-absolute
-  When a relative path is provided, `from_file` resolves it to an absolute path using `std::env::current_dir()`. The stored `path` field is always absolute.
-  test: types::tests::context_item_from_file_stores_absolute_path
-
-SPEC-TY-CI-004: from-file-defers-content-read
-  A successful `from_file` call sets `content` to None. Content is not read from disk until `get_content` is called.
-  test: IMPLICIT via types::tests::context_add_file_success
-
-SPEC-TY-CI-005: from-string-stores-content-immediately
-  `from_string` stores the provided String directly. The `path` field is None.
-  test: types::tests::context_item_from_string
-
-SPEC-TY-CI-006: from-string-has-no-path
-  A context item created via `from_string` has `absolute_path()` returning None.
-  test: types::tests::context_item_from_string_has_no_path
-
-SPEC-TY-CI-007: get-content-reads-file-on-first-call
-  For file-backed items, `get_content` reads the file as a UTF-8 string on first invocation and caches the result.
-  test: types::tests::context_add_file_success
-
-SPEC-TY-CI-008: get-content-panics-if-no-path-and-no-content
-  If both `path` and `content` are None, `get_content` panics with "ContextItem must have path or content". This state is unreachable through the public API.
-  test: UNTESTED (unreachable through public API)
-
-SPEC-TY-CI-009: get-hash-returns-sha256-hex
-  `get_hash` returns the SHA-256 digest of the content string as a lowercase hex-encoded string.
-  test: IMPLICIT via types::tests::context_hash_deterministic
-
-SPEC-TY-CI-010: get-hash-is-not-cached
-  Unlike Artifact, ContextItem does not cache its hash. Each call to `get_hash` recomputes from content. This is a simplification — context items are typically hashed once during pre-flight.
-  test: types::tests::context_item_get_hash_recomputes_same_value
-
-SPEC-TY-CI-011: absolute-path-returns-string-for-file-backed
-  For file-backed items, `absolute_path` returns `Some(String)` containing the absolute path.
-  test: types::tests::context_item_absolute_path
-
-SPEC-TY-CI-012: absolute-path-returns-none-for-string
-  For inline string items, `absolute_path` returns None.
-  test: types::tests::context_item_from_string_has_no_path
+SPEC-TY-IN-001: fields
+  An Invocation identifies which validator to run, an optional group key (the matched key value for multi-input validators, absent for no-input/batch), and a map of named input slots to their files.
+  test: types::tests::invocation_fields
+  test: types::tests::invocation_with_input_files
 
 ---
 
-## Context
+## GateResult
 
-Ordered collection of named context items. Uses `BTreeMap<String, ContextItem>` for deterministic iteration order.
+Result of running all validators in a single gate. Gates are orchestration — they don't touch files, they sequence validators and reduce their statuses to a single verdict.
 
-The choice of BTreeMap over HashMap is load-bearing for hash reproducibility. If two baton invocations provide the same context items (possibly in different order), they must produce the same `context_hash` in the verdict. BTreeMap guarantees sorted-key iteration, making the combined hash independent of insertion order.
+SPEC-TY-GR-001: fields
+  A GateResult records which gate ran, its overall status (any of pass/fail/warn/skip/error), all individual validator results (in pipeline order), and the total wall-clock duration. A gate can be skipped (filtered by `--skip`) or produce a warning (all validators passed but some warned).
+  test: types::tests::gate_result_fields
 
-SPEC-TY-CX-001: new-creates-empty-collection
-  `Context::new()` returns a context with an empty items map.
-  test: IMPLICIT via types::tests::context_hash_empty
+---
 
-SPEC-TY-CX-002: add-file-delegates-to-context-item
-  `add_file` creates a `ContextItem::from_file` and inserts it into the map by name. It propagates any error from `ContextItem::from_file` (e.g., file not found, is directory).
-  test: types::tests::context_add_file_success
+## InvocationResult
 
-SPEC-TY-CX-003: add-string-inserts-inline-item
-  `add_string` creates a `ContextItem::from_string` and inserts it into the map by name. This operation is infallible (no Result return).
-  test: IMPLICIT via types::tests::context_hash_deterministic
+Top-level result of a single `baton check` invocation. Contains the results of all gates that ran.
 
-SPEC-TY-CX-004: add-overwrites-existing-key
-  If an item with the same name already exists, `add_file` or `add_string` replaces it silently. BTreeMap::insert overwrites on duplicate keys.
-  test: types::tests::context_add_duplicate_replaces_silently
-
-SPEC-TY-CX-005: get-hash-joins-item-hashes-with-colon
-  `get_hash` computes the SHA-256 hash of each item (in sorted key order), joins them with ":" as separator, then computes the SHA-256 of the joined string.
-  test: IMPLICIT via types::tests::context_hash_deterministic
-
-SPEC-TY-CX-006: get-hash-is-deterministic-regardless-of-insertion-order
-  Two Context collections with the same items inserted in different order produce the same hash, because BTreeMap sorts by key.
-  test: types::tests::context_hash_deterministic
-
-SPEC-TY-CX-007: get-hash-of-empty-context
-  An empty context produces the SHA-256 of the empty string (since joining zero hashes with ":" yields "").
-  test: types::tests::context_hash_empty
-
-SPEC-TY-CX-008: get-hash-differs-with-different-content
-  Changing the content of an item (same key name) produces a different combined hash.
-  test: types::tests::context_hash_differs_with_different_content
-
-SPEC-TY-CX-009: get-hash-differs-when-values-swapped-between-keys
-  Two contexts with the same values assigned to different keys produce different hashes. The per-item hashes are the same, but their positions in the colon-joined string differ because the keys sort differently.
-  test: types::tests::context_hash_differs_with_different_key_names
-
-SPEC-TY-CX-010: same-content-different-key-name-produces-same-hash-for-single-item
-  When there is only one item, the combined hash depends only on the item's content hash, not its key name. Two single-item contexts with different key names but identical content produce the same combined hash. Key names affect ordering, not individual item hashes.
-  test: types::tests::context_single_item_hash_ignores_key_name
+SPEC-TY-IR-001: fields
+  An InvocationResult has a unique ID, the list of gate results (in execution order), and the total wall-clock duration of the entire invocation.
+  test: types::tests::invocation_result_fields
 
 ---
 
@@ -296,9 +115,9 @@ SPEC-TY-ST-006: status-is-copy
 
 ## VerdictStatus
 
-Three-variant enum representing the gate-level outcome: Pass, Fail, Error. No Warn or Skip variants exist at the gate level.
+**Deprecated.** Three-variant enum (Pass, Fail, Error) from v1. Exists for backward compatibility with the Verdict output format and exit code mapping. New code should use `Status` everywhere — gates and validators share the same five-variant status.
 
-The absence of Warn and Skip is deliberate. A gate either passes, fails, or encounters an error. Warnings from individual validators do not propagate to the gate verdict (they are treated as pass by `compute_final_status`). Skipped validators are excluded from consideration entirely.
+The exit code mapping (Pass=0, Fail=1, Error=2) remains useful for the CLI. Warn maps to exit 0 (pass with caveats), Skip maps to exit 0 (nothing to do).
 
 SPEC-TY-VS-001: exit-code-mapping
   `exit_code()` maps Pass to 0, Fail to 1, Error to 2. These are used as process exit codes by the CLI.
@@ -369,8 +188,6 @@ Final gate-level result containing all validator outcomes and aggregate metadata
 | `feedback`       | `Option<String>`       | Feedback from the failing validator            |
 | `duration_ms`    | `i64`                  | Total gate execution time                      |
 | `timestamp`      | `DateTime<Utc>`        | When the verdict was produced                  |
-| `artifact_hash`  | `String`               | SHA-256 of the artifact content                |
-| `context_hash`   | `String`               | Combined SHA-256 of all context items          |
 | `warnings`       | `Vec<String>`          | Non-fatal warnings collected during execution  |
 | `suppressed`     | `Vec<String>`          | Names of status-suppressed validators          |
 | `history`        | `Vec<ValidatorResult>` | All validator results in pipeline order        |
@@ -464,7 +281,6 @@ Runtime options controlling which validators to run and how results are reported
 | `run_all`            | `bool`               | false         | false              |
 | `only`               | `Option<Vec<String>>`| None          | None               |
 | `skip`               | `Option<Vec<String>>`| None          | None               |
-| `tags`               | `Option<Vec<String>>`| None          | None               |
 | `timeout`            | `Option<u64>`        | None          | None               |
 | `log`                | `bool`               | true          | false              |
 | `suppressed_statuses`| `Vec<Status>`        | empty         | empty              |
