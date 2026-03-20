@@ -80,14 +80,7 @@ fn check_pass() {
     let dir = setup_project(&toml, "hello");
 
     baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-        ])
+        .args(["check", "--no-log"])
         .current_dir(dir.path())
         .assert()
         .success();
@@ -99,14 +92,7 @@ fn check_pass_json_output() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-        ])
+        .args(["check", "--no-log"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -127,14 +113,7 @@ fn check_fail_exit_code_1() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-        ])
+        .args(["check", "--no-log"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -152,14 +131,7 @@ fn check_fail_exit_code_1() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-        ])
+        .args(["check", "--no-log"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -177,14 +149,7 @@ fn nonzero_exit_is_fail_not_error() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-        ])
+        .args(["check", "--no-log"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -207,14 +172,7 @@ fn check_multiple_validators_all_pass() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-        ])
+        .args(["check", "--no-log"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -239,14 +197,7 @@ fn blocking_validator_stops_pipeline() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-        ])
+        .args(["check", "--no-log"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -275,14 +226,7 @@ fn non_blocking_failure_does_not_stop_pipeline() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-        ])
+        .args(["check", "--no-log"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -298,36 +242,7 @@ fn non_blocking_failure_does_not_stop_pipeline() {
     assert_eq!(nb["status"], "fail");
 }
 
-#[test]
-fn all_flag_runs_past_blocking_failure() {
-    let validators = [
-        script_validator_blocking("blocker", "exit 1", true),
-        script_validator_blocking("after", "echo PASS", true),
-    ]
-    .join("\n");
-    let toml = minimal_toml("review", &validators);
-    let dir = setup_project(&toml, "hello");
-
-    let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-            "--all",
-        ])
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-
-    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
-    assert_eq!(verdict["status"], "fail");
-    let history = verdict["history"].as_array().unwrap();
-    let after = history.iter().find(|v| v["name"] == "after").unwrap();
-    assert_eq!(after["status"], "pass");
-}
+// (all_flag_runs_past_blocking_failure removed — --all flag no longer exists)
 
 // ─── Dry Run ──────────────────────────────────────────────
 
@@ -342,14 +257,7 @@ fn dry_run_lists_validators_and_exits_zero() {
     let dir = setup_project(&toml, "hello");
 
     baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--dry-run",
-        ])
+        .args(["check", "--dry-run"])
         .current_dir(dir.path())
         .assert()
         .success()
@@ -357,14 +265,7 @@ fn dry_run_lists_validators_and_exits_zero() {
 
     // Dry run output goes to stderr
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--dry-run",
-        ])
+        .args(["check", "--dry-run"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -372,7 +273,7 @@ fn dry_run_lists_validators_and_exits_zero() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("v1"));
     assert!(stderr.contains("v2"));
-    assert!(stderr.contains("Dry run"));
+    assert!(stderr.contains("Gate 'review'"));
 }
 
 #[test]
@@ -386,16 +287,7 @@ fn dry_run_shows_skip_reasons() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--dry-run",
-            "--only",
-            "v1",
-        ])
+        .args(["check", "--only", "review v1", "--dry-run"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -419,16 +311,7 @@ fn only_runs_specified_validators() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-            "--only",
-            "v1,v3",
-        ])
+        .args(["check", "--only", "review v1 v3", "--no-log"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -453,16 +336,7 @@ fn skip_excludes_validators() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-            "--skip",
-            "v1",
-        ])
+        .args(["check", "--no-log", "--skip", "v1"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -476,28 +350,8 @@ fn skip_excludes_validators() {
     assert_eq!(v2["status"], "pass");
 }
 
-#[test]
-fn only_invalid_validator_exits_2() {
-    let toml = minimal_toml("review", &script_validator("v1", "echo PASS"));
-    let dir = setup_project(&toml, "hello");
-
-    baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--only",
-            "nonexistent",
-        ])
-        .current_dir(dir.path())
-        .assert()
-        .code(2)
-        .stderr(predicate::str::contains(
-            "--only references unknown validator",
-        ));
-}
+// (only_invalid_validator_exits_2 removed — --only with unknown name no longer errors,
+// it just means no validators match and the gate passes with all skipped)
 
 // ─── Missing Config ──────────────────────────────────────
 
@@ -508,7 +362,7 @@ fn missing_config_exits_2() {
     fs::create_dir(dir.path().join(".git")).unwrap();
 
     baton()
-        .args(["check", "--gate", "review", "--artifact", "foo.txt"])
+        .args(["check"])
         .current_dir(dir.path())
         .assert()
         .code(2)
@@ -520,15 +374,7 @@ fn explicit_missing_config_exits_2() {
     let dir = TempDir::new().unwrap();
 
     baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "foo.txt",
-            "--config",
-            "nonexistent.toml",
-        ])
+        .args(["check", "--config", "nonexistent.toml"])
         .current_dir(dir.path())
         .assert()
         .code(2)
@@ -538,17 +384,26 @@ fn explicit_missing_config_exits_2() {
 // ─── Nonexistent Gate ─────────────────────────────────────
 
 #[test]
-fn nonexistent_gate_exits_2() {
+fn nonexistent_gate_runs_all_gates() {
+    // --only with a name that doesn't match any gate runs all gates
+    // (gate-level filtering only kicks in when the name matches a gate)
     let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
     let dir = setup_project(&toml, "hello");
 
-    baton()
-        .args(["check", "--gate", "nope", "--artifact", "artifact.txt"])
+    let output = baton()
+        .args(["check", "--only", "nope", "--no-log"])
         .current_dir(dir.path())
-        .assert()
-        .code(2)
-        .stderr(predicate::str::contains("not found"))
-        .stderr(predicate::str::contains("review"));
+        .output()
+        .unwrap();
+
+    // "nope" doesn't match any gate name, so all gates run.
+    // But inside each gate, --only filters validators: "nope" doesn't match "lint",
+    // so "lint" is skipped. Gate passes with all validators skipped.
+    assert!(output.status.success());
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    assert_eq!(verdict["status"], "pass");
+    let history = verdict["history"].as_array().unwrap();
+    assert_eq!(history[0]["status"], "skip");
 }
 
 // ─── Output Formats ──────────────────────────────────────
@@ -559,16 +414,7 @@ fn format_json_on_stdout() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-            "--format",
-            "json",
-        ])
+        .args(["check", "--no-log", "--format", "json"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -584,16 +430,7 @@ fn format_human_on_stderr() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-            "--format",
-            "human",
-        ])
+        .args(["check", "--no-log", "--format", "human"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -612,16 +449,7 @@ fn format_summary_on_stderr() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-            "--format",
-            "summary",
-        ])
+        .args(["check", "--no-log", "--format", "summary"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -639,16 +467,7 @@ fn format_summary_fail_includes_validator_name() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-            "--format",
-            "summary",
-        ])
+        .args(["check", "--no-log", "--format", "summary"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -665,16 +484,7 @@ fn unknown_format_falls_back_to_json() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-            "--format",
-            "bogus",
-        ])
+        .args(["check", "--no-log", "--format", "bogus"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -694,14 +504,7 @@ fn no_log_skips_db_write() {
     let dir = setup_project(&toml, "hello");
 
     baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-        ])
+        .args(["check", "--no-log"])
         .current_dir(dir.path())
         .assert()
         .success();
@@ -719,7 +522,7 @@ fn without_no_log_creates_db() {
     let dir = setup_project(&toml, "hello");
 
     baton()
-        .args(["check", "--gate", "review", "--artifact", "artifact.txt"])
+        .args(["check"])
         .current_dir(dir.path())
         .assert()
         .success();
@@ -757,15 +560,7 @@ warn_exit_codes = [3]
 
     // Without suppress: should still pass (warn doesn't fail the gate by default)
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-            "--suppress-warnings",
-        ])
+        .args(["check", "--no-log", "--suppress-warnings"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -785,15 +580,7 @@ fn suppress_errors_listed_in_verdict() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-            "--suppress-errors",
-        ])
+        .args(["check", "--no-log", "--suppress-errors"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -816,15 +603,7 @@ fn suppress_all_treats_everything_as_pass() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-            "--suppress-all",
-        ])
+        .args(["check", "--no-log", "--suppress-all"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -834,130 +613,7 @@ fn suppress_all_treats_everything_as_pass() {
     assert_eq!(verdict["status"], "pass");
 }
 
-// ─── Context ─────────────────────────────────────────────
-
-#[test]
-#[cfg(not(windows))]
-fn context_file_passed_to_validator() {
-    let toml = minimal_toml(
-        "review",
-        &script_validator("check", "cat $BATON_CONTEXT_spec && echo PASS"),
-    );
-    let dir = setup_project(&toml, "hello");
-    fs::write(dir.path().join("spec.md"), "spec content").unwrap();
-
-    let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-            "--context",
-            "spec=spec.md",
-        ])
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-
-    assert!(output.status.success());
-    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
-    assert_eq!(verdict["status"], "pass");
-}
-
-#[test]
-#[cfg(windows)]
-fn context_file_passed_to_validator() {
-    let toml = minimal_toml(
-        "review",
-        &script_validator("check", "if exist %BATON_CONTEXT_spec% echo PASS"),
-    );
-    let dir = setup_project(&toml, "hello");
-    fs::write(dir.path().join("spec.md"), "spec content").unwrap();
-
-    let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-            "--context",
-            "spec=spec.md",
-        ])
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-
-    assert!(output.status.success());
-    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
-    assert_eq!(verdict["status"], "pass");
-}
-
-#[test]
-fn context_hash_in_verdict() {
-    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
-    let dir = setup_project(&toml, "hello");
-    fs::write(dir.path().join("ref.md"), "reference").unwrap();
-
-    let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-            "--context",
-            "ref=ref.md",
-        ])
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-
-    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
-    let ctx_hash = verdict["context_hash"].as_str().unwrap();
-    assert!(!ctx_hash.is_empty());
-}
-
-// ─── Artifact Hash ──────────────────────────────────────
-
-#[test]
-fn artifact_hash_is_deterministic() {
-    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
-    let dir = setup_project(&toml, "exact content");
-
-    let output1 = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-        ])
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-    let output2 = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-        ])
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-
-    let v1 = parse_verdict(&String::from_utf8_lossy(&output1.stdout));
-    let v2 = parse_verdict(&String::from_utf8_lossy(&output2.stdout));
-    assert_eq!(v1["artifact_hash"], v2["artifact_hash"]);
-}
+// ─── (Context and artifact hash tests removed in v2 migration) ──
 
 // ─── Explicit Config Path ────────────────────────────────
 
@@ -976,10 +632,6 @@ fn explicit_config_path() {
     baton()
         .args([
             "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
             "--no-log",
             "--config",
             config_dir.join("custom.toml").to_str().unwrap(),
@@ -1015,28 +667,15 @@ tmp_dir = "./.baton/tmp"
     );
     let dir = setup_project(&toml, "hello");
 
+    // --only filters both gates and validators; include validator names too
     baton()
-        .args([
-            "check",
-            "--gate",
-            "pass_gate",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-        ])
+        .args(["check", "--only", "pass_gate ok", "--no-log"])
         .current_dir(dir.path())
         .assert()
         .success();
 
     baton()
-        .args([
-            "check",
-            "--gate",
-            "fail_gate",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-        ])
+        .args(["check", "--only", "fail_gate bad", "--no-log"])
         .current_dir(dir.path())
         .assert()
         .code(1);
@@ -1053,14 +692,7 @@ fn validator_feedback_captured() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-        ])
+        .args(["check", "--no-log"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -1070,90 +702,24 @@ fn validator_feedback_captured() {
     assert!(feedback.contains("missing semicolons"));
 }
 
-// ─── Skip Warns on Unknown Validator ─────────────────────
+// ─── Skip with Unknown Validator ─────────────────────────
 
 #[test]
-fn skip_unknown_validator_warns_but_runs() {
+fn skip_unknown_validator_still_succeeds() {
     let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-            "--skip",
-            "nonexistent",
-        ])
+        .args(["check", "--no-log", "--skip", "nonexistent"])
         .current_dir(dir.path())
         .output()
         .unwrap();
 
-    // Should still succeed (it's a warning, not an error)
+    // Unknown skip name is silently ignored; validators run normally
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Warning"));
-    assert!(stderr.contains("nonexistent"));
 }
 
-// ─── Artifact via Environment Variable ──────────────────
-
-#[test]
-#[cfg(not(windows))]
-fn artifact_path_available_to_script() {
-    let toml = minimal_toml(
-        "review",
-        &script_validator("check", "test -f $BATON_ARTIFACT && echo PASS"),
-    );
-    let dir = setup_project(&toml, "hello world");
-
-    let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-        ])
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-
-    assert!(output.status.success());
-    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
-    assert_eq!(verdict["status"], "pass");
-}
-
-#[test]
-#[cfg(windows)]
-fn artifact_path_available_to_script() {
-    let toml = minimal_toml(
-        "review",
-        &script_validator("check", "if exist %BATON_ARTIFACT% echo PASS"),
-    );
-    let dir = setup_project(&toml, "hello world");
-
-    let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-        ])
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-
-    assert!(output.status.success());
-    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
-    assert_eq!(verdict["status"], "pass");
-}
+// ─── (Artifact env var tests removed in v2 migration) ──
 
 // ─── Duration Tracked ────────────────────────────────────
 
@@ -1163,14 +729,7 @@ fn duration_tracked_in_verdict() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-        ])
+        .args(["check", "--no-log"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -1189,7 +748,7 @@ fn invalid_toml_exits_2() {
     fs::write(dir.path().join("artifact.txt"), "hello").unwrap();
 
     baton()
-        .args(["check", "--gate", "review", "--artifact", "artifact.txt"])
+        .args(["check"])
         .current_dir(dir.path())
         .assert()
         .code(2)
@@ -1210,7 +769,7 @@ command = "echo PASS"
     fs::write(dir.path().join("artifact.txt"), "hello").unwrap();
 
     baton()
-        .args(["check", "--gate", "review", "--artifact", "artifact.txt"])
+        .args(["check"])
         .current_dir(dir.path())
         .assert()
         .code(2);
@@ -1219,19 +778,12 @@ command = "echo PASS"
 // ─── Nonexistent Artifact ────────────────────────────────
 
 #[test]
-fn nonexistent_artifact_exits_2() {
+fn nonexistent_file_exits_2() {
     let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
     let dir = setup_project(&toml, "hello");
 
     baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "does_not_exist.txt",
-            "--no-log",
-        ])
+        .args(["check", "--no-log", "does_not_exist.txt"])
         .current_dir(dir.path())
         .assert()
         .code(2)
@@ -1246,14 +798,7 @@ fn timestamp_present_in_verdict() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-        ])
+        .args(["check", "--no-log"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -1274,7 +819,7 @@ fn history_records_after_check() {
 
     // Run a check with logging
     baton()
-        .args(["check", "--gate", "review", "--artifact", "artifact.txt"])
+        .args(["check"])
         .current_dir(dir.path())
         .assert()
         .success();
@@ -1303,16 +848,7 @@ fn human_format_shows_failure_feedback() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-            "--format",
-            "human",
-        ])
+        .args(["check", "--no-log", "--format", "human"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -1322,32 +858,23 @@ fn human_format_shows_failure_feedback() {
     assert!(stderr.contains("lint"));
 }
 
-// ─── Skip References Warning ─────────────────────────────
+// ─── Skip with Unknown Name ──────────────────────────────
 
 #[test]
-fn skip_unknown_only_warns() {
+fn skip_unknown_name_silently_ignored() {
     let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
     let dir = setup_project(&toml, "hello");
 
-    // --skip with unknown name should warn but not error
+    // --skip with unknown name is silently ignored
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-            "--skip",
-            "bogus",
-        ])
+        .args(["check", "--no-log", "--skip", "bogus"])
         .current_dir(dir.path())
         .output()
         .unwrap();
 
     assert!(output.status.success());
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Warning: --skip references unknown validator 'bogus'"));
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    assert_eq!(verdict["status"], "pass");
 }
 
 // ─── Empty Gate (No Validators) ──────────────────────────
@@ -1358,16 +885,7 @@ fn all_validators_skipped_still_passes() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-            "--skip",
-            "lint",
-        ])
+        .args(["check", "--no-log", "--skip", "lint"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -1477,7 +995,7 @@ fn version_outputs_crate_version() {
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("baton"));
-    assert!(stdout.contains("spec version: 0.4"));
+    assert!(stdout.contains("spec version: 0.5"));
 }
 
 #[test]
@@ -1673,7 +1191,7 @@ fn history_with_status_filter() {
 
     // Run a passing check
     baton()
-        .args(["check", "--gate", "review", "--artifact", "artifact.txt"])
+        .args(["check"])
         .current_dir(dir.path())
         .assert()
         .success();
@@ -1748,15 +1266,7 @@ fn check_verbose_flag_accepted() {
     let dir = setup_project(&toml, "hello");
 
     baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-            "--verbose",
-        ])
+        .args(["check", "--no-log", "--verbose"])
         .current_dir(dir.path())
         .assert()
         .success();
@@ -1770,16 +1280,7 @@ fn check_timeout_override_accepted() {
     let dir = setup_project(&toml, "hello");
 
     baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-            "--timeout",
-            "60",
-        ])
+        .args(["check", "--no-log", "--timeout", "60"])
         .current_dir(dir.path())
         .assert()
         .success();
@@ -1837,12 +1338,12 @@ fn history_respects_limit() {
 
     // Run two checks
     baton()
-        .args(["check", "--gate", "review", "--artifact", "artifact.txt"])
+        .args(["check"])
         .current_dir(dir.path())
         .assert()
         .success();
     baton()
-        .args(["check", "--gate", "review", "--artifact", "artifact.txt"])
+        .args(["check"])
         .current_dir(dir.path())
         .assert()
         .success();
@@ -1939,7 +1440,7 @@ fn history_without_gate_filter() {
 
     // Run a check
     baton()
-        .args(["check", "--gate", "review", "--artifact", "artifact.txt"])
+        .args(["check"])
         .current_dir(dir.path())
         .assert()
         .success();
@@ -1986,15 +1487,7 @@ run_if = "lint.status == pass"
     let dir = setup_project(toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--dry-run",
-            "--no-log",
-        ])
+        .args(["check", "--dry-run", "--no-log"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -2012,16 +1505,7 @@ fn unknown_format_falls_back_to_json_on_stdout() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-            "--format",
-            "potato",
-        ])
+        .args(["check", "--no-log", "--format", "potato"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -2044,15 +1528,7 @@ fn suppress_all_flag() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args([
-            "check",
-            "--gate",
-            "review",
-            "--artifact",
-            "artifact.txt",
-            "--no-log",
-            "--suppress-all",
-        ])
+        .args(["check", "--no-log", "--suppress-all"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -2225,7 +1701,7 @@ fn version_includes_spec_version() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("spec version: 0.4"),
+        stdout.contains("spec version: 0.5"),
         "Should show spec version, got: {stdout}"
     );
 }

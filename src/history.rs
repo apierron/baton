@@ -114,8 +114,8 @@ pub fn store_verdict(conn: &Connection, verdict: &Verdict) -> Result<String> {
             verdict.failed_at,
             verdict.feedback,
             verdict.duration_ms,
-            verdict.artifact_hash,
-            verdict.context_hash,
+            "",
+            "",
             warnings_json,
             suppressed_json,
             verdict_json,
@@ -307,10 +307,9 @@ mod tests {
                 let path = db_path.clone();
                 std::thread::spawn(move || {
                     let conn = init_db(&path).unwrap();
-                    for j in 0..writes_per_thread {
+                    for _j in 0..writes_per_thread {
                         let mut v = th::verdict(VerdictStatus::Pass);
                         v.gate = format!("gate-{i}");
-                        v.artifact_hash = format!("hash-{i}-{j}");
                         store_verdict(&conn, &v).unwrap();
                     }
                 })

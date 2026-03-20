@@ -175,7 +175,7 @@ Use `--format human` for a readable summary or `--format summary` for a one-line
 baton check            Run validators against input files
 baton init             Scaffold a new baton project
 baton list             List gates and validators in a config
-baton history          Query verdict history from the SQLite database
+baton history          Query invocation history from the SQLite database
 baton validate-config  Check a baton.toml for errors and warnings
 baton check-provider   Check provider connectivity and model availability
 baton check-runtime    Check runtime connectivity and health

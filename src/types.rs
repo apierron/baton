@@ -1,229 +1,18 @@
-//! Core data types for baton: artifacts, context, verdicts, and run options.
+//! Core data types for baton: input files, invocations, verdicts, and run options.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use crate::error::{BatonError, Result};
-
-// ─── Artifact ────────────────────────────────────────────
-
-/// A file or in-memory content to be validated, with lazy content and hash loading.
-#[derive(Debug, Clone)]
-pub struct Artifact {
-    pub path: Option<PathBuf>,
-    content: Option<Vec<u8>>,
-    hash: Option<String>,
-}
-
-impl Artifact {
-    /// Creates an artifact from a filesystem path. The file must exist and not be a directory.
-    /// Content is not read until [`get_content`](Self::get_content) is called.
-    pub fn from_file(path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref();
-        if !path.exists() {
-            return Err(BatonError::ArtifactNotFound(path.display().to_string()));
-        }
-        if path.is_dir() {
-            return Err(BatonError::ArtifactIsDirectory(path.display().to_string()));
-        }
-        let abs = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            std::env::current_dir()?.join(path)
-        };
-        Ok(Artifact {
-            path: Some(abs),
-            content: None,
-            hash: None,
-        })
-    }
-
-    /// Creates an artifact from an inline string.
-    pub fn from_string(content: &str) -> Self {
-        Artifact {
-            path: None,
-            content: Some(content.as_bytes().to_vec()),
-            hash: None,
-        }
-    }
-
-    /// Creates an artifact from raw bytes.
-    pub fn from_bytes(content: Vec<u8>) -> Self {
-        Artifact {
-            path: None,
-            content: Some(content),
-            hash: None,
-        }
-    }
-
-    /// Returns the artifact content, lazily reading from disk on first access.
-    pub fn get_content(&mut self) -> Result<&[u8]> {
-        if self.content.is_none() {
-            let path = self
-                .path
-                .as_ref()
-                .expect("Artifact must have path or content");
-            self.content = Some(std::fs::read(path)?);
-        }
-        Ok(self.content.as_ref().unwrap())
-    }
-
-    /// Returns the SHA-256 hash of the content, computing and caching it on first call.
-    pub fn get_hash(&mut self) -> Result<String> {
-        if self.hash.is_none() {
-            let content = self.get_content()?;
-            let mut hasher = Sha256::new();
-            hasher.update(content);
-            self.hash = Some(hex::encode(hasher.finalize()));
-        }
-        Ok(self.hash.clone().unwrap())
-    }
-
-    /// Returns the content as a UTF-8 string, using lossy conversion for invalid sequences.
-    pub fn get_content_as_string(&mut self) -> Result<String> {
-        let bytes = self.get_content()?.to_vec();
-        Ok(String::from_utf8_lossy(&bytes).into_owned())
-    }
-
-    /// Returns the absolute path as a string, if this artifact is file-backed.
-    pub fn absolute_path(&self) -> Option<String> {
-        self.path.as_ref().map(|p| p.display().to_string())
-    }
-
-    /// Returns the parent directory as a string, if this artifact is file-backed.
-    pub fn parent_dir(&self) -> Option<String> {
-        self.path
-            .as_ref()
-            .and_then(|p| p.parent())
-            .map(|p| p.display().to_string())
-    }
-}
-
-// ─── Context ─────────────────────────────────────────────
-
-/// A named reference document provided as context for validation.
-#[derive(Debug, Clone)]
-pub struct ContextItem {
-    pub name: String,
-    pub path: Option<PathBuf>,
-    content: Option<String>,
-}
-
-impl ContextItem {
-    /// Creates a context item from a filesystem path. The file must exist and not be a directory.
-    pub fn from_file(name: String, path: impl AsRef<Path>) -> Result<Self> {
-        let path = path.as_ref();
-        if !path.exists() {
-            return Err(BatonError::ContextNotFound {
-                name,
-                path: path.display().to_string(),
-            });
-        }
-        if path.is_dir() {
-            return Err(BatonError::ContextIsDirectory {
-                name,
-                path: path.display().to_string(),
-            });
-        }
-        let abs = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            std::env::current_dir()?.join(path)
-        };
-        Ok(ContextItem {
-            name,
-            path: Some(abs),
-            content: None,
-        })
-    }
-
-    /// Creates a context item from an inline string.
-    pub fn from_string(name: String, content: String) -> Self {
-        ContextItem {
-            name,
-            path: None,
-            content: Some(content),
-        }
-    }
-
-    /// Returns the content, lazily reading from disk on first access.
-    pub fn get_content(&mut self) -> Result<&str> {
-        if self.content.is_none() {
-            let path = self
-                .path
-                .as_ref()
-                .expect("ContextItem must have path or content");
-            self.content = Some(std::fs::read_to_string(path)?);
-        }
-        Ok(self.content.as_ref().unwrap())
-    }
-
-    /// Returns the SHA-256 hash of the content.
-    pub fn get_hash(&mut self) -> Result<String> {
-        let content = self.get_content()?.to_string();
-        let mut hasher = Sha256::new();
-        hasher.update(content.as_bytes());
-        Ok(hex::encode(hasher.finalize()))
-    }
-
-    /// Returns the absolute path as a string, if this item is file-backed.
-    pub fn absolute_path(&self) -> Option<String> {
-        self.path.as_ref().map(|p| p.display().to_string())
-    }
-}
-
-/// Ordered collection of named context items. Uses `BTreeMap` for deterministic hash ordering.
-#[derive(Debug, Clone, Default)]
-pub struct Context {
-    pub items: BTreeMap<String, ContextItem>,
-}
-
-impl Context {
-    /// Creates an empty context collection.
-    pub fn new() -> Self {
-        Context {
-            items: BTreeMap::new(),
-        }
-    }
-
-    /// Adds a file-backed context item by name and path.
-    pub fn add_file(&mut self, name: String, path: impl AsRef<Path>) -> Result<()> {
-        let item = ContextItem::from_file(name.clone(), path)?;
-        self.items.insert(name, item);
-        Ok(())
-    }
-
-    /// Adds an inline string context item by name and content.
-    pub fn add_string(&mut self, name: String, content: String) {
-        let item = ContextItem::from_string(name.clone(), content);
-        self.items.insert(name, item);
-    }
-
-    /// Returns a combined SHA-256 hash of all items, computed in sorted key order.
-    pub fn get_hash(&mut self) -> Result<String> {
-        let mut item_hashes = Vec::new();
-        // BTreeMap iterates in sorted order
-        let names: Vec<String> = self.items.keys().cloned().collect();
-        for name in &names {
-            let item = self.items.get_mut(name).unwrap();
-            item_hashes.push(item.get_hash()?);
-        }
-        let joined = item_hashes.join(":");
-        let mut hasher = Sha256::new();
-        hasher.update(joined.as_bytes());
-        Ok(hex::encode(hasher.finalize()))
-    }
-}
+use crate::error::Result;
 
 // ─── InputFile ────────────────────────────────────────────
 
-/// A file to be validated, with lazy content loading and cached SHA-256 hashing.
+/// A file from the input pool, with lazy content loading and cached SHA-256 hashing.
 ///
-/// Uses the same lazy-loading pattern as the original Artifact type: content and
-/// hash are computed on first access via `&mut self` methods and cached in Options.
+/// Content and hash are computed on first access via `&mut self` methods and cached.
 #[derive(Debug, Clone)]
 pub struct InputFile {
     pub path: PathBuf,
@@ -393,8 +182,6 @@ pub struct Verdict {
     pub feedback: Option<String>,
     pub duration_ms: i64,
     pub timestamp: DateTime<Utc>,
-    pub artifact_hash: String,
-    pub context_hash: String,
     pub warnings: Vec<String>,
     pub suppressed: Vec<String>,
     pub history: Vec<ValidatorResult>,
@@ -702,8 +489,7 @@ mod tests {
             feedback: None,
             duration_ms: 100,
             timestamp: Utc::now(),
-            artifact_hash: "abc123".into(),
-            context_hash: "def456".into(),
+
             warnings: vec![],
             suppressed: vec![],
             history: vec![ValidatorResult {
@@ -730,8 +516,7 @@ mod tests {
             feedback: Some("missing semicolon".into()),
             duration_ms: 200,
             timestamp: Utc::now(),
-            artifact_hash: "abc".into(),
-            context_hash: "def".into(),
+
             warnings: vec![],
             suppressed: vec![],
             history: vec![ValidatorResult {
@@ -756,8 +541,7 @@ mod tests {
             feedback: None,
             duration_ms: 0,
             timestamp: Utc::now(),
-            artifact_hash: "a".into(),
-            context_hash: "c".into(),
+
             warnings: vec![],
             suppressed: vec![],
             history: vec![],
@@ -774,8 +558,7 @@ mod tests {
             feedback: Some("bad code".into()),
             duration_ms: 0,
             timestamp: Utc::now(),
-            artifact_hash: "a".into(),
-            context_hash: "c".into(),
+
             warnings: vec![],
             suppressed: vec![],
             history: vec![],
@@ -818,8 +601,7 @@ mod tests {
             feedback: Some("bad style".into()),
             duration_ms: 500,
             timestamp: Utc::now(),
-            artifact_hash: "aaa".into(),
-            context_hash: "bbb".into(),
+
             warnings: vec!["w1".into(), "w2".into()],
             suppressed: vec!["warn".into()],
             history: vec![
@@ -870,8 +652,7 @@ mod tests {
             feedback: None,
             duration_ms: 0,
             timestamp: Utc::now(),
-            artifact_hash: "a".into(),
-            context_hash: "c".into(),
+
             warnings: vec![],
             suppressed: vec![],
             history: vec![ValidatorResult {
@@ -896,8 +677,7 @@ mod tests {
             feedback: None,
             duration_ms: 0,
             timestamp: Utc::now(),
-            artifact_hash: "a".into(),
-            context_hash: "c".into(),
+
             warnings: vec![],
             suppressed: vec![],
             history: vec![ValidatorResult {
@@ -926,8 +706,7 @@ mod tests {
             feedback: Some(long_feedback.clone()),
             duration_ms: 0,
             timestamp: Utc::now(),
-            artifact_hash: "a".into(),
-            context_hash: "c".into(),
+
             warnings: vec![],
             suppressed: vec![],
             history: vec![ValidatorResult {
@@ -952,8 +731,7 @@ mod tests {
             feedback: None,
             duration_ms: 0,
             timestamp: Utc::now(),
-            artifact_hash: "a".into(),
-            context_hash: "c".into(),
+
             warnings: vec![],
             suppressed: vec![],
             history: vec![
@@ -1013,8 +791,7 @@ mod tests {
             feedback: Some("internal error".into()),
             duration_ms: 0,
             timestamp: Utc::now(),
-            artifact_hash: "a".into(),
-            context_hash: "c".into(),
+
             warnings: vec![],
             suppressed: vec![],
             history: vec![],
@@ -1031,8 +808,7 @@ mod tests {
             feedback: None,
             duration_ms: 0,
             timestamp: Utc::now(),
-            artifact_hash: "a".into(),
-            context_hash: "c".into(),
+
             warnings: vec![],
             suppressed: vec![],
             history: vec![],
@@ -1049,8 +825,7 @@ mod tests {
             feedback: Some("first line\nsecond line\nthird".into()),
             duration_ms: 0,
             timestamp: Utc::now(),
-            artifact_hash: "a".into(),
-            context_hash: "c".into(),
+
             warnings: vec![],
             suppressed: vec![],
             history: vec![],
@@ -1088,8 +863,7 @@ mod tests {
             feedback: None,
             duration_ms: 0,
             timestamp: Utc::now(),
-            artifact_hash: "a".into(),
-            context_hash: "c".into(),
+
             warnings: vec![],
             suppressed: vec![],
             history: vec![ValidatorResult {
@@ -1115,8 +889,7 @@ mod tests {
             feedback: Some("something broke".into()),
             duration_ms: 0,
             timestamp: Utc::now(),
-            artifact_hash: "a".into(),
-            context_hash: "c".into(),
+
             warnings: vec![],
             suppressed: vec![],
             history: vec![],

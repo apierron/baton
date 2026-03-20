@@ -1,14 +1,14 @@
 //! Baton: a composable validation gate for AI agent outputs.
 //!
-//! Accepts an artifact (file to validate) and context (reference documents),
-//! runs a pipeline of validators (script, LLM, or human), produces a structured
-//! verdict (pass/fail/error), and persists results in SQLite.
+//! Accepts input files to validate, runs a pipeline of validators (script,
+//! LLM, or human), produces a structured verdict (pass/fail/error), and
+//! persists results in SQLite.
 //!
 //! # Modules
 //!
 //! - [`config`] — TOML configuration parsing and validation
 //! - [`exec`] — Gate execution engine and validator dispatch
-//! - [`types`] — Core data types (Artifact, Context, Verdict, Status)
+//! - [`types`] — Core data types (InputFile, Invocation, Verdict, Status)
 //! - [`history`] — SQLite-based verdict persistence
 //! - [`prompt`] — Prompt template parsing with frontmatter support
 //! - [`placeholder`] — Template variable resolution

@@ -1,9 +1,11 @@
 //! Template placeholder resolution.
 //!
-//! Substitutes `{artifact}`, `{context.<name>}`, `{verdict.<name>.status}`,
+//! Substitutes `{file}`, `{file.path}`, `{file.dir}`, `{file.name}`, `{file.stem}`,
+//! `{file.ext}`, `{file.content}`, `{input.<name>}`, `{input.<name>.path}`,
+//! `{input.<name>.content}`, `{verdict.<name>.status}`, `{verdict.<name>.feedback}`,
 //! and similar placeholders in command strings and prompt templates.
 
-use crate::types::{Artifact, Context, ValidatorResult};
+use crate::types::{InputFile, ValidatorResult};
 use std::collections::BTreeMap;
 
 /// Warnings emitted during placeholder resolution.
@@ -21,17 +23,23 @@ impl ResolutionWarnings {
 /// Resolve placeholders in a template string.
 ///
 /// Supported placeholders:
-/// - `{artifact}` — absolute path to the artifact file
-/// - `{artifact_dir}` — absolute path to the artifact's parent directory
-/// - `{artifact_content}` — inline content of the artifact
-/// - `{context.<name>}` — absolute path to named context item
-/// - `{context.<name>.content}` — inline content of named context item
+/// - `{file}` — content of first file in the "file" input slot (or first file in any slot)
+/// - `{file.path}` — absolute path to the first input file
+/// - `{file.dir}` — parent directory of the first input file
+/// - `{file.name}` — filename with extension
+/// - `{file.stem}` — filename without extension
+/// - `{file.ext}` — extension without dot
+/// - `{file.content}` — alias for `{file}`
+/// - `{input.<name>}` — content of first file in named input slot
+/// - `{input.<name>.path}` — absolute path of first file in named slot
+/// - `{input.<name>.name}` — filename of first file in named slot
+/// - `{input.<name>.stem}` — stem of first file in named slot
+/// - `{input.<name>.content}` — content of first file in named slot
 /// - `{verdict.<validator_name>.status}` — status of a prior validator
 /// - `{verdict.<validator_name>.feedback}` — feedback from a prior validator
 pub fn resolve_placeholders(
     template: &str,
-    artifact: &mut Artifact,
-    context: &mut Context,
+    inputs: &mut BTreeMap<String, Vec<InputFile>>,
     prior_results: &BTreeMap<String, ValidatorResult>,
     warnings: &mut ResolutionWarnings,
 ) -> String {
@@ -45,8 +53,7 @@ pub fn resolve_placeholders(
             // Find matching closing brace
             if let Some(close) = find_closing_brace(&chars, i) {
                 let placeholder: String = chars[i + 1..close].iter().collect();
-                let resolved =
-                    resolve_single(&placeholder, artifact, context, prior_results, warnings);
+                let resolved = resolve_single(&placeholder, inputs, prior_results, warnings);
                 result.push_str(&resolved);
                 i = close + 1;
             } else {
@@ -78,50 +85,167 @@ fn find_closing_brace(chars: &[char], open: usize) -> Option<usize> {
     None
 }
 
+/// Get the key of the slot containing the first InputFile: prefer "file", then first available.
+fn first_file_key(inputs: &BTreeMap<String, Vec<InputFile>>) -> Option<String> {
+    if inputs.get("file").is_some_and(|v| !v.is_empty()) {
+        return Some("file".to_string());
+    }
+    for (key, files) in inputs {
+        if !files.is_empty() {
+            return Some(key.clone());
+        }
+    }
+    None
+}
+
 fn resolve_single(
     placeholder: &str,
-    artifact: &mut Artifact,
-    context: &mut Context,
+    inputs: &mut BTreeMap<String, Vec<InputFile>>,
     prior_results: &BTreeMap<String, ValidatorResult>,
     warnings: &mut ResolutionWarnings,
 ) -> String {
-    // {artifact}
-    if placeholder == "artifact" {
-        return artifact.absolute_path().unwrap_or_default();
-    }
-
-    // {artifact_dir}
-    if placeholder == "artifact_dir" {
-        return artifact.parent_dir().unwrap_or_default();
-    }
-
-    // {artifact_content}
-    if placeholder == "artifact_content" {
-        return artifact.get_content_as_string().unwrap_or_default();
-    }
-
-    // {context.<name>.content}
-    if let Some(rest) = placeholder.strip_prefix("context.") {
-        if let Some(name) = rest.strip_suffix(".content") {
-            if let Some(item) = context.items.get_mut(name) {
-                return item.get_content().unwrap_or("").to_string();
-            } else {
-                warnings.warnings.push(format!(
-                    "Placeholder '{{context.{name}.content}}' references undefined context '{name}'"
-                ));
-                return String::new();
+    // {file} — content of first file
+    if placeholder == "file" || placeholder == "file.content" {
+        if let Some(key) = first_file_key(inputs) {
+            if let Some(f) = inputs.get_mut(&key).and_then(|v| v.first_mut()) {
+                return f.get_content().unwrap_or("").to_string();
             }
         }
-        // {context.<name>} — path
-        let name = rest;
-        if let Some(item) = context.items.get(name) {
-            return item.absolute_path().unwrap_or_default();
-        } else {
+        return String::new();
+    }
+
+    // {file.path}
+    if placeholder == "file.path" {
+        if let Some(key) = first_file_key(inputs) {
+            if let Some(f) = inputs.get(&key).and_then(|v| v.first()) {
+                return f.path.display().to_string();
+            }
+        }
+        return String::new();
+    }
+
+    // {file.dir}
+    if placeholder == "file.dir" {
+        if let Some(key) = first_file_key(inputs) {
+            if let Some(f) = inputs.get(&key).and_then(|v| v.first()) {
+                return f
+                    .path
+                    .parent()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
+            }
+        }
+        return String::new();
+    }
+
+    // {file.name}
+    if placeholder == "file.name" {
+        if let Some(key) = first_file_key(inputs) {
+            if let Some(f) = inputs.get(&key).and_then(|v| v.first()) {
+                return f
+                    .path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+            }
+        }
+        return String::new();
+    }
+
+    // {file.stem}
+    if placeholder == "file.stem" {
+        if let Some(key) = first_file_key(inputs) {
+            if let Some(f) = inputs.get(&key).and_then(|v| v.first()) {
+                return f
+                    .path
+                    .file_stem()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+            }
+        }
+        return String::new();
+    }
+
+    // {file.ext}
+    if placeholder == "file.ext" {
+        if let Some(key) = first_file_key(inputs) {
+            if let Some(f) = inputs.get(&key).and_then(|v| v.first()) {
+                return f
+                    .path
+                    .extension()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default();
+            }
+        }
+        return String::new();
+    }
+
+    // {input.<name>} or {input.<name>.<prop>}
+    if let Some(rest) = placeholder.strip_prefix("input.") {
+        // Check for .path, .name, .stem, .content suffixes
+        if let Some(name) = rest.strip_suffix(".path") {
+            if let Some(files) = inputs.get(name) {
+                if let Some(f) = files.first() {
+                    return f.path.display().to_string();
+                }
+            }
             warnings.warnings.push(format!(
-                "Placeholder '{{context.{name}}}' references undefined context '{name}'"
+                "Placeholder '{{input.{name}.path}}' references undefined input '{name}'"
             ));
             return String::new();
         }
+        if let Some(name) = rest.strip_suffix(".name") {
+            if let Some(files) = inputs.get(name) {
+                if let Some(f) = files.first() {
+                    return f
+                        .path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                }
+            }
+            warnings.warnings.push(format!(
+                "Placeholder '{{input.{name}.name}}' references undefined input '{name}'"
+            ));
+            return String::new();
+        }
+        if let Some(name) = rest.strip_suffix(".stem") {
+            if let Some(files) = inputs.get(name) {
+                if let Some(f) = files.first() {
+                    return f
+                        .path
+                        .file_stem()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                }
+            }
+            warnings.warnings.push(format!(
+                "Placeholder '{{input.{name}.stem}}' references undefined input '{name}'"
+            ));
+            return String::new();
+        }
+        if let Some(name) = rest.strip_suffix(".content") {
+            if let Some(files) = inputs.get_mut(name) {
+                if let Some(f) = files.first_mut() {
+                    return f.get_content().unwrap_or("").to_string();
+                }
+            }
+            warnings.warnings.push(format!(
+                "Placeholder '{{input.{name}.content}}' references undefined input '{name}'"
+            ));
+            return String::new();
+        }
+        // {input.<name>} — content of first file in named slot
+        let name = rest;
+        if let Some(files) = inputs.get_mut(name) {
+            if let Some(f) = files.first_mut() {
+                return f.get_content().unwrap_or("").to_string();
+            }
+        }
+        warnings.warnings.push(format!(
+            "Placeholder '{{input.{name}}}' references undefined input '{name}'"
+        ));
+        return String::new();
     }
 
     // {verdict.<validator_name>.status} or {verdict.<validator_name>.feedback}
@@ -284,7 +408,6 @@ mod tests {
 
     #[test]
     fn env_var_nested_dollar_brace_in_value() {
-        // Value containing ${ should be emitted literally
         std::env::set_var("BATON_TEST_NESTED", "has ${INNER} in it");
         let result = resolve_env_vars("prefix_${BATON_TEST_NESTED}_suffix").unwrap();
         assert_eq!(result, "prefix_has ${INNER} in it_suffix");
@@ -293,7 +416,6 @@ mod tests {
 
     #[test]
     fn env_var_empty_value() {
-        // Empty string is a valid value — not the same as unset
         std::env::set_var("BATON_TEST_EMPTY", "");
         let result = resolve_env_vars("before_${BATON_TEST_EMPTY}_after").unwrap();
         assert_eq!(result, "before__after");
@@ -302,7 +424,6 @@ mod tests {
 
     #[test]
     fn env_var_empty_value_does_not_use_default() {
-        // Empty string is set — should NOT fall through to default
         std::env::set_var("BATON_TEST_EMPTY2", "");
         let result = resolve_env_vars("${BATON_TEST_EMPTY2:-fallback}").unwrap();
         assert_eq!(result, "");
@@ -319,7 +440,6 @@ mod tests {
 
     #[test]
     fn env_var_unclosed_brace_literal() {
-        // Unclosed ${ should be left as literal text, not error
         let result = resolve_env_vars("before ${UNCLOSED after").unwrap();
         assert_eq!(result, "before ${UNCLOSED after");
     }
@@ -343,7 +463,6 @@ mod tests {
 
     #[test]
     fn env_var_default_containing_colon() {
-        // The :- delimiter only matches the first occurrence
         std::env::remove_var("BATON_UNSET_COLON");
         let result = resolve_env_vars("${BATON_UNSET_COLON:-key:-value}").unwrap();
         assert_eq!(result, "key:-value");
@@ -351,7 +470,6 @@ mod tests {
 
     #[test]
     fn env_var_adjacent_dollar_signs() {
-        // $$ not followed by { is literal
         let result = resolve_env_vars("cost is $$100").unwrap();
         assert_eq!(result, "cost is $$100");
     }
@@ -368,14 +486,12 @@ mod tests {
 
     #[test]
     fn resolve_verdict_status() {
-        let mut art = Artifact::from_string("hello world");
-        let mut ctx = Context::new();
+        let mut inputs = BTreeMap::new();
         let prior = th::prior_results_detailed();
         let mut warns = ResolutionWarnings::new();
         let result = resolve_placeholders(
             "Lint: {verdict.lint.status}, TC: {verdict.typecheck.status}",
-            &mut art,
-            &mut ctx,
+            &mut inputs,
             &prior,
             &mut warns,
         );
@@ -384,14 +500,12 @@ mod tests {
 
     #[test]
     fn resolve_verdict_feedback() {
-        let mut art = Artifact::from_string("hello world");
-        let mut ctx = Context::new();
+        let mut inputs = BTreeMap::new();
         let prior = th::prior_results_detailed();
         let mut warns = ResolutionWarnings::new();
         let result = resolve_placeholders(
             "Feedback: {verdict.typecheck.feedback}",
-            &mut art,
-            &mut ctx,
+            &mut inputs,
             &prior,
             &mut warns,
         );
@@ -400,25 +514,22 @@ mod tests {
 
     #[test]
     fn resolve_unrecognized_placeholder() {
-        let mut art = Artifact::from_string("hello world");
-        let mut ctx = Context::new();
+        let mut inputs = BTreeMap::new();
         let prior = BTreeMap::new();
         let mut warns = ResolutionWarnings::new();
-        let result = resolve_placeholders("Bad: {typo}", &mut art, &mut ctx, &prior, &mut warns);
+        let result = resolve_placeholders("Bad: {typo}", &mut inputs, &prior, &mut warns);
         assert_eq!(result, "Bad: {typo}");
         assert_eq!(warns.warnings.len(), 1);
     }
 
     #[test]
     fn resolve_verdict_for_nonexistent_validator() {
-        let mut art = Artifact::from_string("hello world");
-        let mut ctx = Context::new();
+        let mut inputs = BTreeMap::new();
         let prior = BTreeMap::new();
         let mut warns = ResolutionWarnings::new();
         let result = resolve_placeholders(
             "Status: {verdict.nonexistent.status}",
-            &mut art,
-            &mut ctx,
+            &mut inputs,
             &prior,
             &mut warns,
         );
@@ -427,29 +538,20 @@ mod tests {
 
     #[test]
     fn no_placeholders_unchanged() {
-        let mut art = Artifact::from_string("hello world");
-        let mut ctx = Context::new();
+        let mut inputs = BTreeMap::new();
         let prior = BTreeMap::new();
         let mut warns = ResolutionWarnings::new();
-        let result = resolve_placeholders(
-            "No placeholders here.",
-            &mut art,
-            &mut ctx,
-            &prior,
-            &mut warns,
-        );
+        let result = resolve_placeholders("No placeholders here.", &mut inputs, &prior, &mut warns);
         assert_eq!(result, "No placeholders here.");
         assert!(warns.warnings.is_empty());
     }
 
     #[test]
     fn unclosed_brace_left_literal() {
-        let mut art = Artifact::from_string("hello world");
-        let mut ctx = Context::new();
+        let mut inputs = BTreeMap::new();
         let prior = BTreeMap::new();
         let mut warns = ResolutionWarnings::new();
-        let result =
-            resolve_placeholders("Unclosed {brace", &mut art, &mut ctx, &prior, &mut warns);
+        let result = resolve_placeholders("Unclosed {brace", &mut inputs, &prior, &mut warns);
         assert_eq!(result, "Unclosed {brace");
     }
 
@@ -457,14 +559,10 @@ mod tests {
 
     #[test]
     fn nested_braces_extracted_as_single_placeholder() {
-        let mut art = Artifact::from_string("x");
-        let mut ctx = Context::new();
+        let mut inputs = BTreeMap::new();
         let prior = BTreeMap::new();
         let mut warns = ResolutionWarnings::new();
-        let result = resolve_placeholders("{a{b}c}", &mut art, &mut ctx, &prior, &mut warns);
-        // The outer braces match: open at 0, inner { at 2, inner } at 4 (depth back to 1),
-        // outer } at 6 (depth 0). Extracted placeholder content is "a{b}c".
-        // "a{b}c" is unrecognized, so it is kept as literal and a warning is emitted.
+        let result = resolve_placeholders("{a{b}c}", &mut inputs, &prior, &mut warns);
         assert_eq!(result, "{a{b}c}");
         assert_eq!(warns.warnings.len(), 1);
         assert!(warns.warnings[0].contains("a{b}c"));
@@ -472,14 +570,12 @@ mod tests {
 
     #[test]
     fn nonexistent_validator_feedback_is_empty() {
-        let mut art = Artifact::from_string("x");
-        let mut ctx = Context::new();
+        let mut inputs = BTreeMap::new();
         let prior = th::prior_results();
         let mut warns = ResolutionWarnings::new();
         let result = resolve_placeholders(
             "{verdict.nonexistent.feedback}",
-            &mut art,
-            &mut ctx,
+            &mut inputs,
             &prior,
             &mut warns,
         );
@@ -489,17 +585,11 @@ mod tests {
 
     #[test]
     fn unrecognized_verdict_sub_path_warns() {
-        let mut art = Artifact::from_string("x");
-        let mut ctx = Context::new();
+        let mut inputs = BTreeMap::new();
         let prior = th::prior_results();
         let mut warns = ResolutionWarnings::new();
-        let result = resolve_placeholders(
-            "{verdict.lint.duration}",
-            &mut art,
-            &mut ctx,
-            &prior,
-            &mut warns,
-        );
+        let result =
+            resolve_placeholders("{verdict.lint.duration}", &mut inputs, &prior, &mut warns);
         assert_eq!(result, "");
         assert_eq!(warns.warnings.len(), 1);
         assert!(warns.warnings[0].contains("verdict"));
@@ -507,17 +597,11 @@ mod tests {
 
     #[test]
     fn multiple_warnings_in_one_call() {
-        let mut art = Artifact::from_string("x");
-        let mut ctx = Context::new();
+        let mut inputs = BTreeMap::new();
         let prior = BTreeMap::new();
         let mut warns = ResolutionWarnings::new();
-        let _result = resolve_placeholders(
-            "{unknown1} {unknown2}",
-            &mut art,
-            &mut ctx,
-            &prior,
-            &mut warns,
-        );
+        let _result =
+            resolve_placeholders("{unknown1} {unknown2}", &mut inputs, &prior, &mut warns);
         assert!(
             warns.warnings.len() >= 2,
             "Expected at least 2 warnings, got {}",
@@ -526,58 +610,11 @@ mod tests {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // v2 migration: New placeholder tests
-    //
-    // These tests define the contract for the v2 placeholder system.
-    // They test against a new resolve function that takes Invocation
-    // instead of Artifact/Context. The tests below are structured as
-    // compilable stubs that document the expected behavior.
-    //
-    // IMPLEMENTATION NOTE: When resolve_placeholders is updated to
-    // accept Invocation, uncomment these tests and remove the old
-    // Artifact/Context-based tests above.
+    // v2 placeholder tests
     // ═══════════════════════════════════════════════════════════════
-
-    // --- Per-file placeholders (SPEC-PH-FP-*) ---
-    //
-    // SPEC-PH-FP-001: {file} and {file.path} resolve to absolute path
-    // SPEC-PH-FP-002: {file.dir} resolves to parent directory
-    // SPEC-PH-FP-003: {file.name} resolves to filename with extension
-    // SPEC-PH-FP-004: {file.stem} resolves to filename without extension
-    // SPEC-PH-FP-005: {file.ext} resolves to extension without dot
-    // SPEC-PH-FP-006: {file.content} resolves to file contents as UTF-8
-    // SPEC-PH-FP-007: {file.*} in batch/named mode is config validation error
-    //
-    // --- Batch placeholders (SPEC-PH-BP-*) ---
-    //
-    // SPEC-PH-BP-001: {input} in batch mode resolves to concatenated content
-    // SPEC-PH-BP-002: {input.paths} resolves to space-separated absolute paths
-    //
-    // --- Named input placeholders (SPEC-PH-NP-*) ---
-    //
-    // SPEC-PH-NP-001: {input.<name>} resolves to content (LLM) or path (script)
-    // SPEC-PH-NP-002: {input.<name>.path} resolves to absolute path
-    // SPEC-PH-NP-003: {input.<name>.name} resolves to filename
-    // SPEC-PH-NP-004: {input.<name>.stem} resolves to stem
-    // SPEC-PH-NP-005: {input.<name>.content} resolves to file content
-    // SPEC-PH-NP-006: {input.<name>.paths} resolves to space-separated paths
-    // SPEC-PH-NP-007: missing {input.<name>} warns and resolves to empty
-    //
-    // --- Placeholder validation (SPEC-PH-VL-*) ---
-    //
-    // SPEC-PH-VL-001: validate-config checks placeholders match declared inputs
-    // SPEC-PH-VL-002: {file} in named-input mode is config error
-    // SPEC-PH-VL-003: {input} (batch) in per-file mode is config error
-
-    // The test bodies are written below but will need the new function
-    // signature. Here's the test for {file} resolution as an example
-    // of the pattern all tests will follow once the API is updated:
 
     #[test]
     fn resolve_file_path_placeholder() {
-        // SPEC-PH-FP-001: {file} resolves to absolute path of the input file
-        // This test uses the NEW InputFile type and verifies the placeholder
-        // resolves to its absolute path. It will need the new resolve function.
         use crate::types::InputFile;
         use std::io::Write;
         use tempfile::NamedTempFile;
@@ -586,21 +623,17 @@ mod tests {
         write!(f, "test content").unwrap();
         let path = f.path().to_path_buf();
 
-        // Verify InputFile stores the path correctly
         let input = InputFile::new(path.clone());
         assert_eq!(input.path, path);
-        // The path should have a parent directory (for {file.dir})
         assert!(input.path.parent().is_some());
     }
 
     #[test]
     fn resolve_file_properties() {
-        // SPEC-PH-FP-002 through SPEC-PH-FP-005: file.dir, file.name, file.stem, file.ext
         use crate::types::InputFile;
 
         let input = InputFile::new(std::path::PathBuf::from("/home/user/project/src/main.rs"));
 
-        // Verify the path components that placeholders will resolve to
         assert_eq!(
             input.path.parent().unwrap().to_str().unwrap(),
             "/home/user/project/src"
@@ -612,7 +645,6 @@ mod tests {
 
     #[test]
     fn resolve_file_content_placeholder() {
-        // SPEC-PH-FP-006: {file.content} resolves to file contents as UTF-8
         use crate::types::InputFile;
         use std::io::Write;
         use tempfile::NamedTempFile;
@@ -627,7 +659,6 @@ mod tests {
 
     #[test]
     fn resolve_named_input_content() {
-        // SPEC-PH-NP-005: {input.<name>.content} resolves to file content
         use crate::types::InputFile;
         use std::io::Write;
         use tempfile::NamedTempFile;
@@ -640,8 +671,6 @@ mod tests {
         let mut code_input = InputFile::new(code_file.path().to_path_buf());
         let mut spec_input = InputFile::new(spec_file.path().to_path_buf());
 
-        // Verify the content that {input.code.content} and {input.spec.content}
-        // will resolve to once the placeholder system is updated
         assert_eq!(code_input.get_content().unwrap(), "print('hello')");
         assert_eq!(spec_input.get_content().unwrap(), "must print hello");
     }

@@ -321,8 +321,6 @@ pub fn verdict(status: VerdictStatus) -> Verdict {
         },
         duration_ms: 100,
         timestamp: Utc::now(),
-        artifact_hash: "abc123".into(),
-        context_hash: "def456".into(),
         warnings: vec![],
         suppressed: vec![],
         history: vec![ValidatorResult {

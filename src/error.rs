@@ -5,21 +5,6 @@ use thiserror::Error;
 /// All errors that can occur during baton operation.
 #[derive(Error, Debug)]
 pub enum BatonError {
-    #[error("Artifact file not found: {0}")]
-    ArtifactNotFound(String),
-
-    #[error("Artifact must be a file, not a directory: {0}")]
-    ArtifactIsDirectory(String),
-
-    #[error("Context '{name}' path not found: {path}")]
-    ContextNotFound { name: String, path: String },
-
-    #[error("Context '{name}' must be a file, not a directory: {path}")]
-    ContextIsDirectory { name: String, path: String },
-
-    #[error("Missing required context '{name}' for gate '{gate}'")]
-    MissingRequiredContext { name: String, gate: String },
-
     #[error("{0}")]
     ConfigError(String),
 

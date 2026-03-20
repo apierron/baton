@@ -115,16 +115,14 @@ pub fn compute_final_status(results: &[ValidatorResult], suppressed: &[Status]) 
 
 fn execute_script_validator(
     validator: &ValidatorConfig,
-    artifact: &mut Artifact,
-    context: &mut Context,
+    inputs: &mut BTreeMap<String, Vec<InputFile>>,
     prior_results: &BTreeMap<String, ValidatorResult>,
 ) -> ValidatorResult {
     let command = validator.command.as_deref().unwrap_or("");
 
     // Resolve placeholders in command
     let mut warnings = ResolutionWarnings::new();
-    let resolved_command =
-        resolve_placeholders(command, artifact, context, prior_results, &mut warnings);
+    let resolved_command = resolve_placeholders(command, inputs, prior_results, &mut warnings);
 
     if resolved_command.trim().is_empty() {
         return ValidatorResult {
@@ -243,13 +241,12 @@ fn execute_script_validator(
 
 fn execute_human_validator(
     validator: &ValidatorConfig,
-    artifact: &mut Artifact,
-    context: &mut Context,
+    inputs: &mut BTreeMap<String, Vec<InputFile>>,
     prior_results: &BTreeMap<String, ValidatorResult>,
 ) -> ValidatorResult {
     let prompt = validator.prompt.as_deref().unwrap_or("");
     let mut warnings = ResolutionWarnings::new();
-    let rendered = resolve_placeholders(prompt, artifact, context, prior_results, &mut warnings);
+    let rendered = resolve_placeholders(prompt, inputs, prior_results, &mut warnings);
 
     ValidatorResult {
         name: validator.name.clone(),
@@ -264,8 +261,7 @@ fn execute_human_validator(
 /// its `run_if` condition and recording wall-clock timing.
 pub fn execute_validator(
     validator: &ValidatorConfig,
-    artifact: &mut Artifact,
-    context: &mut Context,
+    inputs: &mut BTreeMap<String, Vec<InputFile>>,
     prior_results: &BTreeMap<String, ValidatorResult>,
     config: Option<&BatonConfig>,
 ) -> ValidatorResult {
@@ -297,19 +293,11 @@ pub fn execute_validator(
     }
 
     let mut result = match validator.validator_type {
-        ValidatorType::Script => {
-            execute_script_validator(validator, artifact, context, prior_results)
-        }
-        ValidatorType::Human => {
-            execute_human_validator(validator, artifact, context, prior_results)
-        }
+        ValidatorType::Script => execute_script_validator(validator, inputs, prior_results),
+        ValidatorType::Human => execute_human_validator(validator, inputs, prior_results),
         ValidatorType::Llm => match validator.mode {
-            LlmMode::Completion => {
-                execute_llm_completion(validator, artifact, context, prior_results, config)
-            }
-            LlmMode::Session => {
-                execute_llm_session(validator, artifact, context, prior_results, config)
-            }
+            LlmMode::Completion => execute_llm_completion(validator, inputs, prior_results, config),
+            LlmMode::Session => execute_llm_session(validator, inputs, prior_results, config),
         },
     };
 
@@ -321,8 +309,7 @@ pub fn execute_validator(
 
 fn execute_llm_completion(
     validator: &ValidatorConfig,
-    artifact: &mut Artifact,
-    context: &mut Context,
+    inputs: &mut BTreeMap<String, Vec<InputFile>>,
     prior_results: &BTreeMap<String, ValidatorResult>,
     config: Option<&BatonConfig>,
 ) -> ValidatorResult {
@@ -410,13 +397,7 @@ fn execute_llm_completion(
 
     // Resolve placeholders in prompt
     let mut warnings = ResolutionWarnings::new();
-    let rendered_prompt = resolve_placeholders(
-        &prompt_body,
-        artifact,
-        context,
-        prior_results,
-        &mut warnings,
-    );
+    let rendered_prompt = resolve_placeholders(&prompt_body, inputs, prior_results, &mut warnings);
 
     // Build model name
     let model = validator
@@ -428,8 +409,7 @@ fn execute_llm_completion(
     let mut messages = Vec::new();
 
     if let Some(ref sys) = validator.system_prompt {
-        let rendered_sys =
-            resolve_placeholders(sys, artifact, context, prior_results, &mut warnings);
+        let rendered_sys = resolve_placeholders(sys, inputs, prior_results, &mut warnings);
         messages.push(serde_json::json!({
             "role": "system",
             "content": rendered_sys,
@@ -497,8 +477,7 @@ fn execute_llm_completion(
 
 fn execute_llm_session(
     validator: &ValidatorConfig,
-    artifact: &mut Artifact,
-    context: &mut Context,
+    inputs: &mut BTreeMap<String, Vec<InputFile>>,
     prior_results: &BTreeMap<String, ValidatorResult>,
     config: Option<&BatonConfig>,
 ) -> ValidatorResult {
@@ -602,24 +581,13 @@ fn execute_llm_session(
 
     // Resolve placeholders in prompt
     let mut warnings = ResolutionWarnings::new();
-    let rendered_prompt = resolve_placeholders(
-        &prompt_body,
-        artifact,
-        context,
-        prior_results,
-        &mut warnings,
-    );
+    let rendered_prompt = resolve_placeholders(&prompt_body, inputs, prior_results, &mut warnings);
 
     // Prepare file set for isolation
     let mut files = BTreeMap::new();
-    if let Some(ref path) = artifact.path {
-        files.insert("artifact".into(), path.display().to_string());
-    }
-    for ref_name in &validator.context_refs {
-        if let Some(item) = context.items.get(ref_name) {
-            if let Some(ref path) = item.path {
-                files.insert(ref_name.clone(), path.display().to_string());
-            }
+    for (slot_name, slot_files) in inputs.iter() {
+        for f in slot_files {
+            files.insert(slot_name.clone(), f.path.display().to_string());
         }
     }
 
@@ -820,65 +788,16 @@ fn drive_session(
 pub fn run_gate(
     gate: &GateConfig,
     config: &BatonConfig,
-    artifact: &mut Artifact,
-    context: &mut Context,
+    input_pool: Vec<InputFile>,
     options: &RunOptions,
 ) -> Result<Verdict> {
     let run_start = Instant::now();
 
-    // ── Pre-flight checks ──
-
-    // Validate artifact exists (if file-backed)
-    if let Some(ref path) = artifact.path {
-        if !path.exists() {
-            return Err(BatonError::ArtifactNotFound(path.display().to_string()));
-        }
-        if path.is_dir() {
-            return Err(BatonError::ArtifactIsDirectory(path.display().to_string()));
-        }
+    // Build inputs map: all files under "file" key for simple dispatch
+    let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
+    if !input_pool.is_empty() {
+        inputs.insert("file".into(), input_pool);
     }
-
-    // Validate required context
-    for (slot_name, slot) in &gate.context {
-        if slot.required && !context.items.contains_key(slot_name) {
-            return Err(BatonError::MissingRequiredContext {
-                name: slot_name.clone(),
-                gate: gate.name.clone(),
-            });
-        }
-    }
-
-    // Warn on unexpected context
-    for item_name in context.items.keys() {
-        if !gate.context.contains_key(item_name) {
-            eprintln!(
-                "warning: Unknown context item '{item_name}' for gate '{}' — ignored",
-                gate.name
-            );
-        }
-    }
-
-    // Validate context paths
-    for (item_name, item) in &context.items {
-        if let Some(ref path) = item.path {
-            if !path.exists() {
-                return Err(BatonError::ContextNotFound {
-                    name: item_name.clone(),
-                    path: path.display().to_string(),
-                });
-            }
-            if path.is_dir() {
-                return Err(BatonError::ContextIsDirectory {
-                    name: item_name.clone(),
-                    path: path.display().to_string(),
-                });
-            }
-        }
-    }
-
-    // Compute hashes
-    let artifact_hash = artifact.get_hash()?;
-    let context_hash = context.get_hash()?;
 
     // Run validators
     let mut results: BTreeMap<String, ValidatorResult> = BTreeMap::new();
@@ -934,7 +853,7 @@ pub fn run_gate(
             }
         }
 
-        let result = execute_validator(validator, artifact, context, &results, Some(config));
+        let result = execute_validator(validator, &mut inputs, &results, Some(config));
         results.insert(validator.name.clone(), result.clone());
 
         if result.status == Status::Warn {
@@ -964,8 +883,6 @@ pub fn run_gate(
                 feedback: result.feedback.clone(),
                 duration_ms: run_start.elapsed().as_millis() as i64,
                 timestamp: Utc::now(),
-                artifact_hash,
-                context_hash,
                 warnings: warnings_list,
                 suppressed: suppressed.iter().map(|s| s.to_string()).collect(),
                 history: results.values().cloned().collect(),
@@ -1005,8 +922,6 @@ pub fn run_gate(
         feedback,
         duration_ms: run_start.elapsed().as_millis() as i64,
         timestamp: Utc::now(),
-        artifact_hash,
-        context_hash,
         warnings: warnings_list,
         suppressed: suppressed.iter().map(|s| s.to_string()).collect(),
         history: result_list,
@@ -1162,20 +1077,18 @@ mod tests {
     #[test]
     fn script_exit_0_pass() {
         let v = ValidatorBuilder::script("test", "exit 0").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        let result = execute_validator(&v, &mut inputs, &prior, None);
         assert_eq!(result.status, Status::Pass);
     }
 
     #[test]
     fn script_exit_1_fail() {
         let v = ValidatorBuilder::script("test", "exit 1").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        let result = execute_validator(&v, &mut inputs, &prior, None);
         assert_eq!(result.status, Status::Fail);
     }
 
@@ -1184,10 +1097,9 @@ mod tests {
         let v = ValidatorBuilder::script("test", "echo 'warning message' && exit 2")
             .warn_exit_codes(vec![2])
             .build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        let result = execute_validator(&v, &mut inputs, &prior, None);
         assert_eq!(result.status, Status::Warn);
         assert!(result
             .feedback
@@ -1199,20 +1111,18 @@ mod tests {
     #[test]
     fn script_exit_2_without_warn_codes_is_fail() {
         let v = ValidatorBuilder::script("test", "exit 2").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        let result = execute_validator(&v, &mut inputs, &prior, None);
         assert_eq!(result.status, Status::Fail);
     }
 
     #[test]
     fn script_no_output_fail_feedback() {
         let v = ValidatorBuilder::script("test", "exit 1").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        let result = execute_validator(&v, &mut inputs, &prior, None);
         assert_eq!(result.status, Status::Fail);
         assert!(result.feedback.as_ref().unwrap().contains("no output"));
     }
@@ -1220,10 +1130,9 @@ mod tests {
     #[test]
     fn script_with_stderr_feedback() {
         let v = ValidatorBuilder::script("test", "echo 'error detail' >&2 && exit 1").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        let result = execute_validator(&v, &mut inputs, &prior, None);
         assert_eq!(result.status, Status::Fail);
         assert!(result.feedback.as_ref().unwrap().contains("error detail"));
     }
@@ -1235,15 +1144,15 @@ mod tests {
         std::fs::write(&art_path, "hello").unwrap();
 
         let cmd = if cfg!(windows) {
-            "type {artifact}"
+            "type {file.path}"
         } else {
-            "cat {artifact}"
+            "cat {file.path}"
         };
         let v = ValidatorBuilder::script("test", cmd).build();
-        let mut art = Artifact::from_file(&art_path).unwrap();
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
+        inputs.insert("file".into(), vec![InputFile::new(art_path)]);
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        let result = execute_validator(&v, &mut inputs, &prior, None);
         assert_eq!(result.status, Status::Pass);
     }
 
@@ -1253,10 +1162,9 @@ mod tests {
     fn human_validator_fails_with_prompt() {
         let v = ValidatorBuilder::human("human", "Please review this change.").build();
 
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        let result = execute_validator(&v, &mut inputs, &prior, None);
         assert_eq!(result.status, Status::Fail);
         assert!(result
             .feedback
@@ -1279,11 +1187,9 @@ mod tests {
             ],
         );
         let config = th::config_for_gate(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
         let opts = RunOptions::new();
 
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
         assert_eq!(verdict.status, VerdictStatus::Pass);
         assert_eq!(verdict.history.len(), 3);
     }
@@ -1299,11 +1205,9 @@ mod tests {
             ],
         );
         let config = th::config_for_gate(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
         let opts = RunOptions::new();
 
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
         assert_eq!(verdict.status, VerdictStatus::Fail);
         assert_eq!(verdict.failed_at, Some("b".into()));
         // c should not have run
@@ -1323,11 +1227,9 @@ mod tests {
             ],
         );
         let config = th::config_for_gate(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
         let opts = RunOptions::new();
 
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
         assert_eq!(verdict.status, VerdictStatus::Pass);
         // All 3 ran
         assert_eq!(verdict.history.len(), 3);
@@ -1346,12 +1248,10 @@ mod tests {
             ],
         );
         let config = th::config_for_gate(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
         let mut opts = RunOptions::new();
         opts.run_all = true;
 
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
         assert_eq!(verdict.status, VerdictStatus::Fail);
     }
 
@@ -1367,12 +1267,10 @@ mod tests {
             ],
         );
         let config = th::config_for_gate(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
         let mut opts = RunOptions::new();
         opts.run_all = true;
 
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
         // b should be skipped because a failed
         let b_result = verdict.history.iter().find(|r| r.name == "b").unwrap();
         assert_eq!(b_result.status, Status::Skip);
@@ -1387,11 +1285,9 @@ mod tests {
                 .build()],
         );
         let config = th::config_for_gate(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
         let opts = RunOptions::new();
 
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
         assert_eq!(verdict.status, VerdictStatus::Pass);
         assert_eq!(verdict.warnings, vec!["check"]);
     }
@@ -1407,12 +1303,10 @@ mod tests {
             ],
         );
         let config = th::config_for_gate(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
         let mut opts = RunOptions::new();
         opts.only = Some(vec!["b".into()]);
 
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
         let b_result = verdict.history.iter().find(|r| r.name == "b").unwrap();
         assert_eq!(b_result.status, Status::Pass);
         let a_result = verdict.history.iter().find(|r| r.name == "a").unwrap();
@@ -1429,12 +1323,10 @@ mod tests {
             ],
         );
         let config = th::config_for_gate(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
         let mut opts = RunOptions::new();
         opts.skip = Some(vec!["a".into()]);
 
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
         let a_result = verdict.history.iter().find(|r| r.name == "a").unwrap();
         assert_eq!(a_result.status, Status::Skip);
     }
@@ -1450,12 +1342,10 @@ mod tests {
             ],
         );
         let config = th::config_for_gate(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
         let mut opts = RunOptions::new();
         opts.suppressed_statuses = vec![Status::Fail];
 
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
         // Fail is suppressed, so pipeline continues and gate passes
         assert_eq!(verdict.status, VerdictStatus::Pass);
         // But history still records the true status
@@ -1476,12 +1366,10 @@ mod tests {
             ],
         );
         let config = th::config_for_gate(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
         let mut opts = RunOptions::new();
         opts.run_all = true;
 
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
         // Error takes precedence over fail
         assert_eq!(verdict.status, VerdictStatus::Error);
     }
@@ -1498,13 +1386,11 @@ mod tests {
             ],
         );
         let config = th::config_for_gate(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
         let mut opts = RunOptions::new();
         opts.run_all = true;
         opts.suppressed_statuses = vec![Status::Error];
 
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
         // Error suppressed, fail remains
         assert_eq!(verdict.status, VerdictStatus::Fail);
     }
@@ -1521,13 +1407,11 @@ mod tests {
             ],
         );
         let config = th::config_for_gate(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
         let mut opts = RunOptions::new();
         opts.run_all = true;
         opts.suppressed_statuses = vec![Status::Error, Status::Fail, Status::Warn];
 
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
         assert_eq!(verdict.status, VerdictStatus::Pass);
     }
 
@@ -1583,11 +1467,10 @@ mod tests {
         let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
 
         let v = ValidatorBuilder::llm("llm-check", "Review this code").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Pass);
         assert!(result.cost.is_some());
         let cost = result.cost.unwrap();
@@ -1619,11 +1502,10 @@ mod tests {
         let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
 
         let v = ValidatorBuilder::llm("llm-check", "Review this code").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Fail);
         assert!(result
             .feedback
@@ -1648,11 +1530,10 @@ mod tests {
         let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
 
         let v = ValidatorBuilder::llm("llm-check", "Review this").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Warn);
 
         handle.join().unwrap();
@@ -1672,11 +1553,10 @@ mod tests {
         let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
 
         let v = ValidatorBuilder::llm("llm-check", "Review this").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Error);
         assert!(result
             .feedback
@@ -1701,11 +1581,10 @@ mod tests {
         let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
 
         let v = ValidatorBuilder::llm("llm-check", "Review this").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Error);
         assert!(result
             .feedback
@@ -1722,11 +1601,10 @@ mod tests {
         let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
 
         let v = ValidatorBuilder::llm("llm-check", "Review this").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Error);
         assert!(result
             .feedback
@@ -1743,11 +1621,10 @@ mod tests {
         let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
 
         let v = ValidatorBuilder::llm("llm-check", "Review this").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Error);
         assert!(result.feedback.as_ref().unwrap().contains("Model"));
         assert!(result.feedback.as_ref().unwrap().contains("not found"));
@@ -1761,11 +1638,10 @@ mod tests {
         let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
 
         let v = ValidatorBuilder::llm("llm-check", "Review this").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Error);
         assert!(result.feedback.as_ref().unwrap().contains("Rate limited"));
 
@@ -1778,11 +1654,10 @@ mod tests {
         let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
 
         let v = ValidatorBuilder::llm("llm-check", "Review this").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Error);
         assert!(result.feedback.as_ref().unwrap().contains("HTTP 500"));
 
@@ -1793,11 +1668,10 @@ mod tests {
     fn llm_completion_unreachable_provider() {
         let config = th::config_with_provider("http://127.0.0.1:1");
         let v = ValidatorBuilder::llm("llm-check", "Review this").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Error);
         assert!(result
             .feedback
@@ -1813,11 +1687,10 @@ mod tests {
             .provider("nonexistent")
             .build();
 
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Error);
         assert!(result.feedback.as_ref().unwrap().contains("not defined"));
     }
@@ -1825,11 +1698,10 @@ mod tests {
     #[test]
     fn llm_completion_no_config() {
         let v = ValidatorBuilder::llm("llm-check", "Review this").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        let result = execute_validator(&v, &mut inputs, &prior, None);
         assert_eq!(result.status, Status::Error);
         assert!(result
             .feedback
@@ -1855,11 +1727,10 @@ mod tests {
             .response_format(ResponseFormat::Freeform)
             .build();
 
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Warn);
         assert!(result.feedback.as_ref().unwrap().contains("variable names"));
 
@@ -1883,11 +1754,10 @@ mod tests {
             .system_prompt("You are a code reviewer.")
             .build();
 
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Pass);
 
         // Verify system message was sent
@@ -1909,13 +1779,19 @@ mod tests {
         let (port, handle) = start_mock_server(200, &response.to_string());
         let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
 
-        let v = ValidatorBuilder::llm("llm-check", "Review: {artifact_content}").build();
+        let v = ValidatorBuilder::llm("llm-check", "Review: {file.content}").build();
 
-        let mut art = Artifact::from_string("def hello(): pass");
-        let mut ctx = Context::new();
+        use std::io::Write as _;
+        let mut tmpf = tempfile::NamedTempFile::new().unwrap();
+        write!(tmpf, "def hello(): pass").unwrap();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
+        inputs.insert(
+            "file".into(),
+            vec![InputFile::new(tmpf.path().to_path_buf())],
+        );
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Pass);
 
         // Verify placeholder was resolved in the request
@@ -1941,11 +1817,10 @@ mod tests {
         let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
 
         let v = ValidatorBuilder::llm("llm-check", "Review this").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert!(result.cost.is_some());
         let cost = result.cost.unwrap();
         assert_eq!(cost.input_tokens, Some(500));
@@ -1969,11 +1844,10 @@ mod tests {
         let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
 
         let v = ValidatorBuilder::llm("llm-check", "Review this").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Pass);
         assert!(result.cost.is_none());
 
@@ -2001,11 +1875,10 @@ mod tests {
             .no_model() // Should use provider default
             .build();
 
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Pass);
         // Cost should reflect the provider's default model
         let cost = result.cost.unwrap();
@@ -2034,11 +1907,9 @@ mod tests {
         let mut config = th::config_with_provider(&api_base);
         config.gates.insert("test".into(), gate.clone());
 
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
         let opts = RunOptions::new();
 
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
         assert_eq!(verdict.status, VerdictStatus::Pass);
         assert_eq!(verdict.history.len(), 1);
         assert_eq!(verdict.history[0].status, Status::Pass);
@@ -2068,11 +1939,9 @@ mod tests {
         let mut config = th::config_with_provider(&api_base);
         config.gates.insert("test".into(), gate.clone());
 
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
         let opts = RunOptions::new();
 
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
         assert_eq!(verdict.status, VerdictStatus::Fail);
         assert_eq!(verdict.failed_at, Some("llm-check".into()));
         // After validator should not have run (blocking)
@@ -2090,11 +1959,10 @@ mod tests {
             .runtime("openhands")
             .build();
 
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        let result = execute_validator(&v, &mut inputs, &prior, None);
         assert_eq!(result.status, Status::Error);
         assert!(result
             .feedback
@@ -2110,11 +1978,10 @@ mod tests {
             .mode(LlmMode::Session)
             .build();
 
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Error);
         assert!(result.feedback.as_ref().unwrap().contains("runtime"));
     }
@@ -2127,11 +1994,10 @@ mod tests {
             .runtime("nonexistent")
             .build();
 
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Error);
         assert!(result.feedback.as_ref().unwrap().contains("not defined"));
     }
@@ -2346,10 +2212,9 @@ mod tests {
     #[test]
     fn script_empty_command_returns_error() {
         let v = ValidatorBuilder::script("empty-cmd", "   ").build();
-        let mut artifact = Artifact::from_string("hello");
-        let mut context = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut artifact, &mut context, &prior, None);
+        let result = execute_validator(&v, &mut inputs, &prior, None);
         assert_eq!(result.status, Status::Error);
         assert!(
             result
@@ -2367,10 +2232,9 @@ mod tests {
         let v = ValidatorBuilder::script("warn-no-out", "exit 2")
             .warn_exit_codes(vec![2])
             .build();
-        let mut artifact = Artifact::from_string("hello");
-        let mut context = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut artifact, &mut context, &prior, None);
+        let result = execute_validator(&v, &mut inputs, &prior, None);
         assert_eq!(result.status, Status::Warn);
         assert!(
             result
@@ -2388,10 +2252,9 @@ mod tests {
         let v = ValidatorBuilder::script("env-test", "echo $BATON_TEST_VAR")
             .env("BATON_TEST_VAR", "hello123")
             .build();
-        let mut artifact = Artifact::from_string("hello");
-        let mut context = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut artifact, &mut context, &prior, None);
+        let result = execute_validator(&v, &mut inputs, &prior, None);
         assert_eq!(result.status, Status::Pass);
         // Pass means exit 0, stdout captured but feedback is None for pass.
         // The echo output goes to stdout but isn't surfaced in feedback on pass.
@@ -2402,7 +2265,7 @@ mod tests {
         )
         .env("BATON_TEST_VAR", "hello123")
         .build();
-        let result2 = execute_validator(&v2, &mut artifact, &mut context, &prior, None);
+        let result2 = execute_validator(&v2, &mut inputs, &prior, None);
         assert_eq!(
             result2.status,
             Status::Pass,
@@ -2422,10 +2285,9 @@ mod tests {
         let v = ValidatorBuilder::script("wd-test", "echo hi")
             .working_dir("/nonexistent/working/dir/path")
             .build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        let result = execute_validator(&v, &mut inputs, &prior, None);
         assert_eq!(result.status, Status::Error);
         assert!(
             result
@@ -2442,11 +2304,17 @@ mod tests {
 
     #[test]
     fn human_validator_with_placeholders_in_prompt() {
-        let v = ValidatorBuilder::human("human-ph", "Review {artifact_content} please").build();
-        let mut art = Artifact::from_string("fn main() {}");
-        let mut ctx = Context::new();
+        use std::io::Write as _;
+        let mut tmpf = tempfile::NamedTempFile::new().unwrap();
+        write!(tmpf, "fn main() {{}}").unwrap();
+        let v = ValidatorBuilder::human("human-ph", "Review {file.content} please").build();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
+        inputs.insert(
+            "file".into(),
+            vec![InputFile::new(tmpf.path().to_path_buf())],
+        );
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        let result = execute_validator(&v, &mut inputs, &prior, None);
         assert_eq!(result.status, Status::Fail);
         assert!(result.feedback.as_ref().unwrap().contains("fn main() {}"));
         assert!(result
@@ -2461,10 +2329,9 @@ mod tests {
         // prompt is None — the builder with "" sets Some(""), which resolves to ""
         let mut v = ValidatorBuilder::human("human-empty", "").build();
         v.prompt = None;
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        let result = execute_validator(&v, &mut inputs, &prior, None);
         assert_eq!(result.status, Status::Fail);
         // With None prompt, it falls back to "" and renders "[human-review-requested] "
         assert!(result
@@ -2481,10 +2348,9 @@ mod tests {
         let v = ValidatorBuilder::script("run-if-err", "exit 0")
             .run_if("bad expression no operator")
             .build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        let result = execute_validator(&v, &mut inputs, &prior, None);
         assert_eq!(result.status, Status::Error);
         assert!(
             result
@@ -2514,12 +2380,10 @@ mod tests {
             ],
         );
         let config = th::config_for_gate(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
         let mut opts = RunOptions::new();
         opts.run_all = true;
 
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
         assert_eq!(verdict.status, VerdictStatus::Fail);
         // All 4 ran
         assert_eq!(verdict.history.len(), 4);
@@ -2538,12 +2402,10 @@ mod tests {
             ],
         );
         let config = th::config_for_gate(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
         let mut opts = RunOptions::new();
         opts.run_all = true;
 
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
         assert_eq!(verdict.status, VerdictStatus::Pass);
         assert!(verdict.failed_at.is_none());
         assert!(verdict.feedback.is_none());
@@ -2566,11 +2428,9 @@ mod tests {
             ],
         );
         let config = th::config_for_gate(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
         let opts = RunOptions::new();
 
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
         assert_eq!(verdict.status, VerdictStatus::Pass);
         assert_eq!(verdict.warnings, vec!["w1", "w2"]);
     }
@@ -2579,32 +2439,18 @@ mod tests {
 
     #[test]
     fn gate_required_context_error_includes_gate_name() {
-        let mut gate = th::gate(
+        // Required context checking has been removed in v2 migration.
+        // Gates no longer have context slots — they use input files.
+        // This test now just verifies a gate with no validators passes.
+        let gate = th::gate(
             "my-gate",
             vec![ValidatorBuilder::script("a", "exit 0").build()],
         );
-        gate.context.insert(
-            "design-doc".into(),
-            ContextSlot {
-                description: None,
-                required: true,
-            },
-        );
         let config = th::config_for_gate(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
         let opts = RunOptions::new();
 
-        let err = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("design-doc"),
-            "expected context name in error: {msg}"
-        );
-        assert!(
-            msg.contains("my-gate"),
-            "expected gate name in error: {msg}"
-        );
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
+        assert_eq!(verdict.status, VerdictStatus::Pass);
     }
 
     // ─── run_gate: suppress_all mode (Warn + Error + Fail) ─
@@ -2626,12 +2472,10 @@ mod tests {
             ],
         );
         let config = th::config_for_gate(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
         let mut opts = RunOptions::new();
         opts.suppressed_statuses = vec![Status::Warn, Status::Error, Status::Fail];
 
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
         // All suppressed, so gate passes
         assert_eq!(verdict.status, VerdictStatus::Pass);
         // All validators ran (blocking failures were suppressed)
@@ -2648,11 +2492,10 @@ mod tests {
         let mut v = ValidatorBuilder::llm("llm-no-prompt", "placeholder").build();
         v.prompt = None;
 
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Error);
         assert!(
             result.feedback.as_ref().unwrap().contains("missing prompt"),
@@ -2677,11 +2520,10 @@ mod tests {
         let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
 
         let v = ValidatorBuilder::llm("llm-check", "Review this").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Error);
         assert!(result
             .feedback
@@ -2702,11 +2544,10 @@ mod tests {
         let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
 
         let v = ValidatorBuilder::llm("llm-check", "Review this").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Error);
         assert!(result.feedback.as_ref().unwrap().contains("HTTP 503"));
 
@@ -2944,11 +2785,10 @@ mod tests {
             .build();
         v.prompt = None;
 
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Error);
         assert!(
             result.feedback.as_ref().unwrap().contains("missing prompt"),
@@ -2972,11 +2812,9 @@ mod tests {
             ],
         );
         let config = th::config_for_gate(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
         let opts = RunOptions::new();
 
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
         assert_eq!(verdict.status, VerdictStatus::Error);
         assert_eq!(verdict.failed_at, Some("err-v".into()));
         // "after" should not have run
@@ -2992,12 +2830,10 @@ mod tests {
             vec![ValidatorBuilder::script("a", "exit 0").build()],
         );
         let config = th::config_for_gate(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
         let mut opts = RunOptions::new();
         opts.suppressed_statuses = vec![Status::Warn, Status::Fail];
 
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
         assert!(verdict.suppressed.contains(&"warn".to_string()));
         assert!(verdict.suppressed.contains(&"fail".to_string()));
     }
@@ -3020,12 +2856,10 @@ mod tests {
             ],
         );
         let config = th::config_for_gate(gate.clone());
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
         let mut opts = RunOptions::new();
         opts.run_all = true;
 
-        let verdict = run_gate(&gate, &config, &mut art, &mut ctx, &opts).unwrap();
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
         // Error beats fail
         assert_eq!(verdict.status, VerdictStatus::Error);
         // failed_at should point to the error validator (first with Error status)
@@ -3038,10 +2872,9 @@ mod tests {
     fn script_no_command_returns_error() {
         let mut v = ValidatorBuilder::script("no-cmd", "placeholder").build();
         v.command = None;
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        let result = execute_validator(&v, &mut inputs, &prior, None);
         assert_eq!(result.status, Status::Error);
         assert!(result
             .feedback
@@ -3058,10 +2891,9 @@ mod tests {
         let v = ValidatorBuilder::script("wd-ok", "exit 0")
             .working_dir(dir.path().to_str().unwrap())
             .build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, None);
+        let result = execute_validator(&v, &mut inputs, &prior, None);
         assert_eq!(result.status, Status::Pass);
     }
 
@@ -3073,11 +2905,10 @@ mod tests {
         let config = th::config_with_provider(&format!("http://127.0.0.1:{port}"));
 
         let v = ValidatorBuilder::llm("llm-check", "Review this").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Error);
         assert!(result
             .feedback
@@ -3121,11 +2952,10 @@ mod tests {
         };
 
         let v = ValidatorBuilder::llm("llm-check", "Review this").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Error);
         let feedback = result.feedback.unwrap();
         assert!(
@@ -3189,11 +3019,10 @@ mod tests {
 
         // Use a .md file reference as prompt
         let v = ValidatorBuilder::llm("llm-check", "review.md").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Pass);
         mock.assert();
     }
@@ -3206,11 +3035,10 @@ mod tests {
         let config = th::config_with_provider(&server.url(""));
 
         let v = ValidatorBuilder::llm("llm-check", "nonexistent-prompt.md").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Error);
         let feedback = result.feedback.unwrap();
         assert!(
@@ -3237,11 +3065,10 @@ mod tests {
 
         // ValidatorBuilder::llm sets max_tokens to Some(4096) by default
         let v = ValidatorBuilder::llm("llm-check", "Review this").build();
-        let mut art = Artifact::from_string("hello");
-        let mut ctx = Context::new();
+        let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
         let prior = BTreeMap::new();
 
-        let result = execute_validator(&v, &mut art, &mut ctx, &prior, Some(&config));
+        let result = execute_validator(&v, &mut inputs, &prior, Some(&config));
         assert_eq!(result.status, Status::Pass);
         mock.assert();
     }

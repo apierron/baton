@@ -6,7 +6,6 @@
 //! (`update`, `uninstall`, `clean`, `version`).
 
 use clap::{Parser, Subcommand};
-use std::io::Read;
 use std::path::PathBuf;
 use std::process;
 
@@ -25,39 +24,30 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Run a gate against an artifact
+    /// Run validators against input files
     Check {
+        /// Input files and directories (walked recursively)
+        files: Vec<PathBuf>,
+
         /// Path to baton.toml
         #[arg(long)]
         config: Option<PathBuf>,
 
-        /// Gate to run
-        #[arg(long)]
-        gate: String,
-
-        /// Path to the artifact (use '-' for stdin)
-        #[arg(long)]
-        artifact: String,
-
-        /// Context items (name=path, repeatable)
-        #[arg(long, value_parser = parse_context_arg)]
-        context: Vec<(String, String)>,
-
-        /// Run all validators even if a blocking one fails
-        #[arg(long)]
-        all: bool,
-
-        /// Run only named validators (comma-separated)
-        #[arg(long, value_delimiter = ',')]
+        /// Only run matching gates/validators (gate, gate.validator, @tag)
+        #[arg(long, value_delimiter = ' ')]
         only: Option<Vec<String>>,
 
-        /// Skip named validators (comma-separated)
-        #[arg(long, value_delimiter = ',')]
+        /// Skip matching gates/validators (gate, gate.validator, @tag)
+        #[arg(long, value_delimiter = ' ')]
         skip: Option<Vec<String>>,
 
-        /// Run only validators with these tags (comma-separated)
-        #[arg(long, value_delimiter = ',')]
-        tags: Option<Vec<String>>,
+        /// Add git-changed files to the input pool
+        #[arg(long)]
+        diff: Option<String>,
+
+        /// Read newline-separated file paths from a file or stdin (use '-' for stdin)
+        #[arg(long = "files")]
+        file_list: Option<String>,
 
         /// Override default timeout for all validators
         #[arg(long)]
@@ -67,7 +57,7 @@ enum Commands {
         #[arg(long, default_value = "json")]
         format: String,
 
-        /// Print validators that would run and exit
+        /// Print invocation plan and exit
         #[arg(long)]
         dry_run: bool,
 
@@ -87,7 +77,7 @@ enum Commands {
         #[arg(long)]
         suppress_errors: bool,
 
-        /// Suppress both warnings and errors
+        /// Suppress warnings, errors, and failures
         #[arg(long)]
         suppress_all: bool,
     },
@@ -114,7 +104,7 @@ enum Commands {
         config: Option<PathBuf>,
     },
 
-    /// Query verdict history
+    /// Query invocation history
     History {
         /// Filter by gate name
         #[arg(long)]
@@ -124,9 +114,17 @@ enum Commands {
         #[arg(long)]
         status: Option<String>,
 
-        /// Filter by artifact hash
+        /// Search validator runs by file path
         #[arg(long)]
-        artifact_hash: Option<String>,
+        file: Option<String>,
+
+        /// Search validator runs by content hash
+        #[arg(long)]
+        hash: Option<String>,
+
+        /// Show detail for a specific invocation
+        #[arg(long)]
+        invocation: Option<String>,
 
         /// Number of results
         #[arg(long, default_value = "20")]
@@ -213,15 +211,6 @@ enum Commands {
     },
 }
 
-/// Parses a `name=path` context argument from the CLI.
-fn parse_context_arg(s: &str) -> Result<(String, String), String> {
-    let parts: Vec<&str> = s.splitn(2, '=').collect();
-    if parts.len() != 2 {
-        return Err(format!("Invalid context format: '{s}'. Expected name=path"));
-    }
-    Ok((parts[0].to_string(), parts[1].to_string()))
-}
-
 /// Loads and parses baton.toml from an explicit path or by discovery.
 fn load_config(
     config_path: Option<&PathBuf>,
@@ -254,13 +243,11 @@ fn main() {
     let exit_code = match cli.command {
         Commands::Check {
             config,
-            gate,
-            artifact,
-            context,
-            all,
+            files,
             only,
             skip,
-            tags,
+            diff,
+            file_list,
             timeout,
             format,
             dry_run,
@@ -271,13 +258,11 @@ fn main() {
             suppress_all,
         } => cmd_check(
             config.as_ref(),
-            &gate,
-            &artifact,
-            &context,
-            all,
+            &files,
             only,
             skip,
-            tags,
+            diff.as_deref(),
+            file_list.as_deref(),
             timeout,
             &format,
             dry_run,
@@ -294,14 +279,18 @@ fn main() {
         Commands::History {
             gate,
             status,
-            artifact_hash,
+            file,
+            hash,
+            invocation,
             limit,
             config,
         } => cmd_history(
             config.as_ref(),
             gate.as_deref(),
             status.as_deref(),
-            artifact_hash.as_deref(),
+            file.as_deref(),
+            hash.as_deref(),
+            invocation.as_deref(),
             limit,
         ),
         Commands::ValidateConfig { config } => cmd_validate_config(config.as_ref()),
@@ -320,18 +309,16 @@ fn main() {
     process::exit(exit_code);
 }
 
-/// Executes the `check` subcommand: loads config, builds artifact/context,
-/// runs the gate pipeline, stores the verdict in history, and outputs the result.
+/// Executes the `check` subcommand: loads config, builds input pool,
+/// runs all gates (filtered by --only/--skip), and outputs the result.
 #[allow(clippy::too_many_arguments)]
 fn cmd_check(
     config_path: Option<&PathBuf>,
-    gate_name: &str,
-    artifact_path: &str,
-    context_args: &[(String, String)],
-    run_all: bool,
+    files: &[PathBuf],
     only: Option<Vec<String>>,
     skip: Option<Vec<String>>,
-    tags: Option<Vec<String>>,
+    diff: Option<&str>,
+    file_list: Option<&str>,
     timeout: Option<u64>,
     format: &str,
     dry_run: bool,
@@ -348,143 +335,120 @@ fn cmd_check(
         }
     };
 
-    let gate = match config.gates.get(gate_name) {
-        Some(g) => g,
-        None => {
-            let available: Vec<&String> = config.gates.keys().collect();
-            eprintln!(
-                "Error: Gate '{gate_name}' not found. Available gates: {}",
-                available
-                    .iter()
-                    .map(|s| s.as_str())
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            );
+    // Build input pool from positional files
+    let mut input_pool: Vec<InputFile> = Vec::new();
+    for file_path in files {
+        if !file_path.exists() {
+            eprintln!("Error: File not found: {}", file_path.display());
             return 2;
         }
-    };
-
-    // Validate --only references
-    if let Some(ref only_list) = only {
-        let validator_names: Vec<&str> = gate.validators.iter().map(|v| v.name.as_str()).collect();
-        for name in only_list {
-            if !validator_names.contains(&name.as_str()) {
-                eprintln!("Error: --only references unknown validator '{name}'");
-                return 2;
-            }
-        }
-    }
-
-    // Validate --skip references
-    if let Some(ref skip_list) = skip {
-        let validator_names: Vec<&str> = gate.validators.iter().map(|v| v.name.as_str()).collect();
-        for name in skip_list {
-            if !validator_names.contains(&name.as_str()) {
-                eprintln!("Warning: --skip references unknown validator '{name}'");
-            }
-        }
-    }
-
-    // Build artifact
-    let mut artifact = if artifact_path == "-" {
-        let mut content = Vec::new();
-        if let Err(e) = std::io::stdin().read_to_end(&mut content) {
-            eprintln!("Error reading stdin: {e}");
-            return 2;
-        }
-        // Write to temp file
-        let tmp_dir = &config.defaults.tmp_dir;
-        if let Err(e) = std::fs::create_dir_all(tmp_dir) {
-            eprintln!("Error creating tmp dir: {e}");
-            return 2;
-        }
-        let tmp_path = tmp_dir.join(format!("stdin-{}.tmp", uuid::Uuid::new_v4()));
-        if let Err(e) = std::fs::write(&tmp_path, &content) {
-            eprintln!("Error writing temp file: {e}");
-            return 2;
-        }
-        match Artifact::from_file(&tmp_path) {
-            Ok(a) => a,
-            Err(e) => {
-                eprintln!("Error: {e}");
-                return 2;
-            }
-        }
-    } else {
-        match Artifact::from_file(artifact_path) {
-            Ok(a) => a,
-            Err(e) => {
-                eprintln!("Error: {e}");
-                return 2;
-            }
-        }
-    };
-
-    // Build context
-    let mut context = Context::new();
-    for (name, path) in context_args {
-        if path == "-" {
-            eprintln!("Error: stdin context not supported in this version");
-            return 2;
-        }
-        let p = std::path::Path::new(path);
-        if p.exists() {
-            if let Err(e) = context.add_file(name.clone(), p) {
-                eprintln!("Error: {e}");
-                return 2;
-            }
+        if file_path.is_dir() {
+            walk_dir(file_path, &mut input_pool);
         } else {
-            context.add_string(name.clone(), path.clone());
+            input_pool.push(InputFile::new(file_path.clone()));
         }
+    }
+
+    // Add git-changed files via --diff
+    if let Some(refspec) = diff {
+        match std::process::Command::new("git")
+            .args(["diff", "--name-only", refspec])
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    let p = PathBuf::from(line.trim());
+                    if p.exists() {
+                        input_pool.push(InputFile::new(p));
+                    }
+                }
+            }
+            Ok(output) => {
+                eprintln!(
+                    "Error: git diff failed: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                );
+                return 2;
+            }
+            Err(e) => {
+                eprintln!("Error: could not run git diff: {e}");
+                return 2;
+            }
+        }
+    }
+
+    // Add file list via --files
+    if let Some(source) = file_list {
+        let content = if source == "-" {
+            use std::io::Read;
+            let mut buf = String::new();
+            if let Err(e) = std::io::stdin().read_to_string(&mut buf) {
+                eprintln!("Error: reading stdin: {e}");
+                return 2;
+            }
+            buf
+        } else {
+            match std::fs::read_to_string(source) {
+                Ok(c) => c,
+                Err(e) => {
+                    eprintln!("Error: reading file list '{source}': {e}");
+                    return 2;
+                }
+            }
+        };
+        for line in content.lines() {
+            let line = line.trim();
+            if !line.is_empty() {
+                input_pool.push(InputFile::new(PathBuf::from(line)));
+            }
+        }
+    }
+
+    // Determine which gates to run (check before moving only/skip)
+    let mut gate_names: Vec<String> = config.gates.keys().cloned().collect();
+
+    if let Some(ref only_list) = only {
+        let config_gate_names: Vec<&str> = config.gates.keys().map(|s| s.as_str()).collect();
+        let only_gates: Vec<String> = only_list
+            .iter()
+            .filter(|s| config_gate_names.contains(&s.as_str()))
+            .cloned()
+            .collect();
+        if !only_gates.is_empty() {
+            gate_names = only_gates;
+        }
+    }
+    if let Some(ref skip_list) = skip {
+        gate_names.retain(|g| !skip_list.contains(g));
+    }
+
+    if gate_names.is_empty() {
+        eprintln!("No gates to run.");
+        return 0;
     }
 
     // Dry run
     if dry_run {
-        eprintln!("Dry run: validators that would execute for gate '{gate_name}':");
-        for v in &gate.validators {
-            let skip_reason = if let Some(ref o) = only {
-                if !o.contains(&v.name) {
-                    Some("--only")
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            let skip_reason = skip_reason.or_else(|| {
-                if let Some(ref s) = skip {
-                    if s.contains(&v.name) {
-                        Some("--skip")
-                    } else {
-                        None
+        for gate_name in &gate_names {
+            let gate = &config.gates[gate_name];
+            eprintln!("Gate '{gate_name}':");
+            for v in &gate.validators {
+                let skip_reason = compute_skip_reason(v, &only, &skip);
+                match skip_reason {
+                    Some(reason) => eprintln!("  \u{2014} {} (skipped by {reason})", v.name),
+                    None => {
+                        let run_if_note = v
+                            .run_if
+                            .as_ref()
+                            .map(|expr| format!(" (run_if: {expr})"))
+                            .unwrap_or_default();
+                        eprintln!(
+                            "  \u{2713} {} [{}]{run_if_note}",
+                            v.name,
+                            v.validator_type_str()
+                        );
                     }
-                } else {
-                    None
-                }
-            });
-
-            let skip_reason = skip_reason.or_else(|| {
-                if let Some(ref t) = tags {
-                    if !v.tags.iter().any(|vt| t.contains(vt)) {
-                        Some("--tags")
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            });
-
-            match skip_reason {
-                Some(reason) => eprintln!("  — {} (skipped by {reason})", v.name),
-                None => {
-                    let run_if_note = match &v.run_if {
-                        Some(expr) if run_all => format!(" (run_if: {expr}, depends on runtime)"),
-                        Some(expr) => format!(" (run_if: {expr})"),
-                        None => String::new(),
-                    };
-                    eprintln!("  ✓ {} [{}]{run_if_note}", v.name, v.validator_type_str());
                 }
             }
         }
@@ -504,64 +468,115 @@ fn cmd_check(
     }
 
     let options = RunOptions {
-        run_all,
+        run_all: false,
         only,
         skip,
-        tags,
+        tags: None,
         timeout,
         log: !no_log,
         suppressed_statuses,
     };
 
-    // Run the gate
-    let verdict = match run_gate(gate, &config, &mut artifact, &mut context, &options) {
-        Ok(v) => v,
-        Err(e) => {
-            eprintln!("Error: {e}");
-            return 2;
-        }
-    };
+    // Run each gate and collect the worst exit code
+    let mut worst_exit = 0;
+    let mut all_verdicts = Vec::new();
 
-    // Store in history
-    if options.log {
-        let db_path = &config.defaults.history_db;
-        if let Err(e) = std::fs::create_dir_all(
-            db_path
-                .parent()
-                .unwrap_or_else(|| std::path::Path::new(".")),
-        ) {
-            eprintln!("Warning: could not create history directory: {e}");
-        } else {
-            match history::init_db(db_path) {
-                Ok(conn) => {
-                    if let Err(e) = history::store_verdict(&conn, &verdict) {
-                        eprintln!("Warning: could not store verdict: {e}");
+    for gate_name in &gate_names {
+        let gate = &config.gates[gate_name.as_str()];
+        let verdict = match run_gate(gate, &config, input_pool.clone(), &options) {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("Error: {e}");
+                return 2;
+            }
+        };
+
+        let exit = verdict.status.exit_code();
+        if exit > worst_exit {
+            worst_exit = exit;
+        }
+
+        // Store in history
+        if options.log {
+            let db_path = &config.defaults.history_db;
+            if let Err(e) = std::fs::create_dir_all(
+                db_path
+                    .parent()
+                    .unwrap_or_else(|| std::path::Path::new(".")),
+            ) {
+                eprintln!("Warning: could not create history directory: {e}");
+            } else {
+                match history::init_db(db_path) {
+                    Ok(conn) => {
+                        if let Err(e) = history::store_verdict(&conn, &verdict) {
+                            eprintln!("Warning: could not store verdict: {e}");
+                        }
                     }
+                    Err(e) => eprintln!("Warning: could not open history database: {e}"),
                 }
-                Err(e) => eprintln!("Warning: could not open history database: {e}"),
+            }
+        }
+
+        all_verdicts.push(verdict);
+    }
+
+    // Output — for now, output the last verdict (single gate) or all of them
+    if all_verdicts.len() == 1 {
+        let verdict = &all_verdicts[0];
+        match format {
+            "json" => println!("{}", verdict.to_json()),
+            "human" => eprintln!("{}", verdict.to_human()),
+            "summary" => eprintln!("{}", verdict.to_summary()),
+            other => {
+                eprintln!("Unknown format: {other}. Using json.");
+                println!("{}", verdict.to_json());
+            }
+        }
+    } else {
+        // Multiple gates: output each verdict
+        for verdict in &all_verdicts {
+            match format {
+                "json" => println!("{}", verdict.to_json()),
+                "human" => eprintln!("{}", verdict.to_human()),
+                "summary" => eprintln!("{}", verdict.to_summary()),
+                _ => println!("{}", verdict.to_json()),
             }
         }
     }
 
-    // Output
-    match format {
-        "json" => println!("{}", verdict.to_json()),
-        "human" => eprintln!("{}", verdict.to_human()),
-        "summary" => eprintln!("{}", verdict.to_summary()),
-        other => {
-            eprintln!("Unknown format: {other}. Using json.");
-            println!("{}", verdict.to_json());
+    worst_exit
+}
+
+fn walk_dir(dir: &std::path::Path, pool: &mut Vec<InputFile>) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                walk_dir(&p, pool);
+            } else {
+                pool.push(InputFile::new(p));
+            }
         }
     }
+}
 
-    // Clean up stdin temp file
-    if artifact_path == "-" {
-        if let Some(ref path) = artifact.path {
-            let _ = std::fs::remove_file(path);
+/// Compute skip reason for a validator based on --only/--skip.
+fn compute_skip_reason(
+    v: &baton::config::ValidatorConfig,
+    only: &Option<Vec<String>>,
+    skip: &Option<Vec<String>>,
+) -> Option<&'static str> {
+    if let Some(ref o) = only {
+        if !o.contains(&v.name) {
+            return Some("--only");
         }
     }
-
-    verdict.status.exit_code()
+    if let Some(ref s) = skip {
+        if s.contains(&v.name) {
+            return Some("--skip");
+        }
+    }
+    None
 }
 
 /// Initializes a new baton project: creates `baton.toml`, `.baton/` directory,
@@ -588,7 +603,7 @@ fn cmd_init(minimal: bool, prompts_only: bool) -> i32 {
         }
 
         // Write starter baton.toml
-        let starter_config = r#"version = "0.4"
+        let starter_config = r#"version = "0.5"
 
 [defaults]
 timeout_seconds = 300
@@ -603,14 +618,15 @@ tmp_dir = "./.baton/tmp"
 # api_key_env = "ANTHROPIC_API_KEY"
 # default_model = "claude-haiku"
 
-[gates.example]
-description = "Example validation gate"
-
-[[gates.example.validators]]
-name = "lint"
+[validators.lint]
 type = "script"
 command = "echo 'Replace with your lint command' && exit 0"
-blocking = true
+
+[gates.example]
+description = "Example validation gate"
+validators = [
+    { ref = "lint", blocking = true },
+]
 "#;
         if let Err(e) = std::fs::write("baton.toml", starter_config) {
             eprintln!("Error writing baton.toml: {e}");
@@ -718,12 +734,15 @@ fn cmd_list(config_path: Option<&PathBuf>, gate_name: Option<&str>) -> i32 {
     0
 }
 
-/// Queries and displays verdict history, optionally filtered by gate, status, or artifact hash.
+/// Queries and displays invocation history.
+#[allow(clippy::too_many_arguments)]
 fn cmd_history(
     config_path: Option<&PathBuf>,
     gate: Option<&str>,
     status: Option<&str>,
-    artifact_hash: Option<&str>,
+    _file: Option<&str>,
+    _hash: Option<&str>,
+    _invocation: Option<&str>,
     limit: usize,
 ) -> i32 {
     let (config, _) = match load_config(config_path) {
@@ -742,21 +761,12 @@ fn cmd_history(
         }
     };
 
-    let results = if let Some(hash) = artifact_hash {
-        match history::query_by_artifact(&conn, hash) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("Error: {e}");
-                return 2;
-            }
-        }
-    } else {
-        match history::query_recent(&conn, limit, gate, status) {
-            Ok(r) => r,
-            Err(e) => {
-                eprintln!("Error: {e}");
-                return 2;
-            }
+    // TODO: wire up --file, --hash, --invocation to new query functions
+    let results = match history::query_recent(&conn, limit, gate, status) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            return 2;
         }
     };
 
@@ -1077,7 +1087,7 @@ fn cmd_clean(config_path: Option<&PathBuf>, dry_run: bool) -> i32 {
 /// Prints baton version, spec version, and config file location.
 fn cmd_version(config_path: Option<&PathBuf>) -> i32 {
     println!("baton {}", env!("CARGO_PKG_VERSION"));
-    println!("spec version: 0.4");
+    println!("spec version: 0.5");
 
     match load_config(config_path) {
         Ok((_, path)) => println!("config: {} (found)", path.display()),
