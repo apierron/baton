@@ -5,7 +5,6 @@
 //! `/v1/models` endpoints. Used by both the exec module (LLM validators)
 //! and the CLI (provider health checks).
 
-use crate::config::Provider;
 use crate::types::Cost;
 
 // ─── Error type ──────────────────────────────────────────
@@ -138,24 +137,25 @@ pub struct ProviderClient {
 }
 
 impl ProviderClient {
-    /// Creates a new client for the given provider.
+    /// Creates a new client for the given provider/runtime.
     ///
     /// Resolves the API key from the environment if `api_key_env` is non-empty.
     /// Returns `Err(ProviderError::ApiKeyNotSet)` if the env var is required but missing.
     pub fn new(
-        provider: &Provider,
+        api_base: &str,
+        api_key_env: &str,
         provider_name: &str,
         timeout_seconds: u64,
     ) -> Result<Self, ProviderError> {
-        let api_key = if provider.api_key_env.is_empty() {
+        let api_key = if api_key_env.is_empty() {
             None
         } else {
-            match std::env::var(&provider.api_key_env) {
+            match std::env::var(api_key_env) {
                 Ok(key) => Some(key),
                 Err(_) => {
                     return Err(ProviderError::ApiKeyNotSet {
                         provider: provider_name.into(),
-                        env_var: provider.api_key_env.clone(),
+                        env_var: api_key_env.into(),
                     });
                 }
             }
@@ -168,10 +168,10 @@ impl ProviderClient {
 
         Ok(Self {
             client,
-            api_base: provider.api_base.clone(),
+            api_base: api_base.into(),
             api_key,
             provider_name: provider_name.into(),
-            api_key_env: provider.api_key_env.clone(),
+            api_key_env: api_key_env.into(),
             timeout_seconds,
         })
     }
@@ -549,12 +549,7 @@ mod tests {
 
     #[test]
     fn new_with_empty_api_key_env() {
-        let provider = Provider {
-            api_base: "http://localhost:8080".into(),
-            api_key_env: "".into(),
-            default_model: "test".into(),
-        };
-        let client = ProviderClient::new(&provider, "test-provider", 30).unwrap();
+        let client = ProviderClient::new("http://localhost:8080", "", "test-provider", 30).unwrap();
         assert_eq!(client.provider_name(), "test-provider");
         assert_eq!(client.api_base(), "http://localhost:8080");
         assert!(client.api_key.is_none());
@@ -562,12 +557,12 @@ mod tests {
 
     #[test]
     fn new_with_missing_env_var() {
-        let provider = Provider {
-            api_base: "http://localhost".into(),
-            api_key_env: "BATON_TEST_NONEXISTENT_PROVIDER_KEY_XYZ".into(),
-            default_model: "test".into(),
-        };
-        let result = ProviderClient::new(&provider, "myp", 30);
+        let result = ProviderClient::new(
+            "http://localhost",
+            "BATON_TEST_NONEXISTENT_PROVIDER_KEY_XYZ",
+            "myp",
+            30,
+        );
         assert!(result.is_err());
         match result.unwrap_err() {
             ProviderError::ApiKeyNotSet { provider, env_var } => {
@@ -581,24 +576,20 @@ mod tests {
     #[test]
     fn new_with_valid_env_var() {
         std::env::set_var("BATON_TEST_PROVIDER_CLIENT_KEY", "secret-123");
-        let provider = Provider {
-            api_base: "http://localhost".into(),
-            api_key_env: "BATON_TEST_PROVIDER_CLIENT_KEY".into(),
-            default_model: "test".into(),
-        };
-        let client = ProviderClient::new(&provider, "test", 30).unwrap();
+        let client = ProviderClient::new(
+            "http://localhost",
+            "BATON_TEST_PROVIDER_CLIENT_KEY",
+            "test",
+            30,
+        )
+        .unwrap();
         std::env::remove_var("BATON_TEST_PROVIDER_CLIENT_KEY");
         assert_eq!(client.api_key, Some("secret-123".into()));
     }
 
     #[test]
     fn new_stores_timeout() {
-        let provider = Provider {
-            api_base: "http://localhost".into(),
-            api_key_env: "".into(),
-            default_model: "test".into(),
-        };
-        let client = ProviderClient::new(&provider, "p", 42).unwrap();
+        let client = ProviderClient::new("http://localhost", "", "p", 42).unwrap();
         assert_eq!(client.timeout_seconds, 42);
     }
 
@@ -606,12 +597,7 @@ mod tests {
 
     /// Creates a ProviderClient pointed at the mock server with no auth.
     fn test_client(server: &httpmock::MockServer) -> ProviderClient {
-        let provider = Provider {
-            api_base: server.url(""),
-            api_key_env: "".into(),
-            default_model: "test-model".into(),
-        };
-        ProviderClient::new(&provider, "test", 10).unwrap()
+        ProviderClient::new(&server.url(""), "", "test", 10).unwrap()
     }
 
     /// Creates a ProviderClient with a pre-set API key (bypasses env lookup).
@@ -964,12 +950,7 @@ mod tests {
         });
 
         // Client with 1-second timeout
-        let provider = Provider {
-            api_base: server.url(""),
-            api_key_env: "".into(),
-            default_model: "test-model".into(),
-        };
-        let client = ProviderClient::new(&provider, "test", 1).unwrap();
+        let client = ProviderClient::new(&server.url(""), "", "test", 1).unwrap();
 
         let body = serde_json::json!({"model": "m", "messages": []});
         match client.post_completion(body, "m").unwrap_err() {
@@ -985,12 +966,7 @@ mod tests {
     #[test]
     fn send_request_unreachable() {
         // Point at a port with no server
-        let provider = Provider {
-            api_base: "http://127.0.0.1:1".into(),
-            api_key_env: "".into(),
-            default_model: "test-model".into(),
-        };
-        let client = ProviderClient::new(&provider, "test", 5).unwrap();
+        let client = ProviderClient::new("http://127.0.0.1:1", "", "test", 5).unwrap();
 
         let body = serde_json::json!({"model": "m", "messages": []});
         match client.post_completion(body, "m").unwrap_err() {

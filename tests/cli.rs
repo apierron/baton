@@ -1753,7 +1753,7 @@ fn clean_dry_run_does_not_delete() {
 #[test]
 fn check_provider_missing_api_key_env() {
     let dir = TempDir::new().unwrap();
-    let toml = r#"version = "0.4"
+    let toml = r#"version = "0.6"
 
 [defaults]
 timeout_seconds = 30
@@ -1763,8 +1763,9 @@ log_dir = "./.baton/logs"
 history_db = "./.baton/history.db"
 tmp_dir = "./.baton/tmp"
 
-[providers.default]
-api_base = "http://localhost:1"
+[runtimes.default]
+type = "api"
+base_url = "http://localhost:1"
 api_key_env = "BATON_CLI_TEST_NONEXISTENT_KEY"
 default_model = "test-model"
 

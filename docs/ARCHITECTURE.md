@@ -13,8 +13,8 @@ Modules follow a strict dependency direction. Lower layers must not import from 
     │       │   │       │          │
     ▼       ▼   ▼       ▼          ▼
   exec   config history runtime  provider
-    │       │                      │
-    ├───────┤──────────────────────┘
+    │       │             │          │
+    ├───────┤             └──► provider
     │       │
     ▼       ▼
 placeholder prompt
@@ -26,6 +26,7 @@ placeholder prompt
   error
 
 Note: exec includes the dispatch planner (file collection, input matching, invocation planning) as part of its execution pipeline.
+Note: exec no longer depends on provider directly; runtime (via its API adapter) handles provider interaction.
 ```
 
 **Allowed dependency direction (top → bottom):**
@@ -33,15 +34,15 @@ Note: exec includes the dispatch planner (file collection, input matching, invoc
 | Layer | May import from |
 | ----- | --------------- |
 | `main.rs` | `config`, `exec`, `history`, `runtime`, `provider`, `types` |
-| `exec` | `config`, `types`, `placeholder`, `runtime`, `provider`, `error` |
+| `exec` | `config`, `types`, `placeholder`, `runtime`, `error` |
 | `config` | `types`, `placeholder`, `error` |
 | `history` | `types`, `error` |
-| `runtime` | `types`, `error` |
+| `runtime` | `types`, `error`, `provider` |
 | `placeholder` | `types`, `error` |
 | `prompt` | `error` |
 | `verdict_parser` | `types` |
 | `types` | `error` |
-| `provider` | `config` (for `Provider` struct), `types` (for `Cost`) |
+| `provider` | `types` (for `Cost`) |
 | `error` | *(leaf — no internal imports)* |
 
 **Violations of this layering are bugs.** If you need to call upward, restructure: move the shared logic into the lower layer or introduce a new shared module.
@@ -93,17 +94,17 @@ Status suppression (`suppress_errors`, `suppress_warnings`) can override individ
 
 ## LLM Validators
 
-LLM validators operate in two modes:
+LLM validators operate in two modes, both dispatched through runtimes:
 
-- **Completion** (`exec.rs: execute_llm_completion`) — Resolves the prompt template and placeholders, then delegates the HTTP call to `provider::ProviderClient::post_completion()`. The response content is parsed by `verdict_parser` for PASS/FAIL/WARN keywords. Token counts and cost are extracted by the provider client and tracked in `ValidatorResult.cost`.
+- **Query** (`mode = "query"`, default) — Resolves the prompt template and placeholders, then dispatches through the appropriate runtime. For the API runtime, this delegates to `provider::ProviderClient::post_completion()`. The response content is parsed by `verdict_parser` for PASS/FAIL/WARN keywords. Token counts and cost are extracted and tracked in `ValidatorResult.cost`.
 
-- **Session** (`exec.rs: execute_llm_session`) — Delegates to a `RuntimeAdapter` (see below). Creates a multi-turn agent session, polls for completion, and collects the final result. The agent can use tools, read files, and produce a verdict grounded in observation.
+- **Session** (`mode = "session"`) — Delegates to a `RuntimeAdapter`. Creates a multi-turn agent session, polls for completion, and collects the final result. The agent can use tools, read files, and produce a verdict grounded in observation.
 
-`execute_validator()` takes `Option<&BatonConfig>` — `None` is fine for script/human validators, but required for LLM validators (to resolve provider/runtime configuration).
+Validators specify their runtime via the `runtime` field (string or list) instead of the former `provider` field. `execute_validator()` takes `Option<&BatonConfig>` — `None` is fine for script/human validators, but required for LLM validators (to resolve runtime configuration).
 
 ## Provider Client
 
-The `provider` module provides `ProviderClient`, a shared HTTP client for OpenAI-compatible LLM APIs. It handles API key resolution, Bearer auth, and structured error classification (auth failures, model-not-found, rate limiting, timeouts). Both `exec::execute_llm_completion` and the CLI's `check-provider` command use it.
+The `provider` module provides `ProviderClient`, a shared HTTP client for OpenAI-compatible LLM APIs. It handles API key resolution, Bearer auth, and structured error classification (auth failures, model-not-found, rate limiting, timeouts). It is now an internal utility used by the API adapter (`src/runtime/api.rs`) rather than being called directly from `exec.rs`. The CLI's `check-provider` command also uses it for connectivity checks.
 
 Unlike `RuntimeAdapter` (a trait for pluggable backends), `ProviderClient` is a concrete struct — all supported LLM providers use the OpenAI-compatible API format. If a non-OpenAI-compatible provider is added, the client can be extended or a trait can be extracted at that point.
 
@@ -111,7 +112,9 @@ Unlike `RuntimeAdapter` (a trait for pluggable backends), `ProviderClient` is a 
 
 The `runtime` module defines the `RuntimeAdapter` trait with five methods: `create_session`, `poll_status`, `collect_result`, `cancel`, and `teardown`, plus a `health_check` for connectivity verification.
 
-`runtime::openhands` implements this trait for the OpenHands platform. New runtime adapters (e.g., SWE-agent) should implement `RuntimeAdapter` and be wired into `runtime::create_adapter()`.
+`runtime::openhands` implements this trait for the OpenHands platform. `runtime::api` implements it for direct LLM API calls (query mode). New runtime adapters (e.g., SWE-agent) should implement `RuntimeAdapter` and be wired into `runtime::create_adapter()`.
+
+Supported runtime types: `api`, `openhands`, `opencode`.
 
 ## Spec Files
 

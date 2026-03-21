@@ -12,7 +12,7 @@ use std::process;
 use baton::config::{discover_config, parse_config, validate_config};
 use baton::exec::run_gate;
 use baton::history;
-use baton::provider::{ProviderClient, ProviderError};
+use baton::runtime;
 use baton::types::*;
 
 #[derive(Parser)]
@@ -603,7 +603,7 @@ fn cmd_init(minimal: bool, prompts_only: bool) -> i32 {
         }
 
         // Write starter baton.toml
-        let starter_config = r#"version = "0.5"
+        let starter_config = r#"version = "0.6"
 
 [defaults]
 timeout_seconds = 300
@@ -613,8 +613,9 @@ log_dir = "./.baton/logs"
 history_db = "./.baton/history.db"
 tmp_dir = "./.baton/tmp"
 
-# [providers.default]
-# api_base = "https://api.anthropic.com"
+# [runtimes.default]
+# type = "api"
+# base_url = "https://api.anthropic.com"
 # api_key_env = "ANTHROPIC_API_KEY"
 # default_model = "claude-haiku"
 
@@ -821,84 +822,7 @@ fn cmd_validate_config(config_path: Option<&PathBuf>) -> i32 {
     }
 }
 
-/// Tests connectivity to a single LLM provider: checks API key, tries `/v1/models`,
-/// and falls back to a minimal test completion if the model list is unavailable.
-fn check_single_provider(name: &str, provider: &baton::config::Provider) -> bool {
-    // 1. Build provider client
-    let client = match ProviderClient::new(provider, name, 10) {
-        Ok(c) => c,
-        Err(ProviderError::ApiKeyNotSet { env_var, .. }) => {
-            eprintln!("  ERROR: API key env var '{env_var}' is not set");
-            return false;
-        }
-        Err(e) => {
-            eprintln!("  ERROR: {e}");
-            return false;
-        }
-    };
-
-    // 2. Try /v1/models endpoint
-    match client.list_models() {
-        Ok(models) => {
-            if models.iter().any(|m| m == &provider.default_model) {
-                eprintln!(
-                    "  OK: Provider '{name}': reachable, model '{}' available",
-                    provider.default_model
-                );
-                return true;
-            } else if models.is_empty() {
-                // Model list came back empty — fall through to test completion
-            } else {
-                eprintln!(
-                    "  WARN: Provider '{name}': reachable, but model '{}' not found",
-                    provider.default_model
-                );
-                let display: Vec<&str> = models.iter().take(10).map(|s| s.as_str()).collect();
-                eprintln!("  Available models: {}", display.join(", "));
-                return true; // reachable, just model not found
-            }
-        }
-        Err(ProviderError::AuthFailed { api_key_env, .. }) => {
-            eprintln!("  ERROR: Authentication failed for provider '{name}'. Check {api_key_env}.");
-            return false;
-        }
-        Err(ProviderError::Timeout { .. }) => {
-            eprintln!(
-                "  ERROR: Provider '{name}': connection timed out to {}",
-                provider.api_base
-            );
-            return false;
-        }
-        Err(ProviderError::Unreachable {
-            api_base, detail, ..
-        }) => {
-            eprintln!("  ERROR: Cannot reach {api_base}: {detail}");
-            return false;
-        }
-        Err(_) => {
-            // /v1/models not available — fall through to test completion
-        }
-    }
-
-    // 3. Fallback: minimal test completion
-    eprintln!("  WARN: Model list not available. Attempting test completion...");
-    match client.test_completion(&provider.default_model) {
-        Ok(true) => {
-            eprintln!(
-                "  OK: Provider '{name}': reachable, model '{}' responds",
-                provider.default_model
-            );
-            true
-        }
-        Err(e) => {
-            eprintln!("  ERROR: Provider '{name}': {e}");
-            false
-        }
-        Ok(false) => unreachable!("test_completion returns Ok(true) or Err"),
-    }
-}
-
-/// Checks connectivity for one or all configured LLM providers.
+/// Checks connectivity for one or all configured API runtimes (formerly providers).
 fn cmd_check_provider(config_path: Option<&PathBuf>, name: Option<&str>, all: bool) -> i32 {
     let (config, _) = match load_config(config_path) {
         Ok(c) => c,
@@ -908,39 +832,60 @@ fn cmd_check_provider(config_path: Option<&PathBuf>, name: Option<&str>, all: bo
         }
     };
 
-    if config.providers.is_empty() {
-        eprintln!("No providers configured in baton.toml.");
+    // Filter for api-type runtimes
+    let api_runtimes: Vec<(&String, &baton::config::Runtime)> = config
+        .runtimes
+        .iter()
+        .filter(|(_, r)| r.runtime_type == "api")
+        .collect();
+
+    if api_runtimes.is_empty() {
+        eprintln!("No API runtimes configured in baton.toml.");
         return 1;
     }
 
-    let providers_to_check: Vec<(&String, &baton::config::Provider)> = if all {
-        config.providers.iter().collect()
+    let runtimes_to_check: Vec<(&String, &baton::config::Runtime)> = if all {
+        api_runtimes
     } else if let Some(name) = name {
-        match config.providers.get_key_value(name) {
-            Some((k, p)) => vec![(k, p)],
+        match api_runtimes.iter().find(|(k, _)| k.as_str() == name) {
+            Some(entry) => vec![*entry],
             None => {
-                let available: Vec<&String> = config.providers.keys().collect();
+                let available: Vec<&str> = api_runtimes.iter().map(|(k, _)| k.as_str()).collect();
                 eprintln!(
-                    "Error: Provider '{name}' not found. Available providers: {}",
-                    available
-                        .iter()
-                        .map(|s| s.as_str())
-                        .collect::<Vec<_>>()
-                        .join(", ")
+                    "Error: API runtime '{name}' not found. Available: {}",
+                    available.join(", ")
                 );
                 return 1;
             }
         }
     } else {
-        // Default: check the first provider
-        config.providers.iter().take(1).collect()
+        api_runtimes.into_iter().take(1).collect()
     };
 
     let mut any_failed = false;
-    for (pname, provider) in &providers_to_check {
-        eprintln!("Checking provider '{pname}'...");
-        if !check_single_provider(pname, provider) {
-            any_failed = true;
+    for (rname, runtime_config) in &runtimes_to_check {
+        eprintln!("Checking API runtime '{rname}'...");
+        match runtime::create_adapter(rname, runtime_config) {
+            Ok(adapter) => match adapter.health_check() {
+                Ok(health) if health.reachable => {
+                    eprintln!("  OK: Runtime '{rname}': reachable");
+                }
+                Ok(health) => {
+                    eprintln!(
+                        "  ERROR: Runtime '{rname}': not reachable: {}",
+                        health.message.unwrap_or_default()
+                    );
+                    any_failed = true;
+                }
+                Err(e) => {
+                    eprintln!("  ERROR: Runtime '{rname}': {e}");
+                    any_failed = true;
+                }
+            },
+            Err(e) => {
+                eprintln!("  ERROR: Runtime '{rname}': {e}");
+                any_failed = true;
+            }
         }
     }
 

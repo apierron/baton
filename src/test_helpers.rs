@@ -99,8 +99,8 @@ impl ValidatorBuilder {
                 warn_exit_codes: vec![],
                 working_dir: None,
                 env: BTreeMap::new(),
-                mode: LlmMode::Completion,
-                provider: "default".into(),
+                mode: LlmMode::Query,
+                runtimes: vec!["default".into()],
                 model: None,
                 prompt: None,
                 context_refs: vec![],
@@ -108,7 +108,6 @@ impl ValidatorBuilder {
                 response_format: ResponseFormat::Verdict,
                 max_tokens: None,
                 system_prompt: None,
-                runtime: None,
                 sandbox: None,
                 max_iterations: None,
                 input: InputDecl::None,
@@ -176,7 +175,7 @@ impl ValidatorBuilder {
     }
 
     pub fn provider(mut self, provider: &str) -> Self {
-        self.config.provider = provider.into();
+        self.config.runtimes = vec![provider.into()];
         self
     }
 
@@ -191,7 +190,7 @@ impl ValidatorBuilder {
     }
 
     pub fn runtime(mut self, runtime: &str) -> Self {
-        self.config.runtime = Some(runtime.into());
+        self.config.runtimes = vec![runtime.into()];
         self
     }
 
@@ -244,7 +243,7 @@ pub fn config_for_gate(g: GateConfig) -> BatonConfig {
     let mut gates = BTreeMap::new();
     gates.insert(g.name.clone(), g);
     BatonConfig {
-        version: "0.4".into(),
+        version: "0.6".into(),
         defaults: Defaults {
             timeout_seconds: 300,
             blocking: true,
@@ -253,7 +252,6 @@ pub fn config_for_gate(g: GateConfig) -> BatonConfig {
             history_db: "/tmp/history.db".into(),
             tmp_dir: "/tmp/tmp".into(),
         },
-        providers: BTreeMap::new(),
         runtimes: BTreeMap::new(),
         sources: BTreeMap::new(),
         gates,
@@ -261,15 +259,19 @@ pub fn config_for_gate(g: GateConfig) -> BatonConfig {
     }
 }
 
-/// Creates a `BatonConfig` with a custom provider (for LLM mock tests).
+/// Creates a `BatonConfig` with a custom API runtime (for LLM mock tests).
 pub fn config_with_provider(api_base: &str) -> BatonConfig {
-    let mut providers = BTreeMap::new();
-    providers.insert(
+    let mut runtimes = BTreeMap::new();
+    runtimes.insert(
         "default".into(),
-        Provider {
-            api_base: api_base.into(),
-            api_key_env: "".into(),
-            default_model: "test-model".into(),
+        Runtime {
+            runtime_type: "api".into(),
+            base_url: api_base.into(),
+            api_key_env: None,
+            default_model: Some("test-model".into()),
+            sandbox: false,
+            timeout_seconds: 30,
+            max_iterations: 1,
         },
     );
 
@@ -285,7 +287,7 @@ pub fn config_with_provider(api_base: &str) -> BatonConfig {
     );
 
     BatonConfig {
-        version: "0.4".into(),
+        version: "0.6".into(),
         defaults: Defaults {
             timeout_seconds: 300,
             blocking: true,
@@ -294,8 +296,7 @@ pub fn config_with_provider(api_base: &str) -> BatonConfig {
             history_db: "/tmp/history.db".into(),
             tmp_dir: "/tmp/tmp".into(),
         },
-        providers,
-        runtimes: BTreeMap::new(),
+        runtimes,
         sources: BTreeMap::new(),
         gates,
         config_dir: "/tmp".into(),

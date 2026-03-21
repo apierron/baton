@@ -10,6 +10,50 @@ use serde::Deserialize;
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
+// ─── StringOrList deserialization ────────────────────────
+
+/// Deserializes either a single string or a list of strings into `Vec<String>`.
+///
+/// Accepts both `runtime = "name"` and `runtime = ["name1", "name2"]` in TOML.
+#[derive(Debug, Clone)]
+pub struct StringOrList(pub Vec<String>);
+
+impl<'de> Deserialize<'de> for StringOrList {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de;
+
+        struct Visitor;
+
+        impl<'de> de::Visitor<'de> for Visitor {
+            type Value = StringOrList;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a string or list of strings")
+            }
+
+            fn visit_str<E: de::Error>(self, v: &str) -> std::result::Result<StringOrList, E> {
+                Ok(StringOrList(vec![v.to_string()]))
+            }
+
+            fn visit_seq<A: de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> std::result::Result<StringOrList, A::Error> {
+                let mut v = Vec::new();
+                while let Some(s) = seq.next_element::<String>()? {
+                    v.push(s);
+                }
+                Ok(StringOrList(v))
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
 // ─── Raw TOML structures ────────────────────────────────
 
 /// Raw deserialized baton.toml before validation.
@@ -18,8 +62,6 @@ pub struct RawConfig {
     pub version: String,
     #[serde(default)]
     pub defaults: RawDefaults,
-    #[serde(default)]
-    pub providers: BTreeMap<String, RawProvider>,
     #[serde(default)]
     pub runtimes: BTreeMap<String, RawRuntime>,
     #[serde(default)]
@@ -68,8 +110,6 @@ pub struct RawValidatorDef {
     #[serde(default)]
     pub mode: Option<String>,
     #[serde(default)]
-    pub provider: Option<String>,
-    #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
     pub prompt: Option<String>,
@@ -82,9 +122,9 @@ pub struct RawValidatorDef {
     #[serde(default)]
     pub system_prompt: Option<String>,
 
-    // Session fields
+    // Runtime (string or list of strings for fallback)
     #[serde(default)]
-    pub runtime: Option<String>,
+    pub runtime: Option<StringOrList>,
     #[serde(default)]
     pub sandbox: Option<bool>,
     #[serde(default)]
@@ -156,15 +196,7 @@ fn default_tmp_dir() -> String {
     "./.baton/tmp".into()
 }
 
-/// Raw LLM provider entry from `[providers.<name>]`.
-#[derive(Debug, Deserialize, Clone)]
-pub struct RawProvider {
-    pub api_base: String,
-    pub api_key_env: String,
-    pub default_model: String,
-}
-
-/// Raw agent runtime entry from `[runtimes.<name>]`.
+/// Raw runtime entry from `[runtimes.<name>]`.
 #[derive(Debug, Deserialize, Clone)]
 pub struct RawRuntime {
     #[serde(rename = "type")]
@@ -240,8 +272,6 @@ pub struct RawValidator {
     #[serde(default)]
     pub mode: Option<String>,
     #[serde(default)]
-    pub provider: Option<String>,
-    #[serde(default)]
     pub model: Option<String>,
     #[serde(default)]
     pub prompt: Option<String>,
@@ -256,9 +286,9 @@ pub struct RawValidator {
     #[serde(default)]
     pub system_prompt: Option<String>,
 
-    // Session fields
+    // Runtime (string or list of strings for fallback)
     #[serde(default)]
-    pub runtime: Option<String>,
+    pub runtime: Option<StringOrList>,
     #[serde(default)]
     pub sandbox: Option<bool>,
     #[serde(default)]
@@ -272,7 +302,6 @@ pub struct RawValidator {
 pub struct BatonConfig {
     pub version: String,
     pub defaults: Defaults,
-    pub providers: BTreeMap<String, Provider>,
     pub runtimes: BTreeMap<String, Runtime>,
     pub sources: BTreeMap<String, SourceConfig>,
     pub gates: BTreeMap<String, GateConfig>,
@@ -290,15 +319,7 @@ pub struct Defaults {
     pub tmp_dir: PathBuf,
 }
 
-/// LLM API provider configuration.
-#[derive(Debug, Clone)]
-pub struct Provider {
-    pub api_base: String,
-    pub api_key_env: String,
-    pub default_model: String,
-}
-
-/// Agent runtime configuration (e.g., OpenHands).
+/// Runtime configuration (API, OpenHands, OpenCode).
 #[derive(Debug, Clone)]
 pub struct Runtime {
     pub runtime_type: String,
@@ -334,10 +355,10 @@ pub enum ValidatorType {
     Human,
 }
 
-/// LLM interaction mode: single completion or multi-step session.
+/// LLM interaction mode: one-shot query or multi-step session.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LlmMode {
-    Completion,
+    Query,
     Session,
 }
 
@@ -412,7 +433,7 @@ pub struct ValidatorConfig {
 
     // LLM
     pub mode: LlmMode,
-    pub provider: String,
+    pub runtimes: Vec<String>,
     pub model: Option<String>,
     pub prompt: Option<String>,
     pub context_refs: Vec<String>,
@@ -422,7 +443,6 @@ pub struct ValidatorConfig {
     pub system_prompt: Option<String>,
 
     // Session
-    pub runtime: Option<String>,
     pub sandbox: Option<bool>,
     pub max_iterations: Option<u32>,
 
@@ -456,9 +476,9 @@ impl ConfigValidation {
 pub fn parse_config(toml_str: &str, config_dir: &Path) -> Result<BatonConfig> {
     let raw: RawConfig = toml::from_str(toml_str)?;
 
-    if raw.version != "0.4" && raw.version != "0.5" {
+    if raw.version != "0.4" && raw.version != "0.5" && raw.version != "0.6" {
         return Err(BatonError::ConfigError(format!(
-            "Unsupported version '{}'. Expected '0.4' or '0.5'.",
+            "Unsupported version '{}'. Expected '0.4', '0.5', or '0.6'.",
             raw.version
         )));
     }
@@ -478,31 +498,23 @@ pub fn parse_config(toml_str: &str, config_dir: &Path) -> Result<BatonConfig> {
         tmp_dir: config_dir.join(&raw.defaults.tmp_dir),
     };
 
-    let mut providers = BTreeMap::new();
-    for (name, raw_p) in &raw.providers {
-        let mut api_base = resolve_env_vars(&raw_p.api_base)
-            .map_err(|e| BatonError::ConfigError(format!("Provider '{name}': {e}")))?;
-        // Strip trailing slash
-        if api_base.ends_with('/') {
-            api_base.pop();
-        }
-        providers.insert(
-            name.clone(),
-            Provider {
-                api_base,
-                api_key_env: raw_p.api_key_env.clone(),
-                default_model: raw_p.default_model.clone(),
-            },
-        );
-    }
-
     let mut runtimes = BTreeMap::new();
     for (name, raw_r) in &raw.runtimes {
+        let mut base_url = if raw_r.runtime_type == "api" {
+            resolve_env_vars(&raw_r.base_url)
+                .map_err(|e| BatonError::ConfigError(format!("Runtime '{name}': {e}")))?
+        } else {
+            raw_r.base_url.clone()
+        };
+        // Strip trailing slash
+        if base_url.ends_with('/') {
+            base_url.pop();
+        }
         runtimes.insert(
             name.clone(),
             Runtime {
                 runtime_type: raw_r.runtime_type.clone(),
-                base_url: raw_r.base_url.clone(),
+                base_url,
                 api_key_env: raw_r.api_key_env.clone(),
                 default_model: raw_r.default_model.clone(),
                 sandbox: raw_r.sandbox,
@@ -687,7 +699,6 @@ pub fn parse_config(toml_str: &str, config_dir: &Path) -> Result<BatonConfig> {
     Ok(BatonConfig {
         version: raw.version,
         defaults,
-        providers,
         runtimes,
         sources,
         gates,
@@ -731,10 +742,10 @@ fn parse_validator_def(
 
     let mode = match raw_v.mode.as_deref() {
         Some("session") => LlmMode::Session,
-        Some("completion") | None => LlmMode::Completion,
+        Some("query") | Some("completion") | None => LlmMode::Query,
         Some(other) => {
             return Err(BatonError::ConfigError(format!(
-                "Validator '{name}': invalid mode '{other}'. Expected 'completion' or 'session'."
+                "Validator '{name}': invalid mode '{other}'. Expected 'query', 'completion', or 'session'."
             )));
         }
     };
@@ -755,6 +766,12 @@ fn parse_validator_def(
         )));
     }
 
+    let runtimes = raw_v
+        .runtime
+        .as_ref()
+        .map(|sol| sol.0.clone())
+        .unwrap_or_default();
+
     let input = parse_input_decl(name, &raw_v.input)?;
 
     Ok(ValidatorConfig {
@@ -769,7 +786,7 @@ fn parse_validator_def(
         working_dir: raw_v.working_dir.clone(),
         env: raw_v.env.clone(),
         mode,
-        provider: raw_v.provider.clone().unwrap_or("default".into()),
+        runtimes,
         model: raw_v.model.clone(),
         prompt: raw_v.prompt.clone(),
         context_refs: vec![],
@@ -777,7 +794,6 @@ fn parse_validator_def(
         response_format,
         max_tokens: raw_v.max_tokens,
         system_prompt: raw_v.system_prompt.clone(),
-        runtime: raw_v.runtime.clone(),
         sandbox: raw_v.sandbox,
         max_iterations: raw_v.max_iterations,
         input,
@@ -819,10 +835,10 @@ fn parse_inline_validator(raw_v: &RawValidator, defaults: &Defaults) -> Result<V
 
     let mode = match raw_v.mode.as_deref() {
         Some("session") => LlmMode::Session,
-        Some("completion") | None => LlmMode::Completion,
+        Some("query") | Some("completion") | None => LlmMode::Query,
         Some(other) => {
             return Err(BatonError::ConfigError(format!(
-                "Validator '{}': invalid mode '{other}'. Expected 'completion' or 'session'.",
+                "Validator '{}': invalid mode '{other}'. Expected 'query', 'completion', or 'session'.",
                 raw_v.name
             )));
         }
@@ -846,6 +862,12 @@ fn parse_inline_validator(raw_v: &RawValidator, defaults: &Defaults) -> Result<V
         )));
     }
 
+    let runtimes = raw_v
+        .runtime
+        .as_ref()
+        .map(|sol| sol.0.clone())
+        .unwrap_or_default();
+
     Ok(ValidatorConfig {
         name: raw_v.name.clone(),
         validator_type: vtype,
@@ -858,7 +880,7 @@ fn parse_inline_validator(raw_v: &RawValidator, defaults: &Defaults) -> Result<V
         working_dir: raw_v.working_dir.clone(),
         env: raw_v.env.clone(),
         mode,
-        provider: raw_v.provider.clone().unwrap_or("default".into()),
+        runtimes,
         model: raw_v.model.clone(),
         prompt: raw_v.prompt.clone(),
         context_refs: raw_v.context_refs.clone(),
@@ -866,7 +888,6 @@ fn parse_inline_validator(raw_v: &RawValidator, defaults: &Defaults) -> Result<V
         response_format,
         max_tokens: raw_v.max_tokens,
         system_prompt: raw_v.system_prompt.clone(),
-        runtime: raw_v.runtime.clone(),
         sandbox: raw_v.sandbox,
         max_iterations: raw_v.max_iterations,
         input: InputDecl::None,
@@ -994,38 +1015,53 @@ pub fn validate_config(config: &BatonConfig) -> ConfigValidation {
                 }
             }
 
-            // Check provider references (LLM validators)
+            // Check runtime references (LLM validators)
             if val.validator_type == ValidatorType::Llm {
-                if !config.providers.contains_key(&val.provider) && val.provider != "default" {
+                // LLM validators must have at least one runtime
+                if val.runtimes.is_empty() {
                     v.errors.push(format!(
-                        "Validator '{}': provider '{}' is not defined in [providers].",
-                        val.name, val.provider
-                    ));
-                }
-
-                // Session mode requires runtime
-                if val.mode == LlmMode::Session && val.runtime.is_none() {
-                    v.errors.push(format!(
-                        "Validator '{}': mode 'session' requires a 'runtime' field.",
+                        "Validator '{}': LLM validators require a 'runtime' field.",
                         val.name
                     ));
                 }
 
-                // Completion mode with runtime is a warning
-                if val.mode == LlmMode::Completion && val.runtime.is_some() {
-                    v.warnings.push(format!(
-                        "Validator '{}': runtime field ignored in completion mode.",
-                        val.name
-                    ));
-                }
-
-                // Check runtime reference
-                if let Some(ref rt) = val.runtime {
+                // Check each runtime reference exists
+                for rt in &val.runtimes {
                     if !config.runtimes.contains_key(rt) {
                         v.errors.push(format!(
                             "Validator '{}': runtime '{rt}' is not defined in [runtimes].",
                             val.name
                         ));
+                    }
+                }
+
+                // Session mode: check for api-only runtimes
+                if val.mode == LlmMode::Session && !val.runtimes.is_empty() {
+                    let api_runtimes: Vec<&str> = val
+                        .runtimes
+                        .iter()
+                        .filter(|rt| {
+                            config
+                                .runtimes
+                                .get(*rt)
+                                .map(|r| r.runtime_type == "api")
+                                .unwrap_or(false)
+                        })
+                        .map(|s| s.as_str())
+                        .collect();
+
+                    if api_runtimes.len() == val.runtimes.len() && !val.runtimes.is_empty() {
+                        v.errors.push(format!(
+                            "Validator '{}': mode 'session' but all listed runtimes are type 'api' (no session-capable runtimes).",
+                            val.name
+                        ));
+                    } else {
+                        for rt in &api_runtimes {
+                            v.warnings.push(format!(
+                                "Validator '{}': api runtime '{rt}' will be skipped for session mode.",
+                                val.name
+                            ));
+                        }
                     }
                 }
 
@@ -1072,13 +1108,13 @@ pub fn validate_config(config: &BatonConfig) -> ConfigValidation {
         }
     }
 
-    // Check provider API key env vars
-    for (name, provider) in &config.providers {
-        if !provider.api_key_env.is_empty() && std::env::var(&provider.api_key_env).is_err() {
-            v.errors.push(format!(
-                "Provider '{name}': env var '{}' is not set.",
-                provider.api_key_env
-            ));
+    // Check runtime API key env vars (for api-type runtimes)
+    for (name, runtime) in &config.runtimes {
+        if let Some(ref env_var) = runtime.api_key_env {
+            if !env_var.is_empty() && std::env::var(env_var).is_err() {
+                v.errors
+                    .push(format!("Runtime '{name}': env var '{env_var}' is not set.",));
+            }
         }
     }
 
@@ -1441,15 +1477,15 @@ blocking = true
         assert!(config.gates["test"].validators[0].blocking);
     }
 
-    // ─── Provider parsing ────────────────────────────
+    // ─── Runtime parsing ─────────────────────────────
 
     #[test]
-    fn provider_trailing_slash_stripped() {
+    fn api_runtime_trailing_slash_stripped() {
         let toml = r#"
-version = "0.4"
-[providers.default]
-api_base = "https://api.example.com/"
-api_key_env = ""
+version = "0.6"
+[runtimes.default]
+type = "api"
+base_url = "https://api.example.com/"
 default_model = "test-model"
 
 [gates.test]
@@ -1460,7 +1496,7 @@ command = "echo ok"
 "#;
         let config = parse_config(toml, &config_dir()).unwrap();
         assert_eq!(
-            config.providers["default"].api_base,
+            config.runtimes["default"].base_url,
             "https://api.example.com"
         );
     }
@@ -1527,25 +1563,35 @@ prompt = "Review this"
     }
 
     #[test]
-    fn validate_completion_with_runtime_warning() {
+    fn validate_session_mode_api_runtime_warns() {
         let toml = r#"
-version = "0.4"
-[runtimes.test]
-type = "test"
+version = "0.6"
+[runtimes.api-rt]
+type = "api"
 base_url = "http://localhost"
+
+[runtimes.agent-rt]
+type = "openhands"
+base_url = "http://localhost:3000"
 
 [gates.test]
 [[gates.test.validators]]
 name = "check"
 type = "llm"
-mode = "completion"
+mode = "session"
 prompt = "Review this"
-runtime = "test"
+runtime = ["api-rt", "agent-rt"]
 "#;
         let config = parse_config(toml, &config_dir()).unwrap();
         let validation = validate_config(&config);
-        assert!(!validation.warnings.is_empty());
-        assert!(validation.warnings[0].contains("ignored in completion mode"));
+        assert!(
+            validation
+                .warnings
+                .iter()
+                .any(|w| w.contains("api-rt") && w.contains("skipped")),
+            "Warnings: {:?}",
+            validation.warnings
+        );
     }
 
     #[test]
@@ -1669,16 +1715,16 @@ blocking = true
     #[test]
     fn parse_full_config() {
         let toml = r#"
-version = "0.4"
+version = "0.6"
 
 [defaults]
 timeout_seconds = 300
 blocking = true
 prompts_dir = "./prompts"
 
-[providers.default]
-api_base = "https://api.example.com"
-api_key_env = ""
+[runtimes.default]
+type = "api"
+base_url = "https://api.example.com"
 default_model = "test-model"
 
 [gates.code-review]
@@ -1699,8 +1745,8 @@ warn_exit_codes = [2]
 [[gates.code-review.validators]]
 name = "llm-check"
 type = "llm"
-mode = "completion"
-provider = "default"
+mode = "query"
+runtime = "default"
 prompt = "Check this code"
 context_refs = ["spec"]
 temperature = 0.0
@@ -1928,9 +1974,9 @@ response_format = "invalid"
     }
 
     #[test]
-    fn default_provider() {
+    fn llm_validator_no_runtime_has_empty_runtimes() {
         let toml = r#"
-version = "0.4"
+version = "0.6"
 [gates.gate]
 [[gates.gate.validators]]
 name = "check"
@@ -1938,7 +1984,7 @@ type = "llm"
 prompt = "Review"
 "#;
         let config = parse_config(toml, &config_dir()).unwrap();
-        assert_eq!(config.gates["gate"].validators[0].provider, "default");
+        assert!(config.gates["gate"].validators[0].runtimes.is_empty());
     }
 
     #[test]
@@ -1993,23 +2039,23 @@ run_if = "a.status == pass"
     }
 
     #[test]
-    fn undefined_non_default_provider() {
+    fn undefined_non_default_runtime() {
         let toml = r#"
-version = "0.4"
+version = "0.6"
 [gates.test]
 [[gates.test.validators]]
 name = "check"
 type = "llm"
 prompt = "Review"
-provider = "nonexistent"
+runtime = "nonexistent"
 "#;
         let config = parse_config(toml, &config_dir()).unwrap();
         let validation = validate_config(&config);
         assert!(validation.has_errors());
         assert!(
-            validation.errors[0].contains("nonexistent"),
-            "Error: {}",
-            validation.errors[0]
+            validation.errors.iter().any(|e| e.contains("nonexistent")),
+            "Errors: {:?}",
+            validation.errors
         );
     }
 
@@ -2058,9 +2104,10 @@ provider = "nonexistent"
     #[test]
     fn api_key_env_validation() {
         let toml = r#"
-version = "0.4"
-[providers.myprovider]
-api_base = "https://api.example.com"
+version = "0.6"
+[runtimes.myruntime]
+type = "api"
+base_url = "https://api.example.com"
 api_key_env = "BATON_TEST_NONEXISTENT_VAR_XYZ"
 default_model = "test-model"
 
@@ -2074,7 +2121,7 @@ command = "echo ok"
         let validation = validate_config(&config);
         assert!(validation.has_errors());
         let err = validation.errors.join(" ");
-        assert!(err.contains("myprovider"), "Error: {err}");
+        assert!(err.contains("myruntime"), "Error: {err}");
         assert!(
             err.contains("BATON_TEST_NONEXISTENT_VAR_XYZ"),
             "Error: {err}"
@@ -2084,13 +2131,12 @@ command = "echo ok"
     #[test]
     fn multiple_simultaneous_validation_errors() {
         let toml = r#"
-version = "0.4"
+version = "0.6"
 [gates.test]
 [[gates.test.validators]]
 name = "a"
 type = "llm"
 prompt = "Review"
-provider = "nonexistent"
 mode = "session"
 runtime = "also-nonexistent"
 context_refs = ["undefined-ctx"]

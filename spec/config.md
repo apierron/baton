@@ -1,6 +1,6 @@
 # module: config
 
-Configuration parsing and validation for baton.toml. Two-stage design: `parse_config` deserializes TOML into validated structures, `validate_config` checks semantic correctness (e.g., forward references, missing providers, undefined context slots).
+Configuration parsing and validation for baton.toml. Two-stage design: `parse_config` deserializes TOML into validated structures, `validate_config` checks semantic correctness (e.g., forward references, undefined runtimes, undefined context slots).
 
 The two-stage split exists because parse-time checks are structural (does this TOML describe a valid config?) while validation checks are semantic (do cross-references resolve? are environment variables set?). This matters because a config can be structurally valid but semantically broken -- a run_if that references a validator defined later in the pipeline parses fine but is semantically invalid.
 
@@ -9,7 +9,7 @@ The two-stage split exists because parse-time checks are structural (does this T
 | Function           | Purpose                                              |
 |--------------------|------------------------------------------------------|
 | `parse_config`     | Parse TOML string into BatonConfig, validates structure |
-| `validate_config`  | Check semantic correctness (forward refs, missing providers, etc) |
+| `validate_config`  | Check semantic correctness (forward refs, undefined runtimes, etc) |
 | `split_run_if`     | Tokenize run_if expressions into atoms and operators |
 | `discover_config`  | Find baton.toml by walking up from start_dir         |
 
@@ -25,7 +25,7 @@ parse_config returns `Result<BatonConfig>` (early-return on first error) while v
 
 validate_config distinguishes errors (will cause runtime failure) from warnings (suspicious but functional). Warnings are printed but do not prevent execution.
 
-Provider api_base has env var resolution applied during parsing, not at execution time. This means the env var must be set when the config is loaded, not when the validator runs. This is consistent with the "fail early" philosophy.
+Runtime base_url (for type="api" runtimes) has env var resolution applied during parsing, not at execution time. This means the env var must be set when the config is loaded, not when the validator runs. This is consistent with the "fail early" philosophy.
 
 ---
 
@@ -47,8 +47,8 @@ SPEC-CF-PC-001: toml-syntax-error-propagated
   When the input string is not valid TOML, parse_config returns an error propagated from the TOML parser via the `?` operator. The error message is from the toml crate, not wrapped in baton-specific text.
   test: config::tests::malformed_toml_returns_error
 
-SPEC-CF-PC-002: version-must-be-0-4
-  The `version` field must be exactly the string "0.4". Any other value, including "0.3", "0.5", "1.0", or an empty string, returns ConfigError containing the rejected version string.
+SPEC-CF-PC-002: version-must-be-0-4-or-0-5-or-0-6
+  The `version` field must be exactly "0.4", "0.5", or "0.6". Any other value, including "0.3", "1.0", or an empty string, returns ConfigError containing the rejected version string.
   test: config::tests::parse_wrong_version
 
 SPEC-CF-PC-003: gates-must-not-be-empty
@@ -93,19 +93,7 @@ SPEC-CF-PC-017: explicit-defaults-override-builtins
 
 ### parse_config: provider parsing
 
-Providers are iterated from the `[providers]` map. For each provider, env vars in api_base are resolved and trailing slashes are stripped. The resolved provider is stored in a BTreeMap on the config.
-
-SPEC-CF-PC-020: provider-api-base-env-vars-resolved
-  Environment variable references in `api_base` (e.g., `${VAR}`) are resolved via `resolve_env_vars` at parse time. If resolution fails, parse_config returns ConfigError naming the provider.
-  test: UNTESTED (no test for env var resolution in api_base)
-
-SPEC-CF-PC-021: provider-api-base-trailing-slash-stripped
-  After env var resolution, if `api_base` ends with '/', the trailing slash is removed. Only a single trailing slash is stripped (the code calls `pop()` once). This normalizes URLs so downstream code can append paths without double-slash issues.
-  test: config::tests::provider_trailing_slash_stripped
-
-SPEC-CF-PC-022: provider-fields-preserved
-  The `api_key_env` and `default_model` fields are stored verbatim from the TOML. No validation is performed on their values at parse time (api_key_env is validated later in validate_config).
-  test: IMPLICIT via config::tests::parse_full_config
+Providers are removed in v0.6. Provider configuration is replaced by the unified runtime interface — runtimes with type="api" now carry api_key_env, base_url, and default_model directly. The SPEC-CF-PC-020..022 assertions from earlier versions no longer apply.
 
 ### parse_config: runtime parsing
 
@@ -118,6 +106,14 @@ SPEC-CF-PC-025: runtime-defaults
 SPEC-CF-PC-026: runtime-fields-preserved
   Runtime type, base_url, api_key_env, and default_model are stored verbatim from TOML.
   test: config::tests::runtime_fields_stored_verbatim
+
+SPEC-CF-PC-027: api-type-runtime-base-url-env-vars-resolved
+  For runtimes with type="api", environment variable references in `base_url` (e.g., `${VAR}`) are resolved via `resolve_env_vars` at parse time. If resolution fails, parse_config returns ConfigError naming the runtime.
+  test: UNTESTED
+
+SPEC-CF-PC-028: api-type-runtime-trailing-slash-stripped
+  For runtimes with type="api", after env var resolution, if `base_url` ends with '/', the trailing slash is removed. Only a single trailing slash is stripped (the code calls `pop()` once). This normalizes URLs so downstream code can append paths without double-slash issues.
+  test: UNTESTED
 
 ### parse_config: gate and validator parsing
 
@@ -145,8 +141,8 @@ SPEC-CF-PC-036: human-requires-prompt
   A `[validators.X]` entry with type "human" must have a `prompt` field. If missing, returns ConfigError containing "prompt".
   test: config::tests::human_missing_prompt
 
-SPEC-CF-PC-037: mode-defaults-to-completion
-  When `mode` is omitted or set to "completion", the validator gets LlmMode::Completion. When set to "session", it gets LlmMode::Session. Any other value returns ConfigError containing "invalid mode" and the rejected value.
+SPEC-CF-PC-037: mode-defaults-to-query
+  When `mode` is omitted or set to "query", the validator gets LlmMode::Query. "completion" is accepted as a back-compat alias and also resolves to LlmMode::Query. When set to "session", it gets LlmMode::Session. Any other value returns ConfigError containing "Expected 'query', 'completion', or 'session'." and the rejected value.
   test: config::tests::invalid_mode_string
 
 SPEC-CF-PC-038: response-format-defaults-to-verdict
@@ -167,9 +163,13 @@ SPEC-CF-PC-041: timeout-inheritable-at-gate-ref
   test: config::tests::defaults_applied
   test: config::tests::validator_overrides_defaults
 
-SPEC-CF-PC-042: provider-defaults-to-default
-  When `provider` is not set on a validator, it defaults to the string "default". This means an LLM validator without an explicit provider will look up providers["default"] at validation and execution time.
-  test: config::tests::default_provider
+SPEC-CF-PC-052: runtime-field-accepts-string-or-list
+  The `runtime` field on LLM validators accepts either a single string or a list of strings, deserialized into Vec<String> via StringOrList. For example, `runtime = "my-runtime"` becomes `vec!["my-runtime"]` and `runtime = ["rt-a", "rt-b"]` becomes `vec!["rt-a", "rt-b"]`.
+  test: UNTESTED
+
+SPEC-CF-PC-053: runtime-field-required-for-llm
+  LLM validators must have a `runtime` field. If absent, parse_config returns ConfigError containing "runtime" and the validator name.
+  test: UNTESTED
 
 SPEC-CF-PC-043: temperature-defaults-to-zero
   When `temperature` is not set on a validator, it defaults to 0.0. This is a deliberate choice for reproducibility in code review tasks.
@@ -195,12 +195,12 @@ Checks semantic correctness of a parsed BatonConfig. Returns a `ConfigValidation
 
 ### Sections
 
-1. Per-gate, per-validator checks (run_if, context_refs, provider, mode/runtime, freeform+blocking)
-2. Provider API key environment variable checks
+1. Per-gate, per-validator checks (run_if, context_refs, runtime references, mode/runtime, freeform+blocking)
+2. Runtime API key environment variable checks
 
 ### validate_config: per-validator checks
 
-Iterates every gate (in BTreeMap order) and every validator within each gate (in pipeline order). For each validator, checks run_if references, context_refs, and (for LLM validators only) provider/mode/runtime/response_format semantics.
+Iterates every gate (in BTreeMap order) and every validator within each gate (in pipeline order). For each validator, checks run_if references, context_refs, and (for LLM validators only) runtime/mode/response_format semantics.
 
 SPEC-CF-VC-001: run-if-references-must-exist
   Each atom in a run_if expression must reference a validator name that exists in the same gate. Referencing a nonexistent validator produces an error containing "unknown validator" and the referenced name.
@@ -218,20 +218,12 @@ SPEC-CF-VC-004: run-if-self-reference-is-forward-reference
   A validator referencing itself in run_if (e.g., validator "a" with run_if "a.status == pass") is treated as a forward reference because the validator's own index equals current_idx. The check is `ref_idx >= current_idx`, so self-references produce the "later in the pipeline" error.
   test: config::tests::self_referencing_run_if
 
-SPEC-CF-VC-006: llm-provider-must-be-defined
-  For LLM validators, if the provider is not "default" and is not present in the config's providers map, an error is produced. The special name "default" is exempt -- it is resolved at execution time, not at validation time. Script and human validators are not checked.
-  test: config::tests::undefined_non_default_provider
+SPEC-CF-VC-007: llm-runtimes-must-be-non-empty
+  LLM validators must have a non-empty runtimes list. If the list is empty after parsing, an error is produced containing "runtime".
+  test: UNTESTED
 
-SPEC-CF-VC-007: session-mode-requires-runtime
-  An LLM validator with mode "session" must have a runtime field set. If runtime is None, an error is produced containing "runtime".
-  test: config::tests::validate_session_without_runtime
-
-SPEC-CF-VC-008: completion-mode-with-runtime-warns
-  An LLM validator with mode "completion" that also sets a runtime field produces a warning containing "ignored in completion mode". This is not an error because the config is functional -- the runtime is simply unused.
-  test: config::tests::validate_completion_with_runtime_warning
-
-SPEC-CF-VC-009: runtime-reference-must-be-defined
-  When an LLM validator specifies a runtime, that runtime name must exist in the config's runtimes map. An undefined runtime produces an error containing "not defined in [runtimes]".
+SPEC-CF-VC-009: runtime-references-must-be-defined
+  Each runtime name in the validator's runtimes list must exist in the config's runtimes map. An undefined runtime produces an error containing "not defined in [runtimes]" and the undefined name. Each undefined name produces a separate error.
   test: config::tests::undefined_runtime_reference
 
 SPEC-CF-VC-010: freeform-with-blocking-warns
@@ -239,16 +231,20 @@ SPEC-CF-VC-010: freeform-with-blocking-warns
   test: config::tests::validate_freeform_blocking_warning
 
 SPEC-CF-VC-011: validation-checks-only-llm-validators
-  Provider, mode/runtime, and freeform/blocking checks are gated behind `val.validator_type == ValidatorType::Llm`. Script and human validators skip these checks entirely, even if they have stray LLM fields set (which would be ignored at execution time).
+  Runtime, mode, and freeform/blocking checks are gated behind `val.validator_type == ValidatorType::Llm`. Script and human validators skip these checks entirely, even if they have stray LLM fields set (which would be ignored at execution time).
   test: config::tests::script_validator_with_provider_not_flagged
 
-### validate_config: provider API key checks
+SPEC-CF-VC-025: session-mode-all-api-runtimes-errors
+  If mode=session and ALL listed runtimes have type="api", an error is produced containing "no session-capable runtimes". Session mode requires at least one runtime that supports interactive sessions (e.g., type="cli"), not just API runtimes.
+  test: UNTESTED
 
-After all per-validator checks, validate_config iterates every provider in the config and checks that the referenced environment variable is set.
+SPEC-CF-VC-026: session-mode-any-api-runtime-warns
+  If mode=session and ANY listed runtime has type="api", a warning is produced for each such runtime containing "api runtime 'X' will be skipped for session mode". This is not an error because the validator can still run on the non-API runtimes.
+  test: UNTESTED
 
-SPEC-CF-VC-020: provider-api-key-env-must-be-set
-  For each provider in the config, if `api_key_env` is non-empty and the named environment variable is not set (std::env::var returns Err), an error is produced containing the provider name and the env var name. If `api_key_env` is empty, this check is skipped.
-  test: config::tests::api_key_env_validation
+SPEC-CF-VC-027: api-runtime-api-key-env-check
+  For runtimes with type="api", if `api_key_env` is set and non-empty, check that the named environment variable exists (std::env::var returns Ok). If the env var is not set, an error is produced containing the runtime name and the env var name. If `api_key_env` is empty or unset, this check is skipped.
+  test: UNTESTED
 
 SPEC-CF-VC-021: validation-accumulates-all-errors
   validate_config does not short-circuit. If multiple validators have problems, all errors and warnings are collected in the returned ConfigValidation. The caller can inspect `has_errors()` and iterate both `errors` and `warnings`.

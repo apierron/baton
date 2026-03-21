@@ -19,9 +19,8 @@ This module implements the `sources → validators → gates` pipeline at runtim
 |------------------------------|----------------------|
 | `execute_script_validator`   | `execute_validator`  |
 | `execute_human_validator`    | `execute_validator`  |
-| `execute_llm_completion`     | `execute_validator`  |
-| `execute_llm_session`        | `execute_validator`  |
-| `drive_session`              | `execute_llm_session`|
+| `execute_llm_validator`      | `execute_validator`  |
+| `drive_session`              | `execute_llm_validator`|
 | `evaluate_atom`              | `evaluate_run_if`    |
 
 ## Design notes
@@ -146,8 +145,7 @@ SPEC-EX-EV-002: run-if-error-returns-error-status
 SPEC-EX-EV-003: dispatch-by-type
   Validators are dispatched based on validator_type:
     Script → execute_script_validator
-    Llm with mode=Completion → execute_llm_completion
-    Llm with mode=Session → execute_llm_session
+    Llm → execute_llm_validator (handles both query and session modes internally via runtime fallback)
     Human → execute_human_validator
   test: IMPLICIT via type-specific tests
 
@@ -242,158 +240,104 @@ SPEC-EX-HV-002: placeholders-resolved-in-prompt
 
 ---
 
-## execute_llm_completion
+## execute_llm_validator
 
-Resolves provider and prompt, builds the request body, delegates the HTTP call to `provider::ProviderClient::post_completion()`, and maps the response or error to a `ValidatorResult`.
+Unified LLM validator execution with runtime fallback. Resolves prompt and placeholders, then iterates the validator's runtimes list in order. For each runtime, attempts the operation based on mode (query or session). Falls through on unreachable runtimes or capability mismatches.
 
 ### Sections
 
-1. Config and provider resolution
-2. ProviderClient construction
-3. Prompt resolution (file or inline) and placeholder substitution
-4. Request body construction
-5. Response parsing and verdict extraction
+1. Config validation
+2. Prompt resolution and placeholder substitution
+3. Runtime fallback loop
+4. Query mode dispatch
+5. Session mode dispatch
 
-SPEC-EX-LC-001: no-config-errors
-  If config is None, returns Status::Error "[baton] LLM validator requires config with provider settings".
-  test: exec::tests::llm_completion_no_config
+### execute_llm_validator: config validation
 
-SPEC-EX-LC-002: missing-provider-errors
-  If the validator's provider is not defined in config.providers, returns Status::Error with "not defined in [providers]".
-  test: exec::tests::llm_completion_missing_provider
-
-SPEC-EX-LC-003: api-key-env-not-set-errors
-  If ProviderClient::new returns ApiKeyNotSet, returns Status::Error with the formatted error.
-  test: UNTESTED (would require env var manipulation during test)
-
-SPEC-EX-LC-004: empty-api-key-env-skips-auth
-  If api_key_env is empty, no Authorization header is sent. This allows providers that don't require authentication (e.g., local models).
-  test: IMPLICIT via mock server tests that don't set api_key_env
-
-SPEC-EX-LC-005: prompt-file-resolution
-  If the prompt value is a file reference (has .md/.txt/.prompt/.j2 extension), it is loaded via resolve_prompt_value from prompts_dir or config_dir. If not found, returns Status::Error.
-  test: UNTESTED (no test uses file-based prompts for LLM validators)
-
-SPEC-EX-LC-006: prompt-placeholders-resolved
-  Placeholders in the prompt body are resolved before sending to the LLM.
-  test: exec::tests::llm_completion_with_placeholders
-
-SPEC-EX-LC-007: model-falls-back-to-provider-default
-  If the validator has no explicit model, the provider's default_model is used.
-  test: exec::tests::llm_completion_uses_default_model
-
-SPEC-EX-LC-008: system-prompt-sent-as-system-message
-  If system_prompt is set, it is sent as a system-role message before the user message. Placeholders in the system prompt are also resolved.
-  test: exec::tests::llm_completion_with_system_prompt
-
-SPEC-EX-LC-009: max-tokens-included-when-set
-  If max_tokens is set, it is included in the request body. Otherwise, the field is omitted.
-  test: UNTESTED (no test asserts max_tokens in request)
-
-SPEC-EX-LC-010: http-timeout-uses-validator-timeout
-  The HTTP client timeout is set to the validator's timeout_seconds.
+SPEC-EX-LV-001: no-config-errors
+  If config is None, returns Status::Error "[baton] LLM validator requires config with runtime settings".
   test: UNTESTED
 
-SPEC-EX-LC-011: unreachable-provider-errors
-  If the provider cannot be reached (connection error), returns Status::Error with "Cannot reach provider".
-  HTTP error classification is performed by ProviderClient::classify_http_error. The exec module maps ProviderError variants to "[baton]" prefixed feedback strings.
-  test: exec::tests::llm_completion_unreachable_provider
+SPEC-EX-LV-002: empty-runtimes-errors
+  If the validator's runtimes list is empty, returns Status::Error.
+  test: UNTESTED
 
-SPEC-EX-LC-012: timeout-error-distinguished
-  If the request times out (e.is_timeout()), returns Status::Error with "Validator timed out after N seconds" rather than the generic connection error.
-  HTTP error classification is performed by ProviderClient::classify_http_error.
-  test: UNTESTED (would require a slow mock server)
+### execute_llm_validator: prompt resolution
 
-SPEC-EX-LC-013: http-401-403-auth-error
-  HTTP 401 or 403 returns Status::Error with "Authentication failed".
-  HTTP error classification is performed by ProviderClient::classify_http_error.
-  test: exec::tests::llm_completion_http_401
+SPEC-EX-LV-010: prompt-required
+  If the validator has no prompt, returns Status::Error.
+  test: UNTESTED
 
-SPEC-EX-LC-014: http-404-model-not-found
-  HTTP 404 returns Status::Error with "Model 'X' not found on provider 'Y'".
-  HTTP error classification is performed by ProviderClient::classify_http_error.
-  test: exec::tests::llm_completion_http_404
+SPEC-EX-LV-011: prompt-file-resolution
+  File-reference prompts are loaded via resolve_prompt_value.
+  test: UNTESTED
 
-SPEC-EX-LC-015: http-429-rate-limited
-  HTTP 429 returns Status::Error with "Rate limited by provider".
-  HTTP error classification is performed by ProviderClient::classify_http_error.
-  test: exec::tests::llm_completion_http_429
+SPEC-EX-LV-012: prompt-placeholders-resolved
+  Placeholders in the prompt are resolved before use.
+  test: UNTESTED
 
-SPEC-EX-LC-016: http-5xx-generic-error
-  Other HTTP errors return Status::Error with "Provider returned HTTP {code}: {body}".
-  HTTP error classification is performed by ProviderClient::classify_http_error.
-  test: exec::tests::llm_completion_http_500
+### execute_llm_validator: runtime fallback loop
 
-SPEC-EX-LC-017: malformed-json-response-errors
-  If the response body cannot be parsed as JSON, returns Status::Error with "empty or malformed response".
-  test: UNTESTED (would require a mock returning non-JSON)
+The fallback loop iterates the validator's runtimes in order. For each runtime:
+1. Look up runtime config — if undefined, error (should be caught at validation)
+2. Create adapter via create_adapter — if fails, warn and try next
+3. Health check — if unreachable, warn and try next
+4. Dispatch based on mode:
+   - Query: call adapter.post_completion() — if returns RuntimeError "not supported", try next
+   - Session: if runtime type is "api", skip; otherwise drive_session()
+5. Once a runtime responds with a result (even error/fail), that's final — no further fallback.
 
-SPEC-EX-LC-018: empty-content-errors
-  If the response has no content (choices[0].message.content is empty or missing), returns Status::Error with "empty or malformed response". Cost is still extracted and returned.
-  test: exec::tests::llm_completion_empty_response
+If all runtimes exhausted, return Error "no reachable runtime".
 
-SPEC-EX-LC-019: verdict-format-parses-content
-  With response_format=Verdict, the content is parsed via parse_verdict(). The parsed status and evidence become the result status and feedback.
-  test: exec::tests::llm_completion_pass_verdict, llm_completion_fail_verdict, llm_completion_warn_verdict
+SPEC-EX-LV-020: runtime-config-lookup
+  Each runtime name in the list is looked up in config.runtimes. If not found, returns Status::Error (should not happen if validate_config ran).
+  test: UNTESTED
 
-SPEC-EX-LC-020: unparseable-verdict-errors
-  If the content cannot be parsed as a verdict (no PASS/FAIL/WARN keyword found), the result is Status::Error from parse_verdict with "Could not parse verdict" feedback.
-  test: exec::tests::llm_completion_unparseable_verdict
+SPEC-EX-LV-021: adapter-creation-failure-tries-next
+  If create_adapter fails for a runtime, a warning is logged and the next runtime is tried.
+  test: UNTESTED
 
-SPEC-EX-LC-021: freeform-always-returns-warn
-  With response_format=Freeform, the result is always Status::Warn with the full content as feedback. No verdict parsing occurs.
+SPEC-EX-LV-022: health-check-failure-tries-next
+  If health_check returns unreachable, a warning is logged and the next runtime is tried.
+  test: UNTESTED
 
-This is intentional: freeform validators are advisory. They collect LLM commentary without making a pass/fail determination. Use verdict format for gate-affecting results.
+SPEC-EX-LV-023: query-mode-calls-post-completion
+  In query mode, builds a CompletionRequest from the resolved prompt, model, temperature, max_tokens, and system_prompt, then calls adapter.post_completion().
+  test: UNTESTED
 
-  test: exec::tests::llm_completion_freeform_returns_warn
+SPEC-EX-LV-024: query-mode-not-supported-tries-next
+  If post_completion returns RuntimeError "not supported", the next runtime is tried.
+  test: UNTESTED
 
-SPEC-EX-LC-022: cost-extracted-from-usage
-  If the response includes a `usage` object with prompt_tokens and/or completion_tokens, a Cost is attached to the result. The model name is always set to the model used for the request.
-  test: exec::tests::llm_completion_cost_tracking
+SPEC-EX-LV-025: query-mode-parses-result
+  On successful completion, parses the result using verdict or freeform response format, same as the old execute_llm_completion.
+  test: UNTESTED
 
-SPEC-EX-LC-023: no-usage-means-no-cost
-  If the response has no `usage` object, cost is None.
-  test: exec::tests::llm_completion_no_usage_in_response
+SPEC-EX-LV-026: session-mode-skips-api-runtime
+  In session mode, if the runtime type is "api", skip it and try next.
+  test: UNTESTED
 
----
+SPEC-EX-LV-027: session-mode-drives-session
+  In session mode with a non-api runtime, builds SessionConfig and calls drive_session().
+  test: UNTESTED
 
-## execute_llm_session
+SPEC-EX-LV-028: all-runtimes-exhausted-errors
+  If all runtimes in the list are exhausted (unreachable, unsupported, or skipped), returns Status::Error "[baton] No reachable runtime for validator 'X'".
+  test: UNTESTED
 
-Orchestrates an agent session via a RuntimeAdapter. Resolves config, creates the adapter, prepares the session config, then delegates to drive_session.
-
-SPEC-EX-LS-001: no-config-errors
-  If config is None, returns Status::Error.
-  test: exec::tests::llm_session_no_config
-
-SPEC-EX-LS-002: missing-runtime-field-errors
-  If the validator has mode=Session but no runtime field, returns Status::Error.
-  test: exec::tests::llm_session_missing_runtime
-
-SPEC-EX-LS-003: undefined-runtime-errors
-  If the runtime name is not defined in config.runtimes, returns Status::Error.
-  test: exec::tests::llm_session_undefined_runtime
-
-SPEC-EX-LS-004: adapter-creation-failure-errors
-  If create_adapter fails, returns Status::Error.
-  test: UNTESTED (would require an invalid runtime config that passes parse but fails adapter creation)
-
-SPEC-EX-LS-005: files-include-artifact-and-context-refs
-  The session's file set includes the artifact path (if file-backed) and any context items referenced by context_refs that are file-backed.
-  test: UNTESTED (no test asserts file set contents)
-
-SPEC-EX-LS-006: model-resolution-chain
+SPEC-EX-LV-029: model-resolution-chain
   Model comes from: validator.model → runtime_config.default_model → "default".
   test: UNTESTED
 
-SPEC-EX-LS-007: sandbox-and-iterations-from-validator-or-runtime
-  sandbox comes from validator.sandbox or runtime_config.sandbox. max_iterations comes from validator.max_iterations or runtime_config.max_iterations.
+SPEC-EX-LV-030: cost-propagated
+  Cost from CompletionResult or SessionResult is propagated to ValidatorResult.
   test: UNTESTED
 
 ---
 
 ## drive_session
 
-Core session orchestration: create → poll → collect → teardown → parse verdict. Extracted from execute_llm_session for testability.
+Core session orchestration: create → poll → collect → teardown → parse verdict. Extracted from execute_llm_validator for testability.
 
 SPEC-EX-DS-001: create-failure-errors-no-teardown
   If adapter.create_session fails, returns Status::Error. Teardown is NOT called because no session was created.
@@ -544,8 +488,8 @@ SPEC-EX-RG-025: suppression-in-run-all-mode
   In run_all mode, suppression affects compute_final_status. Suppressing Error with a Fail present produces VerdictStatus::Fail. Suppressing all produces VerdictStatus::Pass.
   test: exec::tests::gate_suppress_errors_with_all_mode, gate_suppress_all_in_all_mode
 
-SPEC-EX-RG-026: llm-completion-in-gate
-  LLM completion validators work within run_gate, using the config's provider for HTTP calls. The LLM validator receives its prompt input from the `Invocation`'s input files, not from a single artifact + context.
+SPEC-EX-RG-026: llm-validator-in-gate
+  LLM validators work within run_gate, using the config's runtimes for execution. The LLM validator receives its prompt input from the `Invocation`'s input files, not from a single artifact + context.
   test: exec::tests::llm_completion_in_gate_run
 
 SPEC-EX-RG-027: llm-fail-blocks-gate

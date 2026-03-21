@@ -35,11 +35,11 @@ This ordering keeps the spec, tests, and code in sync. The spec drives everythin
 
 ```text
 main.rs → exec, config, history, runtime, provider, types
-exec → config, types, placeholder, runtime, provider, error
-provider → config, types
+exec → config, types, placeholder, runtime, error
+runtime → types, error, provider
+provider → types
 config → types, placeholder, error
 history, placeholder → types, error
-runtime → types, error
 prompt, verdict_parser → types or error only
 error → (leaf, no internal imports)
 ```

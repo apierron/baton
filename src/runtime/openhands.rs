@@ -7,7 +7,8 @@ use crate::error::{BatonError, Result};
 use crate::types::Cost;
 
 use super::{
-    HealthResult, RuntimeAdapter, SessionConfig, SessionHandle, SessionResult, SessionStatus,
+    CompletionRequest, CompletionResult, HealthResult, RuntimeAdapter, SessionConfig,
+    SessionHandle, SessionResult, SessionStatus,
 };
 
 // ─── OpenHands adapter ──────────────────────────────────
@@ -299,6 +300,58 @@ impl RuntimeAdapter for OpenHandsAdapter {
         let _ = self.client.delete(&url).headers(self.auth_headers()).send();
 
         Ok(())
+    }
+
+    fn post_completion(&self, request: CompletionRequest) -> Result<CompletionResult> {
+        let url = format!("{}/v1/chat/completions", self.base_url);
+
+        let mut body = serde_json::json!({
+            "model": request.model,
+            "messages": request.messages,
+            "temperature": request.temperature,
+        });
+
+        if let Some(max_tokens) = request.max_tokens {
+            body["max_tokens"] = serde_json::json!(max_tokens);
+        }
+
+        let mut req = self.client.post(&url).json(&body);
+        req = req.headers(self.auth_headers());
+
+        let response = req.send().map_err(|e| {
+            BatonError::ValidationError(format!("Failed to send completion request: {e}"))
+        })?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body_text = response.text().unwrap_or_default();
+            return Err(BatonError::ValidationError(format!(
+                "Completion request failed: HTTP {status}: {body_text}"
+            )));
+        }
+
+        let resp_body: serde_json::Value = response.json().map_err(|e| {
+            BatonError::ValidationError(format!("Failed to parse completion response: {e}"))
+        })?;
+
+        let content = resp_body
+            .get("choices")
+            .and_then(|c| c.get(0))
+            .and_then(|c| c.get("message"))
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let cost = crate::provider::extract_cost(&resp_body, &request.model);
+
+        if content.is_empty() {
+            return Err(BatonError::ValidationError(
+                "Completion response had empty content".into(),
+            ));
+        }
+
+        Ok(CompletionResult { content, cost })
     }
 }
 

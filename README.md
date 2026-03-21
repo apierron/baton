@@ -110,7 +110,7 @@ This creates a `baton.toml` config, a `.baton/` directory for history and logs, 
 Edit `baton.toml`:
 
 ```toml
-version = "0.5"
+version = "0.6"
 
 [validators.lint]
 type = "script"
@@ -177,7 +177,7 @@ baton init             Scaffold a new baton project
 baton list             List gates and validators in a config
 baton history          Query invocation history from the SQLite database
 baton validate-config  Check a baton.toml for errors and warnings
-baton check-provider   Check provider connectivity and model availability
+baton check-provider   Check API runtime connectivity and model availability
 baton check-runtime    Check runtime connectivity and health
 baton clean            Remove temporary files from .baton/tmp/
 baton update           Update baton to the latest version
@@ -221,15 +221,15 @@ warn_exit_codes = [2]
 
 Invokes a language model for validation in one of two modes:
 
-- **completion** — Sends input files and a prompt template to a model. The response is parsed for a structured verdict keyword (PASS/FAIL/WARN).
+- **query** (default) — Sends input files and a prompt template to a model via a runtime. The response is parsed for a structured verdict keyword (PASS/FAIL/WARN).
 - **session** — Launches a multi-turn agent session via a runtime adapter. The agent can use tools, read files, and produce a verdict grounded in observation.
 
 ```toml
 [validators.spec-check]
 type = "llm"
-mode = "completion"
+mode = "query"
 prompt = "spec-compliance"
-provider = "default"
+runtime = "default"
 model = "claude-haiku"
 input = { code = "*.py", spec = { path = "spec.md" } }
 ```
@@ -246,7 +246,7 @@ prompt = "Review this code for correctness"
 
 ## Configuration
 
-Baton uses TOML for configuration. One file can define multiple named gates, shared defaults, provider configuration, and runtime settings.
+Baton uses TOML for configuration. One file can define multiple named gates, shared defaults, and runtime settings.
 
 Config discovery walks upward from the current directory looking for `baton.toml`, stopping at `.git` boundaries.
 

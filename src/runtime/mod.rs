@@ -1,8 +1,10 @@
-//! Runtime adapter abstraction for agent-based validators.
+//! Runtime adapter abstraction for validators.
 //!
-//! Defines the [`RuntimeAdapter`] trait and session lifecycle types.
-//! Supports OpenHands and OpenCode as runtime backends.
+//! Defines the [`RuntimeAdapter`] trait, session lifecycle types, and
+//! completion request/result types. Supports API, OpenHands, and OpenCode
+//! as runtime backends.
 
+pub mod api;
 pub mod opencode;
 pub mod openhands;
 
@@ -61,6 +63,24 @@ pub struct HealthResult {
     pub message: Option<String>,
 }
 
+// ─── Completion types ────────────────────────────────────
+
+/// Request for a one-shot chat completion.
+#[derive(Debug, Clone)]
+pub struct CompletionRequest {
+    pub messages: Vec<serde_json::Value>,
+    pub model: String,
+    pub temperature: f64,
+    pub max_tokens: Option<u32>,
+}
+
+/// Result from a one-shot chat completion.
+#[derive(Debug, Clone)]
+pub struct CompletionResult {
+    pub content: String,
+    pub cost: Option<Cost>,
+}
+
 // ─── RuntimeAdapter trait ────────────────────────────────
 
 /// Interface for agent runtime backends.
@@ -80,6 +100,16 @@ pub trait RuntimeAdapter: Send + Sync + Debug {
     fn cancel(&self, handle: &SessionHandle) -> Result<()>;
     /// Cleans up session resources (workspace, files). Idempotent.
     fn teardown(&self, handle: &SessionHandle) -> Result<()>;
+
+    /// Sends a one-shot chat completion request.
+    ///
+    /// Default implementation returns an error indicating the runtime
+    /// does not support completions.
+    fn post_completion(&self, _request: CompletionRequest) -> Result<CompletionResult> {
+        Err(BatonError::RuntimeError(
+            "This runtime does not support one-shot completions.".into(),
+        ))
+    }
 }
 
 // ─── Adapter registry ───────────────────────────────────
@@ -90,6 +120,15 @@ pub fn create_adapter(
     runtime_config: &crate::config::Runtime,
 ) -> Result<Box<dyn RuntimeAdapter>> {
     match runtime_config.runtime_type.as_str() {
+        "api" => {
+            let adapter = api::ApiAdapter::new(
+                runtime_config.base_url.clone(),
+                runtime_config.api_key_env.as_deref(),
+                runtime_config.default_model.clone(),
+                runtime_config.timeout_seconds,
+            )?;
+            Ok(Box::new(adapter))
+        }
         "openhands" => {
             let adapter = openhands::OpenHandsAdapter::new(
                 runtime_config.base_url.clone(),
@@ -113,7 +152,7 @@ pub fn create_adapter(
             Ok(Box::new(adapter))
         }
         other => Err(BatonError::ConfigError(format!(
-            "Unknown runtime type '{other}' for runtime '{runtime_name}'. Supported: openhands, opencode."
+            "Unknown runtime type '{other}' for runtime '{runtime_name}'. Supported: api, openhands, opencode."
         ))),
     }
 }

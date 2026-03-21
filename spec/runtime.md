@@ -1,6 +1,6 @@
 # module: runtime
 
-Runtime adapter abstraction for agent-based validators. Defines the `RuntimeAdapter` trait and session lifecycle types. Supports OpenHands and OpenCode as runtime backends.
+Runtime adapter abstraction for agent-based validators and API backends. Defines the `RuntimeAdapter` trait, session lifecycle types, and one-shot completion types. Supports OpenHands, OpenCode, and API as runtime backends.
 
 ## Public types
 
@@ -11,13 +11,16 @@ Runtime adapter abstraction for agent-based validators. Defines the `RuntimeAdap
 | `SessionStatus` | Lifecycle enum: Running, Completed, Failed, TimedOut, Cancelled |
 | `SessionResult` | Collected output: status, output, raw_log, cost |
 | `HealthResult` | Health probe result: reachable, version, models, message |
-| `RuntimeAdapter` | Trait: health_check, create_session, poll_status, collect_result, cancel, teardown |
+| `CompletionRequest` | Request for one-shot completion: messages, model, temperature, max_tokens |
+| `CompletionResult` | Result of one-shot completion: content, cost |
+| `RuntimeAdapter` | Trait: health_check, create_session, poll_status, collect_result, cancel, teardown, post_completion |
 
 ## Public functions
 
 | Function | Purpose |
 |---|---|
 | `create_adapter` | Factory: runtime config to `Box<dyn RuntimeAdapter>` |
+| `post_completion` | Trait default: returns error for runtimes that don't support one-shot completions |
 
 ## Internal functions
 
@@ -31,6 +34,7 @@ Runtime adapter abstraction for agent-based validators. Defines the `RuntimeAdap
 | `OpenCodeAdapter::auth_headers` | All trait methods (OpenCode) |
 | `map_opencode_status` | `poll_status`, `collect_result` (OpenCode) |
 | `extract_cost_from_opencode` | `collect_result` (OpenCode) |
+| `ApiAdapter::new` | `create_adapter` |
 
 ## Design notes
 
@@ -66,6 +70,24 @@ SPEC-RT-TY-005: health-result-fields
   `HealthResult` has fields: reachable (bool), version (Option<String>), models (Option<Vec<String>>), message (Option<String>). It derives Debug and Clone.
   test: runtime::tests::health_result_construction
 
+SPEC-RT-TY-010: completion-request-fields
+  `CompletionRequest` has fields: messages (Vec<serde_json::Value>), model (String), temperature (f64), max_tokens (Option<u32>). It derives Debug and Clone.
+  test: UNTESTED
+
+SPEC-RT-TY-011: completion-result-fields
+  `CompletionResult` has fields: content (String), cost (Option<Cost>). It derives Debug and Clone.
+  test: UNTESTED
+
+---
+
+## post_completion (trait default)
+
+Default method on `RuntimeAdapter` that returns an error indicating the runtime doesn't support one-shot completions. Overridden by API, OpenHands, and OpenCode adapters.
+
+SPEC-RT-PC-001: default-returns-runtime-error
+  The default implementation returns `Err(BatonError::RuntimeError("This runtime does not support one-shot completions."))`.
+  test: UNTESTED
+
 ---
 
 ## create_adapter
@@ -90,6 +112,10 @@ SPEC-RT-CA-004: opencode-type-creates-adapter
 
 SPEC-RT-CA-005: opencode-new-error-propagated
   If `OpenCodeAdapter::new` returns an error (e.g., missing API key env var), `create_adapter` propagates that error unchanged.
+  test: UNTESTED
+
+SPEC-RT-CA-006: api-type-creates-api-adapter
+  When `runtime_config.runtime_type` is `"api"`, `create_adapter` constructs an `ApiAdapter`. Returns `Ok(Box<dyn RuntimeAdapter>)`.
   test: UNTESTED
 
 ---
@@ -373,6 +399,14 @@ SPEC-RT-EC-005: cost-field-mapped-to-estimated-usd
 
 ---
 
+## OpenHandsAdapter::post_completion
+
+SPEC-RT-OH-PC-001: posts-to-chat-completions
+  Sends `POST {base_url}/v1/chat/completions` with the same OpenAI-compatible format. Parses content and cost from usage.
+  test: UNTESTED
+
+---
+
 ## OpenCodeAdapter::new
 
 Constructs the HTTP client adapter for the OpenCode runtime. Follows the same pattern as `OpenHandsAdapter::new`: resolves the API key from the environment, normalizes the base URL, and builds the reqwest client with a timeout buffer.
@@ -615,3 +649,53 @@ SPEC-RT-OC-EC-004: partial-metrics-returns-some
 SPEC-RT-OC-EC-005: cost-field-mapped-to-estimated-usd
   The `"cost"` field (f64) in metrics maps to `Cost::estimated_usd`.
   test: IMPLICIT via extract_cost_with_metrics
+
+---
+
+## OpenCodeAdapter::post_completion
+
+SPEC-RT-OC-PC-001: posts-to-chat-completions
+  Sends `POST {base_url}/v1/chat/completions` with the same OpenAI-compatible format. Parses content and cost from usage.
+  test: UNTESTED
+
+---
+
+## ApiAdapter
+
+API runtime adapter that wraps `ProviderClient` for OpenAI-compatible LLM APIs. Handles one-shot completions but does not support agent sessions.
+
+### ApiAdapter::new
+
+SPEC-RT-API-001: constructs-from-runtime-config
+  Creates an `ApiAdapter` from base_url, api_key_env, default_model, and timeout_seconds. Resolves API key from environment. Strips trailing slash from base_url.
+  test: UNTESTED
+
+SPEC-RT-API-002: api-key-resolved-from-env
+  When `api_key_env` is `Some(name)` and non-empty, reads the env var. If not set, returns error.
+  test: UNTESTED
+
+SPEC-RT-API-003: no-api-key-env-means-no-auth
+  When `api_key_env` is `None` or empty, no API key is set.
+  test: UNTESTED
+
+### ApiAdapter::health_check
+
+SPEC-RT-API-010: health-check-via-models-endpoint
+  Sends `GET {base_url}/v1/models`. On success, returns `reachable=true` with model list. On HTTP error, returns `reachable=false`. On connection error, returns `Err`.
+  test: UNTESTED
+
+### ApiAdapter::post_completion
+
+SPEC-RT-API-020: posts-to-chat-completions
+  Sends `POST {base_url}/v1/chat/completions` with messages, model, temperature, max_tokens. Parses `choices[0].message.content` and usage for cost.
+  test: UNTESTED
+
+SPEC-RT-API-021: delegates-to-provider-client
+  Uses `ProviderClient` internally for HTTP construction, response parsing, and error classification.
+  test: UNTESTED
+
+### ApiAdapter session methods
+
+SPEC-RT-API-030: session-methods-return-error
+  `create_session`, `poll_status`, `collect_result`, `cancel`, and `teardown` all return `Err(RuntimeError("API runtime does not support sessions"))`.
+  test: UNTESTED
