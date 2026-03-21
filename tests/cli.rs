@@ -1539,6 +1539,82 @@ fn init_existing_prompts_not_overwritten() {
     );
 }
 
+#[test]
+fn init_default_uses_separate_blocks() {
+    let dir = TempDir::new().unwrap();
+
+    baton()
+        .arg("init")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
+    // Should have top-level [validators.*] blocks, not [[gates.*.validators]]
+    assert!(
+        content.contains("[validators."),
+        "Generated config should use separate validator blocks"
+    );
+    assert!(
+        !content.contains("[[gates."),
+        "Generated config should not use inline/nested validators"
+    );
+    // Gate should reference validators via ref
+    assert!(
+        content.contains("ref = "),
+        "Gates should reference validators via ref"
+    );
+}
+
+#[test]
+fn init_profile_rust() {
+    let dir = TempDir::new().unwrap();
+
+    baton()
+        .args(["init", "--profile", "rust"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
+    assert!(content.contains("[validators.clippy]"));
+    assert!(content.contains("[validators.tests]"));
+    assert!(content.contains("[validators.fmt-check]"));
+    assert!(content.contains("[gates.ci]"));
+    assert!(content.contains("cargo clippy"));
+    assert!(content.contains("cargo test"));
+    assert!(content.contains("cargo fmt --check"));
+}
+
+#[test]
+fn init_profile_python() {
+    let dir = TempDir::new().unwrap();
+
+    baton()
+        .args(["init", "--profile", "python"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
+    assert!(content.contains("[validators.ruff]"));
+    assert!(content.contains("[validators.pytest]"));
+    assert!(content.contains("[validators.mypy]"));
+    assert!(content.contains("[gates.ci]"));
+}
+
+#[test]
+fn init_unknown_profile_exits_1() {
+    let dir = TempDir::new().unwrap();
+
+    baton()
+        .args(["init", "--profile", "bogus"])
+        .current_dir(dir.path())
+        .assert()
+        .code(1)
+        .stderr(predicates::str::contains("unknown profile"));
+}
+
 // ─── cmd_list gaps ───────────────────────────────────────
 
 #[test]

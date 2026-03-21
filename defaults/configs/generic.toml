@@ -1,0 +1,9 @@
+[validators.lint]
+type = "script"
+command = "echo 'Replace with your lint command' && exit 0"
+
+[gates.example]
+description = "Example validation gate"
+validators = [
+    { ref = "lint", blocking = true },
+]

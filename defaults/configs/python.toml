@@ -1,0 +1,19 @@
+[validators.ruff]
+type = "script"
+command = "ruff check ."
+
+[validators.pytest]
+type = "script"
+command = "pytest"
+
+[validators.mypy]
+type = "script"
+command = "mypy ."
+
+[gates.ci]
+description = "Linting, tests, and type checking"
+validators = [
+    { ref = "ruff", blocking = true },
+    { ref = "pytest", blocking = true },
+    { ref = "mypy", blocking = false },
+]

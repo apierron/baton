@@ -91,6 +91,10 @@ enum Commands {
         /// Only create the prompts/ directory with starter templates
         #[arg(long)]
         prompts_only: bool,
+
+        /// Language profile for starter config (rust, python, generic)
+        #[arg(long, default_value = "generic")]
+        profile: String,
     },
 
     /// List available gates and validators
@@ -337,7 +341,8 @@ fn main() {
         Commands::Init {
             minimal,
             prompts_only,
-        } => cmd_init(minimal, prompts_only),
+            profile,
+        } => cmd_init(minimal, prompts_only, &profile),
         Commands::List { gate, config } => cmd_list(config.as_ref(), gate.as_deref()),
         Commands::History {
             gate,
@@ -675,9 +680,29 @@ fn compute_skip_reason(
     None
 }
 
+// Config templates embedded from defaults/ at compile time.
+const DEFAULT_BASE_CONFIG: &str = include_str!("../defaults/configs/base.toml");
+const DEFAULT_GENERIC_CONFIG: &str = include_str!("../defaults/configs/generic.toml");
+const DEFAULT_RUST_CONFIG: &str = include_str!("../defaults/configs/rust.toml");
+const DEFAULT_PYTHON_CONFIG: &str = include_str!("../defaults/configs/python.toml");
+
+const DEFAULT_PROMPT_SPEC: &str = include_str!("../defaults/prompts/spec-compliance.md");
+const DEFAULT_PROMPT_ADVERSARIAL: &str = include_str!("../defaults/prompts/adversarial-review.md");
+const DEFAULT_PROMPT_DOC: &str = include_str!("../defaults/prompts/doc-completeness.md");
+
+const VALID_PROFILES: &[&str] = &["generic", "rust", "python"];
+
 /// Initializes a new baton project: creates `baton.toml`, `.baton/` directory,
 /// and optionally starter prompt templates in `prompts/`.
-fn cmd_init(minimal: bool, prompts_only: bool) -> i32 {
+fn cmd_init(minimal: bool, prompts_only: bool, profile: &str) -> i32 {
+    if !VALID_PROFILES.contains(&profile) {
+        eprintln!(
+            "Error: unknown profile \"{profile}\". Valid profiles: {}",
+            VALID_PROFILES.join(", ")
+        );
+        return 1;
+    }
+
     if !prompts_only {
         // Check if baton.toml already exists
         if std::path::Path::new("baton.toml").exists() {
@@ -698,38 +723,20 @@ fn cmd_init(minimal: bool, prompts_only: bool) -> i32 {
             }
         }
 
-        // Write starter baton.toml
-        let starter_config = r#"version = "0.6"
+        // Select profile-specific config
+        let profile_config = match profile {
+            "rust" => DEFAULT_RUST_CONFIG,
+            "python" => DEFAULT_PYTHON_CONFIG,
+            _ => DEFAULT_GENERIC_CONFIG,
+        };
 
-[defaults]
-timeout_seconds = 300
-blocking = true
-prompts_dir = "./prompts"
-log_dir = "./.baton/logs"
-history_db = "./.baton/history.db"
-tmp_dir = "./.baton/tmp"
+        let starter_config = format!("{}\n{}", DEFAULT_BASE_CONFIG, profile_config);
 
-# [runtimes.default]
-# type = "api"
-# base_url = "https://api.anthropic.com"
-# api_key_env = "ANTHROPIC_API_KEY"
-# default_model = "claude-haiku"
-
-[validators.lint]
-type = "script"
-command = "echo 'Replace with your lint command' && exit 0"
-
-[gates.example]
-description = "Example validation gate"
-validators = [
-    { ref = "lint", blocking = true },
-]
-"#;
         if let Err(e) = std::fs::write("baton.toml", starter_config) {
             eprintln!("Error writing baton.toml: {e}");
             return 1;
         }
-        eprintln!("Created baton.toml");
+        eprintln!("Created baton.toml (profile: {profile})");
         eprintln!("Created .baton/");
     }
 
@@ -742,18 +749,9 @@ validators = [
         }
 
         let templates = [
-            (
-                "spec-compliance.md",
-                include_str!("../prompts/spec-compliance.md"),
-            ),
-            (
-                "adversarial-review.md",
-                include_str!("../prompts/adversarial-review.md"),
-            ),
-            (
-                "doc-completeness.md",
-                include_str!("../prompts/doc-completeness.md"),
-            ),
+            ("spec-compliance.md", DEFAULT_PROMPT_SPEC),
+            ("adversarial-review.md", DEFAULT_PROMPT_ADVERSARIAL),
+            ("doc-completeness.md", DEFAULT_PROMPT_DOC),
         ];
 
         for (name, content) in &templates {

@@ -1,0 +1,19 @@
+[validators.clippy]
+type = "script"
+command = "cargo clippy --all-targets -- -D warnings"
+
+[validators.tests]
+type = "script"
+command = "cargo test"
+
+[validators.fmt-check]
+type = "script"
+command = "cargo fmt --check"
+
+[gates.ci]
+description = "Clippy, tests, and formatting"
+validators = [
+    { ref = "clippy", blocking = true },
+    { ref = "tests", blocking = true },
+    { ref = "fmt-check", blocking = false },
+]

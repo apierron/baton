@@ -1,0 +1,15 @@
+version = "0.6"
+
+[defaults]
+timeout_seconds = 300
+blocking = true
+prompts_dir = "./prompts"
+log_dir = "./.baton/logs"
+history_db = "./.baton/history.db"
+tmp_dir = "./.baton/tmp"
+
+# [runtimes.default]
+# type = "api"
+# base_url = "https://api.anthropic.com"
+# api_key_env = "ANTHROPIC_API_KEY"
+# default_model = "claude-haiku"

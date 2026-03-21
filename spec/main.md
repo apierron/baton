@@ -245,12 +245,12 @@ SPEC-MN-IN-002: creates-baton-dir-structure
   test: cli::init_creates_valid_parseable_config
 
 SPEC-MN-IN-003: writes-starter-baton-toml
-  Writes a starter `baton.toml` with version, defaults section, commented-out provider, and an example gate. The generated config is valid and passes `validate-config`.
+  Writes a starter `baton.toml` by concatenating the base config template (`defaults/configs/base.toml`) with a profile-specific template. When `--profile` is provided, uses that profile; otherwise defaults to `generic`. The generated config is valid and passes `validate-config`. All generated configs use the separate-block style: validators as top-level `[validators.X]` blocks, gates referencing them via `{ ref = "X" }`.
   test: cli::init_creates_valid_parseable_config
 
 SPEC-MN-IN-004: creates-prompt-templates
-  Unless `--minimal` is set, creates a `prompts/` directory with three starter templates: `spec-compliance.md`, `adversarial-review.md`, `doc-completeness.md`. Templates are loaded via `include_str!` from the `prompts/` directory at compile time.
-  test: UNTESTED (init tests check config validity but not prompt file creation)
+  Unless `--minimal` is set, creates a `prompts/` directory with three starter templates: `spec-compliance.md`, `adversarial-review.md`, `doc-completeness.md`. Templates are loaded via `include_str!` from `defaults/prompts/` at compile time.
+  test: cli::init_creates_prompt_templates
 
 SPEC-MN-IN-005: minimal-skips-prompts
   When `--minimal` is set, the prompts directory and template files are not created.
@@ -267,6 +267,18 @@ SPEC-MN-IN-007: existing-prompts-not-overwritten
 SPEC-MN-IN-008: success-exits-0
   On success, prints "baton project initialized." to stderr and returns exit code 0.
   test: cli::init_creates_valid_parseable_config
+
+SPEC-MN-IN-009: profile-selects-config
+  When `--profile {rust,python,generic}` is provided, the starter `baton.toml` uses the named profile's config template appended to the base template. When omitted, defaults to `generic`.
+  test: cli::init_profile_rust, cli::init_profile_python
+
+SPEC-MN-IN-010: starter-uses-separate-blocks
+  All generated `baton.toml` files use the separate validator block style: `[validators.X]` defined top-level, gates reference via `{ ref = "X" }`. No generated config uses the inline/nested style.
+  test: cli::init_default_uses_separate_blocks
+
+SPEC-MN-IN-011: unknown-profile-exits-1
+  When `--profile` is provided with an unrecognized value, prints an error listing valid profiles and returns exit code 1.
+  test: cli::init_unknown_profile_exits_1
 
 ---
 
