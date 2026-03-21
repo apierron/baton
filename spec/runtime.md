@@ -48,34 +48,34 @@ The `SessionStatus` enum is baton's canonical representation. Each runtime backe
 
 ## Public type construction
 
-These are plain data types with public fields. They have no invariants beyond Rust's type system, so the spec assertions here simply document their shape and derivations.
+These are plain data types with public fields. They carry the information needed to create, monitor, and collect results from runtime sessions and completions.
 
 SPEC-RT-TY-001: session-config-fields
-  `SessionConfig` has fields: task (String), files (BTreeMap<String, String>), model (String), sandbox (bool), max_iterations (u32), timeout_seconds (u64), env (BTreeMap<String, String>). It derives Debug and Clone.
+  `SessionConfig` carries: task description, named input files (name-to-content mapping), model identifier, sandbox flag, max iteration count, timeout in seconds, and environment variables.
   test: runtime::tests::session_config_construction
 
 SPEC-RT-TY-002: session-handle-fields
-  `SessionHandle` has fields: id (String), workspace_id (String). It derives Debug and Clone.
+  `SessionHandle` carries: session ID and workspace ID. These are opaque identifiers returned by create_session and passed to all subsequent session operations.
   test: runtime::tests::session_handle_construction
 
 SPEC-RT-TY-003: session-status-variants
-  `SessionStatus` has exactly five variants: Running, Completed, Failed, TimedOut, Cancelled. It derives Debug, Clone, PartialEq, Eq.
+  `SessionStatus` has exactly five states: Running, Completed, Failed, TimedOut, Cancelled. Each runtime backend maps its own status vocabulary to these five canonical states.
   test: IMPLICIT via map_status tests
 
 SPEC-RT-TY-004: session-result-fields
-  `SessionResult` has fields: status (SessionStatus), output (String), raw_log (String), cost (Option<Cost>). It derives Debug and Clone.
+  `SessionResult` carries: final status, output text, raw log, and optional cost metadata.
   test: runtime::tests::session_result_construction
 
 SPEC-RT-TY-005: health-result-fields
-  `HealthResult` has fields: reachable (bool), version (Option<String>), models (Option<Vec<String>>), message (Option<String>). It derives Debug and Clone.
+  `HealthResult` carries: reachability flag, optional server version, optional model list, and optional diagnostic message.
   test: runtime::tests::health_result_construction
 
 SPEC-RT-TY-010: completion-request-fields
-  `CompletionRequest` has fields: messages (Vec<serde_json::Value>), model (String), temperature (f64), max_tokens (Option<u32>). It derives Debug and Clone.
+  `CompletionRequest` carries: message list, model identifier, temperature, and optional max token limit.
   test: UNTESTED
 
 SPEC-RT-TY-011: completion-result-fields
-  `CompletionResult` has fields: content (String), cost (Option<Cost>). It derives Debug and Clone.
+  `CompletionResult` carries: response content text and optional cost metadata.
   test: UNTESTED
 
 ---
@@ -85,7 +85,7 @@ SPEC-RT-TY-011: completion-result-fields
 Default method on `RuntimeAdapter` that returns an error indicating the runtime doesn't support one-shot completions. Overridden by API, OpenHands, and OpenCode adapters.
 
 SPEC-RT-PC-001: default-returns-runtime-error
-  The default implementation returns `Err(BatonError::RuntimeError("This runtime does not support one-shot completions."))`.
+  The default implementation returns an error indicating the runtime does not support one-shot completions. Runtimes that support completions override this method.
   test: UNTESTED
 
 ---

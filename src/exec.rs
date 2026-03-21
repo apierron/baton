@@ -21,6 +21,13 @@ use crate::verdict_parser::parse_verdict;
 // ─── run_if evaluation ──────────────────────────────────
 
 /// Evaluate a run_if expression against prior validator results.
+///
+/// Parses `expr` as a sequence of `name.status == value` atoms joined by
+/// `and`/`or` operators. Evaluation is left-to-right with no precedence
+/// and no short-circuit (all atoms are evaluated to catch missing references).
+///
+/// Returns `Err` if the expression is empty or references a validator not
+/// present in `prior_results`.
 pub fn evaluate_run_if(
     expr: &str,
     prior_results: &BTreeMap<String, ValidatorResult>,

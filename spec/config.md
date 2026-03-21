@@ -21,7 +21,7 @@ The two-stage split exists because parse-time checks are structural (does this T
 
 ## Design notes
 
-parse_config returns `Result<BatonConfig>` (early-return on first error) while validate_config returns `ConfigValidation` (accumulates all errors and warnings). This is deliberate: parse-time errors are fatal and sequential (later checks depend on earlier ones succeeding), while validation errors are independent and should all be reported at once so the user can fix them in a single pass.
+parse_config stops on the first error (later checks depend on earlier ones succeeding), while validate_config accumulates all errors and warnings so the user can fix them in a single pass.
 
 validate_config distinguishes errors (will cause runtime failure) from warnings (suspicious but functional). Warnings are printed but do not prevent execution.
 
@@ -164,7 +164,7 @@ SPEC-CF-PC-041: timeout-inheritable-at-gate-ref
   test: config::tests::validator_overrides_defaults
 
 SPEC-CF-PC-052: runtime-field-accepts-string-or-list
-  The `runtime` field on LLM validators accepts either a single string or a list of strings, deserialized into Vec<String> via StringOrList. For example, `runtime = "my-runtime"` becomes `vec!["my-runtime"]` and `runtime = ["rt-a", "rt-b"]` becomes `vec!["rt-a", "rt-b"]`.
+  The `runtime` field on LLM validators accepts either a single string or a list of strings. For example, `runtime = "my-runtime"` becomes a single-element list and `runtime = ["rt-a", "rt-b"]` becomes a two-element fallback chain.
   test: UNTESTED
 
 SPEC-CF-PC-053: runtime-field-required-for-llm

@@ -29,7 +29,7 @@ Validators are stateless functions. `execute_validator` takes an invocation (val
 
 Gates handle sequencing. `blocking` and `run_if` are both gate-level orchestration concerns, not validator properties. `blocking = true` means "if this validator fails, stop the gate." `run_if` means "only run this validator if a prior validator's result meets a condition." In many cases, `blocking` alone is sufficient — if validator A is blocking and fails, validators B and C never run. `run_if` adds value when: (a) the dependency isn't the immediately preceding validator, or (b) the dependency is non-blocking (A produces a result but doesn't stop the pipeline, and B should only run if A passed). Whether `run_if` carries its weight relative to blocking is an open question; the current design includes it for non-blocking conditional chains.
 
-execute_validator takes an optional config because script and human validators don't need provider/runtime configuration. LLM validators return an error if config is absent.
+Script and human validators do not require provider/runtime configuration. LLM validators return an error if no config is provided.
 
 ---
 
@@ -417,7 +417,7 @@ This is the main entry point for gate execution. It validates inputs, runs each 
 
 Validators run in the order they appear in the gate config. For each validator, the loop applies filters, evaluates run_if, dispatches execution, and checks blocking status.
 
-The loop maintains a BTreeMap<String, ValidatorResult> of prior results. This map is passed to each validator for run_if evaluation and placeholder resolution (e.g., {verdict.lint.status}).
+The loop maintains a map of prior results keyed by validator name. This map is passed to each validator for run_if evaluation and placeholder resolution (e.g., {verdict.lint.status}).
 
 Key invariant: a validator can only reference results from validators that appeared earlier in the pipeline. The config validator enforces this for run_if expressions, but placeholder resolution handles missing references gracefully (empty string).
 
@@ -470,9 +470,7 @@ SPEC-EX-RG-021: run-all-mode-uses-compute-final-status
   test: exec::tests::gate_all_mode_non_blocking_failure_counts
 
 SPEC-EX-RG-022: verdict-history-contains-all-results
-  The verdict.history field contains every validator result, including skipped validators. Order matches the BTreeMap iteration order (alphabetical by name), not the gate config order.
-
-Note: this is a subtle consequence of using BTreeMap<String, ValidatorResult> for the results collection. The config order is preserved during execution, but the final .values().collect() produces alphabetical order. This should be considered if order-sensitive output is needed.
+  The verdict.history field contains every validator result, including skipped validators. Results are ordered alphabetically by validator name, not by config order. This should be considered if order-sensitive output is needed.
 
   test: IMPLICIT via exec::tests::gate_all_pass
 
