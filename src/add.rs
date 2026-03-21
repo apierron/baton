@@ -274,7 +274,9 @@ pub fn run_wizard(config: &BatonConfig) -> Result<(ValidatorDef, Option<GateAssi
             // List available runtimes
             let runtime_names: Vec<&String> = config.runtimes.keys().collect();
             if runtime_names.is_empty() {
-                eprintln!("Warning: No runtimes defined in config. You'll need to add one to baton.toml.");
+                eprintln!(
+                    "Warning: No runtimes defined in config. You'll need to add one to baton.toml."
+                );
                 let rt: String = Input::new()
                     .with_prompt("Runtime name")
                     .interact_text()
@@ -515,9 +517,7 @@ fn parse_validator_table(table: &Table, key_name: Option<&str>) -> Result<Valida
             .get("name")
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
-                BatonError::ConfigError(
-                    "Import [validator] must have a 'name' field".into(),
-                )
+                BatonError::ConfigError("Import [validator] must have a 'name' field".into())
             })?
             .to_string()
     };
@@ -525,35 +525,71 @@ fn parse_validator_table(table: &Table, key_name: Option<&str>) -> Result<Valida
     let vtype = table
         .get("type")
         .and_then(|v| v.as_str())
-        .ok_or_else(|| {
-            BatonError::ConfigError(format!("Validator '{name}' missing 'type' field"))
-        })?
+        .ok_or_else(|| BatonError::ConfigError(format!("Validator '{name}' missing 'type' field")))?
         .to_string();
 
     Ok(ValidatorDef {
         name,
         validator_type: vtype,
-        command: table.get("command").and_then(|v| v.as_str()).map(String::from),
-        prompt: table.get("prompt").and_then(|v| v.as_str()).map(String::from),
-        runtime: table.get("runtime").and_then(|v| v.as_str()).map(String::from),
-        model: table.get("model").and_then(|v| v.as_str()).map(String::from),
+        command: table
+            .get("command")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        prompt: table
+            .get("prompt")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        runtime: table
+            .get("runtime")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        model: table
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(String::from),
         mode: table.get("mode").and_then(|v| v.as_str()).map(String::from),
         temperature: table.get("temperature").and_then(|v| v.as_float()),
-        response_format: table.get("response_format").and_then(|v| v.as_str()).map(String::from),
-        max_tokens: table.get("max_tokens").and_then(|v| v.as_integer()).map(|i| i as u32),
-        system_prompt: table.get("system_prompt").and_then(|v| v.as_str()).map(String::from),
-        input: table.get("input").and_then(|v| v.as_str()).map(String::from),
-        timeout_seconds: table.get("timeout_seconds").and_then(|v| v.as_integer()).map(|i| i as u64),
+        response_format: table
+            .get("response_format")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        max_tokens: table
+            .get("max_tokens")
+            .and_then(|v| v.as_integer())
+            .map(|i| i as u32),
+        system_prompt: table
+            .get("system_prompt")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        input: table
+            .get("input")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        timeout_seconds: table
+            .get("timeout_seconds")
+            .and_then(|v| v.as_integer())
+            .map(|i| i as u64),
         warn_exit_codes: table
             .get("warn_exit_codes")
             .and_then(|v| v.as_array())
-            .map(|a| a.iter().filter_map(|v| v.as_integer().map(|i| i as i32)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_integer().map(|i| i as i32))
+                    .collect()
+            })
             .unwrap_or_default(),
-        working_dir: table.get("working_dir").and_then(|v| v.as_str()).map(String::from),
+        working_dir: table
+            .get("working_dir")
+            .and_then(|v| v.as_str())
+            .map(String::from),
         tags: table
             .get("tags")
             .and_then(|v| v.as_array())
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default(),
         env: BTreeMap::new(),
     })
@@ -567,10 +603,16 @@ pub fn validator_to_toml_preview(def: &ValidatorDef) -> String {
     lines.push(format!("type = \"{}\"", def.validator_type));
 
     if let Some(ref cmd) = def.command {
-        lines.push(format!("command = \"{}\"", cmd.replace('\\', "\\\\").replace('"', "\\\"")));
+        lines.push(format!(
+            "command = \"{}\"",
+            cmd.replace('\\', "\\\\").replace('"', "\\\"")
+        ));
     }
     if let Some(ref p) = def.prompt {
-        lines.push(format!("prompt = \"{}\"", p.replace('\\', "\\\\").replace('"', "\\\"")));
+        lines.push(format!(
+            "prompt = \"{}\"",
+            p.replace('\\', "\\\\").replace('"', "\\\"")
+        ));
     }
     if let Some(ref rt) = def.runtime {
         lines.push(format!("runtime = \"{}\"", rt));
@@ -591,7 +633,10 @@ pub fn validator_to_toml_preview(def: &ValidatorDef) -> String {
         lines.push(format!("max_tokens = {max}"));
     }
     if let Some(ref sp) = def.system_prompt {
-        lines.push(format!("system_prompt = \"{}\"", sp.replace('\\', "\\\\").replace('"', "\\\"")));
+        lines.push(format!(
+            "system_prompt = \"{}\"",
+            sp.replace('\\', "\\\\").replace('"', "\\\"")
+        ));
     }
     if let Some(ref input) = def.input {
         lines.push(format!("input = \"{}\"", input));
@@ -792,9 +837,7 @@ pub fn apply_edits(
 
 /// Write the modified TOML to disk atomically.
 pub fn write_config(config_path: &Path, content: &str) -> Result<()> {
-    let dir = config_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."));
+    let dir = config_path.parent().unwrap_or_else(|| Path::new("."));
     let tmp_path = dir.join(".baton.toml.tmp");
 
     std::fs::write(&tmp_path, content)?;
@@ -1382,7 +1425,10 @@ validators = [
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("baton.toml");
         write_config(&path, "version = \"0.6\"\n").unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "version = \"0.6\"\n");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "version = \"0.6\"\n"
+        );
     }
 
     #[test]
@@ -1550,8 +1596,11 @@ system_prompt = "You are a reviewer"
     fn resolve_import_source_reads_local_file() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("import.toml");
-        std::fs::write(&path, "[validator]\nname = \"x\"\ntype = \"script\"\ncommand = \"echo\"\n")
-            .unwrap();
+        std::fs::write(
+            &path,
+            "[validator]\nname = \"x\"\ntype = \"script\"\ncommand = \"echo\"\n",
+        )
+        .unwrap();
 
         let content = resolve_import_source(path.to_str().unwrap()).unwrap();
         assert!(content.contains("[validator]"));

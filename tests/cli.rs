@@ -1994,13 +1994,24 @@ fn add_noninteractive_script_success() {
 
     let output = baton()
         .args([
-            "add", "--type", "script", "--name", "lint", "--command", "ruff check", "-y",
+            "add",
+            "--type",
+            "script",
+            "--name",
+            "lint",
+            "--command",
+            "ruff check",
+            "-y",
         ])
         .current_dir(dir.path())
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let config = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
     assert!(config.contains("[validators.lint]"));
     assert!(config.contains("ruff check"));
@@ -2015,14 +2026,30 @@ fn add_noninteractive_script_with_options() {
 
     let output = baton()
         .args([
-            "add", "--type", "script", "--name", "format", "--command", "ruff format --check",
-            "--input", "*.py", "--tags", "lint,format", "--timeout", "60", "-y",
+            "add",
+            "--type",
+            "script",
+            "--name",
+            "format",
+            "--command",
+            "ruff format --check",
+            "--input",
+            "*.py",
+            "--tags",
+            "lint,format",
+            "--timeout",
+            "60",
+            "-y",
         ])
         .current_dir(dir.path())
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let config = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
     assert!(config.contains("[validators.format]"));
     assert!(config.contains("ruff format --check"));
@@ -2036,8 +2063,16 @@ fn add_missing_config_exits_2() {
 
     let output = baton()
         .args([
-            "add", "--type", "script", "--name", "x", "--command", "echo", "-y",
-            "--config", dir.path().join("nonexistent.toml").to_str().unwrap(),
+            "add",
+            "--type",
+            "script",
+            "--name",
+            "x",
+            "--command",
+            "echo",
+            "-y",
+            "--config",
+            dir.path().join("nonexistent.toml").to_str().unwrap(),
         ])
         .current_dir(dir.path())
         .output()
@@ -2055,7 +2090,14 @@ fn add_duplicate_name_exits_1() {
 
     let output = baton()
         .args([
-            "add", "--type", "script", "--name", "existing", "--command", "echo dup", "-y",
+            "add",
+            "--type",
+            "script",
+            "--name",
+            "existing",
+            "--command",
+            "echo dup",
+            "-y",
         ])
         .current_dir(dir.path())
         .output()
@@ -2089,7 +2131,14 @@ fn add_llm_missing_prompt_exits_1() {
 
     let output = baton()
         .args([
-            "add", "--type", "llm", "--name", "bad", "--runtime", "default", "-y",
+            "add",
+            "--type",
+            "llm",
+            "--name",
+            "bad",
+            "--runtime",
+            "default",
+            "-y",
         ])
         .current_dir(dir.path())
         .output()
@@ -2140,9 +2189,7 @@ fn add_unknown_type_exits_1() {
     let dir = setup_project(&v06_base_config(), "hello");
 
     let output = baton()
-        .args([
-            "add", "--type", "foobar", "--name", "bad", "-y",
-        ])
+        .args(["add", "--type", "foobar", "--name", "bad", "-y"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -2159,15 +2206,26 @@ fn add_with_existing_gate() {
 
     let output = baton()
         .args([
-            "add", "--type", "script", "--name", "format",
-            "--command", "ruff format --check",
-            "--gate", "ci", "-y",
+            "add",
+            "--type",
+            "script",
+            "--name",
+            "format",
+            "--command",
+            "ruff format --check",
+            "--gate",
+            "ci",
+            "-y",
         ])
         .current_dir(dir.path())
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let config = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
     assert!(config.contains("[validators.format]"));
     // Gate should reference both existing and format
@@ -2181,15 +2239,26 @@ fn add_with_new_gate() {
 
     let output = baton()
         .args([
-            "add", "--type", "script", "--name", "security",
-            "--command", "echo security",
-            "--gate", "security-gate", "-y",
+            "add",
+            "--type",
+            "script",
+            "--name",
+            "security",
+            "--command",
+            "echo security",
+            "--gate",
+            "security-gate",
+            "-y",
         ])
         .current_dir(dir.path())
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let config = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
     assert!(config.contains("[validators.security]"));
     assert!(config.contains("[gates.security-gate]"));
@@ -2202,15 +2271,28 @@ fn add_with_gate_blocking_false() {
 
     let output = baton()
         .args([
-            "add", "--type", "script", "--name", "advisory",
-            "--command", "echo advisory",
-            "--gate", "ci", "--blocking", "false", "-y",
+            "add",
+            "--type",
+            "script",
+            "--name",
+            "advisory",
+            "--command",
+            "echo advisory",
+            "--gate",
+            "ci",
+            "--blocking",
+            "false",
+            "-y",
         ])
         .current_dir(dir.path())
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let config = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
     assert!(config.contains("[validators.advisory]"));
     assert!(config.contains("false"));
@@ -2223,14 +2305,24 @@ fn add_without_gate_top_level_only() {
 
     let output = baton()
         .args([
-            "add", "--type", "script", "--name", "standalone",
-            "--command", "echo standalone", "-y",
+            "add",
+            "--type",
+            "script",
+            "--name",
+            "standalone",
+            "--command",
+            "echo standalone",
+            "-y",
         ])
         .current_dir(dir.path())
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let config = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
     assert!(config.contains("[validators.standalone]"));
     // Gate section should only contain the original ref to "existing"
@@ -2252,14 +2344,16 @@ input = "*.py"
     fs::write(dir.path().join("import.toml"), import_content).unwrap();
 
     let output = baton()
-        .args([
-            "add", "--from", "import.toml", "-y",
-        ])
+        .args(["add", "--from", "import.toml", "-y"])
         .current_dir(dir.path())
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let config = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
     assert!(config.contains("[validators.imported-lint]"));
     assert!(config.contains("ruff check"));
@@ -2284,7 +2378,11 @@ command = "eslint ."
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let config = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
     assert!(config.contains("[validators.my-lint]"));
 }
@@ -2302,14 +2400,16 @@ command = "echo imported"
     fs::write(dir.path().join("import.toml"), import_content).unwrap();
 
     let output = baton()
-        .args([
-            "add", "--from", "import.toml", "--gate", "ci", "-y",
-        ])
+        .args(["add", "--from", "import.toml", "--gate", "ci", "-y"])
         .current_dir(dir.path())
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let config = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
     assert!(config.contains("[validators.imported-check]"));
     assert!(config.contains("imported-check"));
@@ -2321,9 +2421,7 @@ fn add_from_registry_exits_1() {
     let dir = setup_project(&v06_base_config(), "hello");
 
     let output = baton()
-        .args([
-            "add", "--from", "registry:community/lint", "-y",
-        ])
+        .args(["add", "--from", "registry:community/lint", "-y"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -2387,8 +2485,14 @@ fn add_dry_run_no_changes() {
 
     let output = baton()
         .args([
-            "add", "--type", "script", "--name", "lint",
-            "--command", "ruff check", "--dry-run",
+            "add",
+            "--type",
+            "script",
+            "--name",
+            "lint",
+            "--command",
+            "ruff check",
+            "--dry-run",
         ])
         .current_dir(dir.path())
         .output()
@@ -2410,8 +2514,16 @@ fn add_dry_run_with_gate_shows_preview() {
 
     let output = baton()
         .args([
-            "add", "--type", "script", "--name", "lint",
-            "--command", "ruff check", "--gate", "ci", "--dry-run",
+            "add",
+            "--type",
+            "script",
+            "--name",
+            "lint",
+            "--command",
+            "ruff check",
+            "--gate",
+            "ci",
+            "--dry-run",
         ])
         .current_dir(dir.path())
         .output()
@@ -2432,13 +2544,16 @@ fn add_no_tty_no_flags_exits_1() {
     let output = baton()
         .args(["add"])
         .current_dir(dir.path())
-        .write_stdin("")  // pipe empty stdin — not a TTY
+        .write_stdin("") // pipe empty stdin — not a TTY
         .output()
         .unwrap();
 
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Interactive mode requires a terminal") || stderr.contains("Interactive prompt failed"));
+    assert!(
+        stderr.contains("Interactive mode requires a terminal")
+            || stderr.contains("Interactive prompt failed")
+    );
 }
 
 /// SPEC-MN-AD-050: existing config structure preserved after add
@@ -2467,14 +2582,24 @@ validators = [
 
     let output = baton()
         .args([
-            "add", "--type", "script", "--name", "new-check",
-            "--command", "echo new", "-y",
+            "add",
+            "--type",
+            "script",
+            "--name",
+            "new-check",
+            "--command",
+            "echo new",
+            "-y",
         ])
         .current_dir(dir.path())
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let after = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
     // Comments preserved
     assert!(after.contains("# Project config"));
@@ -2494,8 +2619,14 @@ fn add_success_message_on_stderr() {
 
     let output = baton()
         .args([
-            "add", "--type", "script", "--name", "lint",
-            "--command", "echo lint", "-y",
+            "add",
+            "--type",
+            "script",
+            "--name",
+            "lint",
+            "--command",
+            "echo lint",
+            "-y",
         ])
         .current_dir(dir.path())
         .output()
@@ -2515,8 +2646,16 @@ fn add_result_passes_validate_config() {
     // Add a validator
     baton()
         .args([
-            "add", "--type", "script", "--name", "lint",
-            "--command", "echo lint", "--gate", "ci", "-y",
+            "add",
+            "--type",
+            "script",
+            "--name",
+            "lint",
+            "--command",
+            "echo lint",
+            "--gate",
+            "ci",
+            "-y",
         ])
         .current_dir(dir.path())
         .assert()
@@ -2538,8 +2677,14 @@ fn add_multiple_sequential() {
     // First add
     baton()
         .args([
-            "add", "--type", "script", "--name", "lint",
-            "--command", "echo lint", "-y",
+            "add",
+            "--type",
+            "script",
+            "--name",
+            "lint",
+            "--command",
+            "echo lint",
+            "-y",
         ])
         .current_dir(dir.path())
         .assert()
@@ -2548,8 +2693,14 @@ fn add_multiple_sequential() {
     // Second add
     baton()
         .args([
-            "add", "--type", "script", "--name", "format",
-            "--command", "echo format", "-y",
+            "add",
+            "--type",
+            "script",
+            "--name",
+            "format",
+            "--command",
+            "echo format",
+            "-y",
         ])
         .current_dir(dir.path())
         .assert()
@@ -2583,7 +2734,11 @@ command = "ruff format --check"
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let config = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
     assert!(config.contains("[validators.lint]"));
     assert!(config.contains("[validators.format]"));
@@ -2597,14 +2752,24 @@ fn add_noninteractive_human() {
 
     let output = baton()
         .args([
-            "add", "--type", "human", "--name", "manual-review",
-            "--prompt", "Please review this PR", "-y",
+            "add",
+            "--type",
+            "human",
+            "--name",
+            "manual-review",
+            "--prompt",
+            "Please review this PR",
+            "-y",
         ])
         .current_dir(dir.path())
         .output()
         .unwrap();
 
-    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let config = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
     assert!(config.contains("[validators.manual-review]"));
     assert!(config.contains("human"));
