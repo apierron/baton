@@ -280,6 +280,7 @@ Respond with PASS if the code meets the specification, or FAIL with an explanati
 ```
 
 Available placeholders:
+
 - Per-file: `{file}` (content), `{file.path}`, `{file.dir}`, `{file.name}`, `{file.stem}`, `{file.ext}`, `{file.content}` (alias for `{file}`)
 - Batch: `{input}`, `{input.paths}`
 - Named: `{input.<name>}`, `{input.<name>.path}`, `{input.<name>.name}`, `{input.<name>.content}`

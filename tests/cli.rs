@@ -1,76 +1,9 @@
-use assert_cmd::Command;
+mod common;
+use common::*;
+
 use predicates::prelude::*;
 use std::fs;
 use tempfile::TempDir;
-
-// ─── Helpers ──────────────────────────────────────────────
-
-fn baton() -> Command {
-    Command::cargo_bin("baton").unwrap()
-}
-
-/// Creates a temp dir with a baton.toml and artifact file, returning the TempDir handle.
-fn setup_project(toml: &str, artifact_content: &str) -> TempDir {
-    let dir = TempDir::new().unwrap();
-    fs::write(dir.path().join("baton.toml"), toml).unwrap();
-    fs::write(dir.path().join("artifact.txt"), artifact_content).unwrap();
-    fs::create_dir_all(dir.path().join(".baton/tmp")).unwrap();
-    fs::create_dir_all(dir.path().join(".baton/logs")).unwrap();
-    dir
-}
-
-fn minimal_toml(gate: &str, validators: &str) -> String {
-    format!(
-        r#"version = "0.4"
-
-[defaults]
-timeout_seconds = 30
-blocking = true
-prompts_dir = "./prompts"
-log_dir = "./.baton/logs"
-history_db = "./.baton/history.db"
-tmp_dir = "./.baton/tmp"
-
-[gates.{gate}]
-{validators}
-"#
-    )
-}
-
-fn script_validator(name: &str, command: &str) -> String {
-    format!(
-        r#"[[gates.review.validators]]
-name = "{name}"
-type = "script"
-command = "{command}"
-"#
-    )
-}
-
-fn script_validator_for(gate: &str, name: &str, command: &str) -> String {
-    format!(
-        r#"[[gates.{gate}.validators]]
-name = "{name}"
-type = "script"
-command = "{command}"
-"#
-    )
-}
-
-fn script_validator_blocking(name: &str, command: &str, blocking: bool) -> String {
-    format!(
-        r#"[[gates.review.validators]]
-name = "{name}"
-type = "script"
-command = "{command}"
-blocking = {blocking}
-"#
-    )
-}
-
-fn parse_verdict(stdout: &str) -> serde_json::Value {
-    serde_json::from_str(stdout).expect("Failed to parse JSON verdict")
-}
 
 // ─── Pass / Fail ──────────────────────────────────────────
 
