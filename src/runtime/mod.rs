@@ -1,8 +1,9 @@
 //! Runtime adapter abstraction for agent-based validators.
 //!
 //! Defines the [`RuntimeAdapter`] trait and session lifecycle types.
-//! Currently supports OpenHands as the sole runtime backend.
+//! Supports OpenHands and OpenCode as runtime backends.
 
+pub mod opencode;
 pub mod openhands;
 
 use std::collections::BTreeMap;
@@ -100,8 +101,19 @@ pub fn create_adapter(
             )?;
             Ok(Box::new(adapter))
         }
+        "opencode" => {
+            let adapter = opencode::OpenCodeAdapter::new(
+                runtime_config.base_url.clone(),
+                runtime_config.api_key_env.as_deref(),
+                runtime_config.default_model.clone(),
+                runtime_config.sandbox,
+                runtime_config.timeout_seconds,
+                runtime_config.max_iterations,
+            )?;
+            Ok(Box::new(adapter))
+        }
         other => Err(BatonError::ConfigError(format!(
-            "Unknown runtime type '{other}' for runtime '{runtime_name}'. Only 'openhands' is currently supported."
+            "Unknown runtime type '{other}' for runtime '{runtime_name}'. Supported: openhands, opencode."
         ))),
     }
 }
@@ -208,6 +220,36 @@ mod tests {
             sandbox: true,
             timeout_seconds: 600,
             max_iterations: 30,
+        };
+        let result = create_adapter("test", &config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn create_opencode_adapter_no_auth() {
+        let config = crate::config::Runtime {
+            runtime_type: "opencode".into(),
+            base_url: "http://localhost:3000".into(),
+            api_key_env: None,
+            default_model: Some("test-model".into()),
+            sandbox: true,
+            timeout_seconds: 600,
+            max_iterations: 30,
+        };
+        let result = create_adapter("test", &config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn create_opencode_adapter_empty_auth() {
+        let config = crate::config::Runtime {
+            runtime_type: "opencode".into(),
+            base_url: "http://localhost:3000/".into(),
+            api_key_env: Some("".into()),
+            default_model: None,
+            sandbox: false,
+            timeout_seconds: 300,
+            max_iterations: 10,
         };
         let result = create_adapter("test", &config);
         assert!(result.is_ok());
