@@ -1795,3 +1795,191 @@ command = "echo PASS"
         "Should mention the missing runtime: {stderr}"
     );
 }
+
+// ─── File input: positional args ─────────────────────────
+
+#[test]
+fn check_with_positional_file() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project_with_files(&toml, &[("src/main.rs", "fn main() {}")]);
+
+    let output = baton()
+        .args(["check", "--no-log", "src/main.rs"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Should pass with positional file arg"
+    );
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    assert_eq!(verdict["status"], "pass");
+}
+
+#[test]
+fn check_with_multiple_positional_files() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project_with_files(&toml, &[("a.txt", "aaa"), ("b.txt", "bbb")]);
+
+    let output = baton()
+        .args(["check", "--no-log", "a.txt", "b.txt"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Should pass with multiple files");
+}
+
+#[test]
+fn check_positional_dir_walks_recursively() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project_with_files(
+        &toml,
+        &[("src/a.rs", "code"), ("src/sub/b.rs", "more code")],
+    );
+
+    let output = baton()
+        .args(["check", "--no-log", "src"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Should walk directory recursively");
+}
+
+#[test]
+fn check_nonexistent_positional_file_exits_2() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log", "does-not-exist.txt"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "Should exit 2 for missing file"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not found"),
+        "Should report file not found: {stderr}"
+    );
+}
+
+// ─── File input: --files flag ────────────────────────────
+
+#[test]
+fn check_files_flag_reads_from_file() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project_with_files(
+        &toml,
+        &[
+            ("a.txt", "aaa"),
+            ("b.txt", "bbb"),
+            ("file_list.txt", "a.txt\nb.txt\n"),
+        ],
+    );
+
+    let output = baton()
+        .args(["check", "--no-log", "--files", "file_list.txt"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "Should pass reading file list");
+}
+
+#[test]
+fn check_files_flag_missing_list_exits_2() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log", "--files", "no-such-list.txt"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "Should exit 2 for missing file list"
+    );
+}
+
+// ─── Selector: --only ────────────────────────────────────
+
+#[test]
+fn only_filters_to_named_validators() {
+    let validators = format!(
+        "{}{}",
+        script_validator_blocking_for("review", "lint", "echo PASS", true),
+        script_validator_blocking_for("review", "format", "echo FAIL; exit 1", true),
+    );
+    let toml = minimal_toml("review", &validators);
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log", "--only", "lint"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Should pass when only running passing validator"
+    );
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    assert_eq!(verdict["status"], "pass");
+}
+
+// ─── Selector: --skip ────────────────────────────────────
+
+#[test]
+fn skip_excludes_named_validators() {
+    let validators = format!(
+        "{}{}",
+        script_validator_blocking_for("review", "lint", "echo PASS", true),
+        script_validator_blocking_for("review", "format", "echo FAIL; exit 1", true),
+    );
+    let toml = minimal_toml("review", &validators);
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log", "--skip", "format"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Should pass when skipping failing validator"
+    );
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    assert_eq!(verdict["status"], "pass");
+}
+
+// ─── Suppress flags ──────────────────────────────────────
+
+#[test]
+fn suppress_errors_treats_error_as_pass() {
+    // An empty command produces Status::Error
+    let toml = minimal_toml("review", &script_validator("lint", "  "));
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log", "--suppress-errors"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Should pass when suppressing errors"
+    );
+}

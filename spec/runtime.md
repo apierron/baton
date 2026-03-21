@@ -116,7 +116,7 @@ SPEC-RT-CA-005: opencode-new-error-propagated
 
 SPEC-RT-CA-006: api-type-creates-api-adapter
   When `runtime_config.runtime_type` is `"api"`, `create_adapter` constructs an `ApiAdapter`. Returns `Ok(Box<dyn RuntimeAdapter>)`.
-  test: UNTESTED
+  test: runtime::api::tests::create_api_adapter_no_auth
 
 ---
 
@@ -668,34 +668,51 @@ API runtime adapter that wraps `ProviderClient` for OpenAI-compatible LLM APIs. 
 
 SPEC-RT-API-001: constructs-from-runtime-config
   Creates an `ApiAdapter` from base_url, api_key_env, default_model, and timeout_seconds. Resolves API key from environment. Strips trailing slash from base_url.
-  test: UNTESTED
+  test: runtime::api::tests::create_api_adapter_no_auth
+  test: runtime::api::tests::create_adapter_stores_default_model
+  test: runtime::api::tests::create_adapter_no_default_model
 
 SPEC-RT-API-002: api-key-resolved-from-env
   When `api_key_env` is `Some(name)` and non-empty, reads the env var. If not set, returns error.
-  test: UNTESTED
+  test: runtime::api::tests::new_with_missing_env_var_returns_error
 
 SPEC-RT-API-003: no-api-key-env-means-no-auth
   When `api_key_env` is `None` or empty, no API key is set.
-  test: UNTESTED
+  test: runtime::api::tests::new_with_empty_api_key_env_succeeds
+  test: runtime::api::tests::new_with_none_api_key_env_succeeds
 
 ### ApiAdapter::health_check
 
 SPEC-RT-API-010: health-check-via-models-endpoint
   Sends `GET {base_url}/v1/models`. On success, returns `reachable=true` with model list. On HTTP error, returns `reachable=false`. On connection error, returns `Err`.
-  test: UNTESTED
+  test: runtime::api::tests::health_check_success_returns_models
+  test: runtime::api::tests::health_check_unreachable
+  test: runtime::api::tests::health_check_auth_failed_still_reachable
+  test: runtime::api::tests::health_check_other_error_still_reachable
 
 ### ApiAdapter::post_completion
 
 SPEC-RT-API-020: posts-to-chat-completions
   Sends `POST {base_url}/v1/chat/completions` with messages, model, temperature, max_tokens. Parses `choices[0].message.content` and usage for cost.
-  test: UNTESTED
+  test: runtime::api::tests::post_completion_success
+  test: runtime::api::tests::post_completion_includes_max_tokens_when_set
+  test: runtime::api::tests::post_completion_without_max_tokens_omits_field
+  test: runtime::api::tests::post_completion_no_cost_when_no_usage
 
 SPEC-RT-API-021: delegates-to-provider-client
   Uses `ProviderClient` internally for HTTP construction, response parsing, and error classification.
-  test: UNTESTED
+  test: runtime::api::tests::post_completion_empty_content_returns_error
+  test: runtime::api::tests::post_completion_http_error_returns_error
+  test: runtime::api::tests::post_completion_model_not_found
+  test: runtime::api::tests::post_completion_auth_failure
+  test: runtime::api::tests::post_completion_rate_limited
 
 ### ApiAdapter session methods
 
 SPEC-RT-API-030: session-methods-return-error
   `create_session`, `poll_status`, `collect_result`, `cancel`, and `teardown` all return `Err(RuntimeError("API runtime does not support sessions"))`.
-  test: UNTESTED
+  test: runtime::api::tests::create_session_returns_error
+  test: runtime::api::tests::poll_status_returns_error
+  test: runtime::api::tests::collect_result_returns_error
+  test: runtime::api::tests::cancel_returns_error
+  test: runtime::api::tests::teardown_returns_error

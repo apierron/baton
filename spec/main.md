@@ -87,7 +87,7 @@ SPEC-MN-MN-002: exit-code-passthrough
 
 SPEC-MN-MN-003: version-from-cargo-pkg
   The clap `#[command]` attribute uses `env!("CARGO_PKG_VERSION")` as the version string. This is the single source of truth defined in Cargo.toml.
-  test: cli::version_flag_outputs_version
+  test: cli::version_outputs_crate_version
 
 ---
 
@@ -171,7 +171,7 @@ SPEC-MN-CK-064: tags-flag-removed
 
 SPEC-MN-CK-070: suppress-warnings-adds-warn-to-suppressed
   `--suppress-warnings` adds `Status::Warn` to `RunOptions.suppressed_statuses`.
-  test: cli::suppress_warnings_flag
+  test: cli::suppress_warnings_treats_warn_as_pass
 
 SPEC-MN-CK-071: suppress-errors-adds-error-to-suppressed
   `--suppress-errors` adds `Status::Error` to `RunOptions.suppressed_statuses`.
@@ -207,11 +207,11 @@ SPEC-MN-CK-090: format-json-to-stdout
 
 SPEC-MN-CK-091: format-human-to-stderr
   `--format human` prints `verdict.to_human()` to stderr.
-  test: cli::human_format_output
+  test: cli::format_human_on_stderr
 
 SPEC-MN-CK-092: format-summary-to-stderr
   `--format summary` prints `verdict.to_summary()` to stderr.
-  test: cli::summary_format_output
+  test: cli::format_summary_on_stderr
 
 SPEC-MN-CK-093: unknown-format-falls-back-to-json
   An unrecognized `--format` value prints "Unknown format: {other}. Using json." to stderr and outputs JSON to stdout.
@@ -221,8 +221,8 @@ SPEC-MN-CK-093: unknown-format-falls-back-to-json
 
 SPEC-MN-CK-100: exit-code-from-verdict-status
   The exit code is `verdict.status.exit_code()`: 0 for pass, 1 for fail, 2 for error.
-  test: cli::pass_exits_zero
-  test: cli::fail_exits_one
+  test: cli::check_pass
+  test: cli::check_fail_exit_code_1
 
 ### Stdin cleanup
 
@@ -238,7 +238,7 @@ Scaffolds a new baton project: creates `baton.toml`, `.baton/` directory structu
 
 SPEC-MN-IN-001: existing-baton-toml-exits-1
   If `baton.toml` already exists in the current directory, prints "Error: baton.toml already exists. Will not overwrite." and returns exit code 1.
-  test: cli::init_refuses_overwrite
+  test: cli::init_when_baton_toml_already_exists_returns_error
 
 SPEC-MN-IN-002: creates-baton-dir-structure
   Creates `.baton/logs/` and `.baton/tmp/` directories via `create_dir_all`. If `.baton/` already exists, prints a warning and creates only missing subdirectories.
@@ -249,7 +249,7 @@ SPEC-MN-IN-003: writes-starter-baton-toml
   test: cli::init_creates_valid_parseable_config
 
 SPEC-MN-IN-004: creates-prompt-templates
-  Unless `--minimal` is set, creates a `prompts/` directory with three starter templates: `spec-compliance.md`, `adversarial-review.md`, `doc-completeness.md`. Templates are loaded via `include_str!` from the `templates/` directory at compile time.
+  Unless `--minimal` is set, creates a `prompts/` directory with three starter templates: `spec-compliance.md`, `adversarial-review.md`, `doc-completeness.md`. Templates are loaded via `include_str!` from the `prompts/` directory at compile time.
   test: UNTESTED (init tests check config validity but not prompt file creation)
 
 SPEC-MN-IN-005: minimal-skips-prompts
@@ -278,11 +278,11 @@ Lists available gates, or shows validators for a specific gate.
 
 SPEC-MN-LS-001: lists-all-gates
   Without `--gate`, prints "Available gates:" followed by one line per gate: name, description (or "(no description)"), and validator count. Output goes to stdout.
-  test: cli::list_shows_gates
+  test: cli::list_all_gates
 
 SPEC-MN-LS-002: gates-in-btreemap-order
   Gates are listed in the order they appear in `config.gates`, which is a BTreeMap (alphabetical by key).
-  test: IMPLICIT via cli::list_shows_gates
+  test: IMPLICIT via cli::list_all_gates
 
 ### Validator detail (with --gate)
 
@@ -296,7 +296,7 @@ SPEC-MN-LS-011: shows-gate-name-and-description
 
 SPEC-MN-LS-012: shows-validator-details
   `cmd_list` now shows top-level validators from the `[validators]` section. The `--gate` flag shows which validators a gate references and with what `blocking`/`run_if` settings.
-  test: cli::list_shows_validators
+  test: cli::list_validators_for_specific_gate
 
 ### Config error
 
@@ -517,7 +517,7 @@ Prints baton version, spec version, and config file location.
 
 SPEC-MN-VR-001: prints-version-from-cargo
   First line is "baton {version}" where version comes from `env!("CARGO_PKG_VERSION")`.
-  test: cli::version_flag_outputs_version
+  test: cli::version_outputs_crate_version
 
 SPEC-MN-VR-002: prints-spec-version
   Second line is "spec version: 0.5" (hardcoded).
@@ -533,7 +533,7 @@ SPEC-MN-VR-004: config-not-found
 
 SPEC-MN-VR-005: always-exits-0
   cmd_version always returns exit code 0, regardless of config discovery result.
-  test: cli::version_flag_outputs_version
+  test: cli::version_outputs_crate_version
 
 ---
 

@@ -648,15 +648,15 @@ validators = [
         let templates = [
             (
                 "spec-compliance.md",
-                include_str!("../templates/spec-compliance.md"),
+                include_str!("../prompts/spec-compliance.md"),
             ),
             (
                 "adversarial-review.md",
-                include_str!("../templates/adversarial-review.md"),
+                include_str!("../prompts/adversarial-review.md"),
             ),
             (
                 "doc-completeness.md",
-                include_str!("../templates/doc-completeness.md"),
+                include_str!("../prompts/doc-completeness.md"),
             ),
         ];
 
@@ -762,7 +762,8 @@ fn cmd_history(
         }
     };
 
-    // TODO: wire up --file, --hash, --invocation to new query functions
+    // v2: --file, --hash, --invocation filters depend on query_by_file,
+    // query_by_hash, query_invocation (not yet implemented in history module)
     let results = match history::query_recent(&conn, limit, gate, status) {
         Ok(r) => r,
         Err(e) => {

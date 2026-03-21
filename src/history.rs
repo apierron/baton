@@ -549,6 +549,167 @@ mod tests {
         );
     }
 
+    // ─── store_verdict ─────────────────────────────────
+
+    #[test]
+    fn store_verdict_returns_uuid() {
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+        let id = store_verdict(&conn, &th::verdict(VerdictStatus::Pass)).unwrap();
+        assert!(!id.is_empty());
+        // UUID v4 format: 8-4-4-4-12 hex digits
+        assert_eq!(id.len(), 36);
+        assert_eq!(id.chars().filter(|c| *c == '-').count(), 4);
+    }
+
+    #[test]
+    fn store_verdict_stores_all_fields() {
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+        let verdict = th::verdict(VerdictStatus::Fail);
+        store_verdict(&conn, &verdict).unwrap();
+
+        let results = query_recent(&conn, 10, None, None).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].gate, "test-gate");
+        assert_eq!(results[0].status, "fail");
+        assert_eq!(results[0].failed_at, Some("lint".into()));
+        assert_eq!(results[0].feedback, Some("something failed".into()));
+        assert_eq!(results[0].duration_ms, 100);
+    }
+
+    #[test]
+    fn store_verdict_also_inserts_validator_results() {
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+        let verdict_id = store_verdict(&conn, &th::verdict(VerdictStatus::Pass)).unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM validator_results WHERE verdict_id = ?1",
+                params![verdict_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn store_verdict_persists_cost_metadata() {
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+        let verdict_id = store_verdict(&conn, &th::verdict(VerdictStatus::Pass)).unwrap();
+
+        let (input_tokens, output_tokens, model, estimated_usd): (
+            Option<i64>,
+            Option<i64>,
+            Option<String>,
+            Option<f64>,
+        ) = conn
+            .query_row(
+                "SELECT input_tokens, output_tokens, model, estimated_usd FROM validator_results WHERE verdict_id = ?1",
+                params![verdict_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+
+        assert_eq!(input_tokens, Some(100));
+        assert_eq!(output_tokens, Some(50));
+        assert_eq!(model, Some("test-model".into()));
+        assert!((estimated_usd.unwrap() - 0.001).abs() < 0.0001);
+    }
+
+    #[test]
+    fn store_multiple_verdicts_generates_unique_ids() {
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+        let id1 = store_verdict(&conn, &th::verdict(VerdictStatus::Pass)).unwrap();
+        let id2 = store_verdict(&conn, &th::verdict(VerdictStatus::Fail)).unwrap();
+        assert_ne!(id1, id2);
+    }
+
+    // ─── query_recent ────────────────────────────────────
+
+    #[test]
+    fn query_recent_empty_db() {
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+        let results = query_recent(&conn, 10, None, None).unwrap();
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn query_recent_respects_limit() {
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+        for _ in 0..5 {
+            store_verdict(&conn, &th::verdict(VerdictStatus::Pass)).unwrap();
+        }
+        let results = query_recent(&conn, 3, None, None).unwrap();
+        assert_eq!(results.len(), 3);
+    }
+
+    #[test]
+    fn query_recent_filters_by_gate() {
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+
+        // test-gate is the default from th::verdict
+        store_verdict(&conn, &th::verdict(VerdictStatus::Pass)).unwrap();
+        let mut other = th::verdict(VerdictStatus::Pass);
+        other.gate = "other-gate".into();
+        store_verdict(&conn, &other).unwrap();
+
+        let results = query_recent(&conn, 10, Some("test-gate"), None).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].gate, "test-gate");
+    }
+
+    #[test]
+    fn query_recent_filters_by_status() {
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+
+        store_verdict(&conn, &th::verdict(VerdictStatus::Pass)).unwrap();
+        store_verdict(&conn, &th::verdict(VerdictStatus::Fail)).unwrap();
+
+        let results = query_recent(&conn, 10, None, Some("pass")).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].status, "pass");
+    }
+
+    #[test]
+    fn query_recent_filters_by_gate_and_status() {
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+
+        store_verdict(&conn, &th::verdict(VerdictStatus::Pass)).unwrap();
+        store_verdict(&conn, &th::verdict(VerdictStatus::Fail)).unwrap();
+        let mut other = th::verdict(VerdictStatus::Pass);
+        other.gate = "other-gate".into();
+        store_verdict(&conn, &other).unwrap();
+
+        let results = query_recent(&conn, 10, Some("test-gate"), Some("pass")).unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn query_recent_orders_by_timestamp_desc() {
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+
+        for _ in 0..3 {
+            store_verdict(&conn, &th::verdict(VerdictStatus::Pass)).unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        let results = query_recent(&conn, 10, None, None).unwrap();
+        assert_eq!(results.len(), 3);
+        // First result should be the most recent
+        assert!(results[0].timestamp >= results[1].timestamp);
+        assert!(results[1].timestamp >= results[2].timestamp);
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // v2 migration: store_invocation tests (SPEC-HI-SI-*)
     // These test the new store_invocation function that replaces
