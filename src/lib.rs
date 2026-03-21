@@ -17,6 +17,7 @@
 //! - [`runtime`] — Runtime adapter abstraction for agent-based validators
 //! - [`error`] — Error types
 
+pub mod add;
 pub mod config;
 pub mod error;
 pub mod exec;

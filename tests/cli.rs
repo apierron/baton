@@ -1983,3 +1983,630 @@ fn suppress_errors_treats_error_as_pass() {
         "Should pass when suppressing errors"
     );
 }
+
+// ─── baton add ──────────────────────────────────────────────
+
+/// SPEC-MN-AD-002, SPEC-MN-AD-053, SPEC-MN-AD-060:
+/// Non-interactive script add succeeds and writes validator to baton.toml.
+#[test]
+fn add_noninteractive_script_success() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    let output = baton()
+        .args([
+            "add", "--type", "script", "--name", "lint", "--command", "ruff check", "-y",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let config = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
+    assert!(config.contains("[validators.lint]"));
+    assert!(config.contains("ruff check"));
+    // Existing validator preserved
+    assert!(config.contains("[validators.existing]"));
+}
+
+/// SPEC-MN-AD-002: non-interactive with all optional fields
+#[test]
+fn add_noninteractive_script_with_options() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    let output = baton()
+        .args([
+            "add", "--type", "script", "--name", "format", "--command", "ruff format --check",
+            "--input", "*.py", "--tags", "lint,format", "--timeout", "60", "-y",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let config = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
+    assert!(config.contains("[validators.format]"));
+    assert!(config.contains("ruff format --check"));
+    assert!(config.contains("*.py"));
+}
+
+/// SPEC-MN-AD-010, SPEC-MN-AD-063: no baton.toml → exit 2
+#[test]
+fn add_missing_config_exits_2() {
+    let dir = TempDir::new().unwrap();
+
+    let output = baton()
+        .args([
+            "add", "--type", "script", "--name", "x", "--command", "echo", "-y",
+            "--config", dir.path().join("nonexistent.toml").to_str().unwrap(),
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("No baton.toml found") || stderr.contains("not found"));
+}
+
+/// SPEC-MN-AD-011, SPEC-MN-AD-062: duplicate validator name → exit 1
+#[test]
+fn add_duplicate_name_exits_1() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    let output = baton()
+        .args([
+            "add", "--type", "script", "--name", "existing", "--command", "echo dup", "-y",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("already exists"));
+}
+
+/// SPEC-MN-AD-020, SPEC-MN-AD-062: script missing --command → exit 1
+#[test]
+fn add_script_missing_command_exits_1() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    let output = baton()
+        .args(["add", "--type", "script", "--name", "bad", "-y"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--command"));
+}
+
+/// SPEC-MN-AD-021, SPEC-MN-AD-062: llm missing --prompt → exit 1
+#[test]
+fn add_llm_missing_prompt_exits_1() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    let output = baton()
+        .args([
+            "add", "--type", "llm", "--name", "bad", "--runtime", "default", "-y",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--prompt"));
+}
+
+/// SPEC-MN-AD-021: llm missing --runtime → exit 1
+#[test]
+fn add_llm_missing_runtime_exits_1() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    let output = baton()
+        .args([
+            "add", "--type", "llm", "--name", "bad", "--prompt", "Review", "-y",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--runtime"));
+}
+
+/// SPEC-MN-AD-022, SPEC-MN-AD-062: human missing --prompt → exit 1
+#[test]
+fn add_human_missing_prompt_exits_1() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    let output = baton()
+        .args(["add", "--type", "human", "--name", "bad", "-y"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("--prompt"));
+}
+
+/// SPEC-MN-AD-023, SPEC-MN-AD-062: unknown type → exit 1
+#[test]
+fn add_unknown_type_exits_1() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    let output = baton()
+        .args([
+            "add", "--type", "foobar", "--name", "bad", "-y",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Unknown validator type"));
+}
+
+/// SPEC-MN-AD-030: --gate adds ref to existing gate
+#[test]
+fn add_with_existing_gate() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    let output = baton()
+        .args([
+            "add", "--type", "script", "--name", "format",
+            "--command", "ruff format --check",
+            "--gate", "ci", "-y",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let config = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
+    assert!(config.contains("[validators.format]"));
+    // Gate should reference both existing and format
+    assert!(config.contains("format"));
+}
+
+/// SPEC-MN-AD-031: --gate creates new gate if it doesn't exist
+#[test]
+fn add_with_new_gate() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    let output = baton()
+        .args([
+            "add", "--type", "script", "--name", "security",
+            "--command", "echo security",
+            "--gate", "security-gate", "-y",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let config = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
+    assert!(config.contains("[validators.security]"));
+    assert!(config.contains("[gates.security-gate]"));
+}
+
+/// SPEC-MN-AD-030: --blocking false propagates to gate ref
+#[test]
+fn add_with_gate_blocking_false() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    let output = baton()
+        .args([
+            "add", "--type", "script", "--name", "advisory",
+            "--command", "echo advisory",
+            "--gate", "ci", "--blocking", "false", "-y",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let config = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
+    assert!(config.contains("[validators.advisory]"));
+    assert!(config.contains("false"));
+}
+
+/// SPEC-MN-AD-032: no --gate → validator added top-level only, no gate ref
+#[test]
+fn add_without_gate_top_level_only() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    let output = baton()
+        .args([
+            "add", "--type", "script", "--name", "standalone",
+            "--command", "echo standalone", "-y",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let config = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
+    assert!(config.contains("[validators.standalone]"));
+    // Gate section should only contain the original ref to "existing"
+    // "standalone" should not appear in any gate validators array
+}
+
+/// SPEC-MN-AD-001, SPEC-MN-AD-040: --from imports from local file
+#[test]
+fn add_from_file() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    // Write an import file
+    let import_content = r#"
+[validators.imported-lint]
+type = "script"
+command = "ruff check {file.path}"
+input = "*.py"
+"#;
+    fs::write(dir.path().join("import.toml"), import_content).unwrap();
+
+    let output = baton()
+        .args([
+            "add", "--from", "import.toml", "-y",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let config = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
+    assert!(config.contains("[validators.imported-lint]"));
+    assert!(config.contains("ruff check"));
+}
+
+/// SPEC-MN-AD-001: --from with single-validator format
+#[test]
+fn add_from_file_single_format() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    let import_content = r#"
+[validator]
+name = "my-lint"
+type = "script"
+command = "eslint ."
+"#;
+    fs::write(dir.path().join("import.toml"), import_content).unwrap();
+
+    let output = baton()
+        .args(["add", "--from", "import.toml", "-y"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let config = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
+    assert!(config.contains("[validators.my-lint]"));
+}
+
+/// SPEC-MN-AD-001: --from with --gate assigns imported validators
+#[test]
+fn add_from_file_with_gate() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    let import_content = r#"
+[validators.imported-check]
+type = "script"
+command = "echo imported"
+"#;
+    fs::write(dir.path().join("import.toml"), import_content).unwrap();
+
+    let output = baton()
+        .args([
+            "add", "--from", "import.toml", "--gate", "ci", "-y",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let config = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
+    assert!(config.contains("[validators.imported-check]"));
+    assert!(config.contains("imported-check"));
+}
+
+/// SPEC-MN-AD-042: --from registry:* → exit 1
+#[test]
+fn add_from_registry_exits_1() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    let output = baton()
+        .args([
+            "add", "--from", "registry:community/lint", "-y",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("not yet supported"));
+}
+
+/// SPEC-MN-AD-043: import collision → exit 1, no changes
+#[test]
+fn add_from_file_collision_exits_1() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    let import_content = r#"
+[validators.existing]
+type = "script"
+command = "echo collision"
+"#;
+    fs::write(dir.path().join("import.toml"), import_content).unwrap();
+
+    // Save original config
+    let original = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
+
+    let output = baton()
+        .args(["add", "--from", "import.toml", "-y"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("already exists"));
+    // Config should be unchanged
+    let after = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
+    assert_eq!(original, after);
+}
+
+/// SPEC-MN-AD-040: --from nonexistent file → exit 1
+#[test]
+fn add_from_missing_file_exits_1() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    let output = baton()
+        .args(["add", "--from", "nonexistent.toml", "-y"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("not found"));
+}
+
+/// SPEC-MN-AD-052: --dry-run prints preview, does not modify file
+#[test]
+fn add_dry_run_no_changes() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    let original = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
+
+    let output = baton()
+        .args([
+            "add", "--type", "script", "--name", "lint",
+            "--command", "ruff check", "--dry-run",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Dry run"));
+    assert!(stderr.contains("[validators.lint]"));
+    // File should not be modified
+    let after = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
+    assert_eq!(original, after);
+}
+
+/// SPEC-MN-AD-052: --dry-run with --gate shows gate info
+#[test]
+fn add_dry_run_with_gate_shows_preview() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    let output = baton()
+        .args([
+            "add", "--type", "script", "--name", "lint",
+            "--command", "ruff check", "--gate", "ci", "--dry-run",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Gate 'ci'"));
+    assert!(stderr.contains("lint"));
+}
+
+/// SPEC-MN-AD-004: no TTY + no flags → exit 1
+/// (piped stdin is not a TTY, so interactive mode should fail)
+#[test]
+fn add_no_tty_no_flags_exits_1() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    let output = baton()
+        .args(["add"])
+        .current_dir(dir.path())
+        .write_stdin("")  // pipe empty stdin — not a TTY
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Interactive mode requires a terminal") || stderr.contains("Interactive prompt failed"));
+}
+
+/// SPEC-MN-AD-050: existing config structure preserved after add
+#[test]
+fn add_preserves_existing_config_structure() {
+    let config = r#"# Project config
+version = "0.6"
+
+[defaults]
+timeout_seconds = 300
+blocking = true
+
+# CI validators
+[validators.existing]
+type = "script"
+command = "echo existing"
+
+# Gates section
+[gates.ci]
+description = "CI gate"
+validators = [
+    { ref = "existing", blocking = true },
+]
+"#;
+    let dir = setup_project(config, "hello");
+
+    let output = baton()
+        .args([
+            "add", "--type", "script", "--name", "new-check",
+            "--command", "echo new", "-y",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let after = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
+    // Comments preserved
+    assert!(after.contains("# Project config"));
+    assert!(after.contains("# CI validators"));
+    assert!(after.contains("# Gates section"));
+    // Original content preserved
+    assert!(after.contains("[validators.existing]"));
+    assert!(after.contains("echo existing"));
+    // New validator added
+    assert!(after.contains("[validators.new-check]"));
+}
+
+/// SPEC-MN-AD-060: success message on stderr
+#[test]
+fn add_success_message_on_stderr() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    let output = baton()
+        .args([
+            "add", "--type", "script", "--name", "lint",
+            "--command", "echo lint", "-y",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Added validator"));
+    assert!(stderr.contains("lint"));
+}
+
+/// SPEC-MN-AD-051: modified config passes validate-config
+#[test]
+fn add_result_passes_validate_config() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    // Add a validator
+    baton()
+        .args([
+            "add", "--type", "script", "--name", "lint",
+            "--command", "echo lint", "--gate", "ci", "-y",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Run validate-config on the result
+    baton()
+        .args(["validate-config"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+}
+
+/// Multiple sequential adds work correctly
+#[test]
+fn add_multiple_sequential() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    // First add
+    baton()
+        .args([
+            "add", "--type", "script", "--name", "lint",
+            "--command", "echo lint", "-y",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Second add
+    baton()
+        .args([
+            "add", "--type", "script", "--name", "format",
+            "--command", "echo format", "-y",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    let config = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
+    assert!(config.contains("[validators.existing]"));
+    assert!(config.contains("[validators.lint]"));
+    assert!(config.contains("[validators.format]"));
+}
+
+/// Import multiple validators at once from a file
+#[test]
+fn add_from_file_multiple_validators() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    let import_content = r#"
+[validators.lint]
+type = "script"
+command = "ruff check"
+
+[validators.format]
+type = "script"
+command = "ruff format --check"
+"#;
+    fs::write(dir.path().join("import.toml"), import_content).unwrap();
+
+    let output = baton()
+        .args(["add", "--from", "import.toml", "-y"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let config = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
+    assert!(config.contains("[validators.lint]"));
+    assert!(config.contains("[validators.format]"));
+    assert!(config.contains("[validators.existing]"));
+}
+
+/// Human validator via non-interactive mode
+#[test]
+fn add_noninteractive_human() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    let output = baton()
+        .args([
+            "add", "--type", "human", "--name", "manual-review",
+            "--prompt", "Please review this PR", "-y",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success(), "stderr: {}", String::from_utf8_lossy(&output.stderr));
+    let config = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
+    assert!(config.contains("[validators.manual-review]"));
+    assert!(config.contains("human"));
+    assert!(config.contains("Please review this PR"));
+}

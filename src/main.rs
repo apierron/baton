@@ -199,6 +199,69 @@ enum Commands {
         yes: bool,
     },
 
+    /// Add a validator to baton.toml (interactive or via flags)
+    Add {
+        /// Validator name
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Validator type: script, llm, or human
+        #[arg(long = "type")]
+        validator_type: Option<String>,
+
+        /// Script command
+        #[arg(long)]
+        command: Option<String>,
+
+        /// LLM/human prompt text
+        #[arg(long)]
+        prompt: Option<String>,
+
+        /// Runtime name for LLM validators
+        #[arg(long)]
+        runtime: Option<String>,
+
+        /// Model override for LLM validators
+        #[arg(long)]
+        model: Option<String>,
+
+        /// Add to this gate (existing or new)
+        #[arg(long)]
+        gate: Option<String>,
+
+        /// Whether the validator is blocking in the gate
+        #[arg(long)]
+        blocking: Option<bool>,
+
+        /// Tags to apply
+        #[arg(long, value_delimiter = ',')]
+        tags: Option<Vec<String>>,
+
+        /// Input glob pattern
+        #[arg(long)]
+        input: Option<String>,
+
+        /// Timeout in seconds
+        #[arg(long)]
+        timeout: Option<u64>,
+
+        /// Import from file, URL, or registry
+        #[arg(long)]
+        from: Option<String>,
+
+        /// Path to baton.toml
+        #[arg(long)]
+        config: Option<PathBuf>,
+
+        /// Preview changes without writing
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Skip confirmation prompt
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
+
     /// Uninstall baton from this system
     Uninstall {
         /// Remove all baton installations, not just the one in PATH
@@ -302,6 +365,39 @@ fn main() {
         }
         Commands::Clean { dry_run, config } => cmd_clean(config.as_ref(), dry_run),
         Commands::Version { config } => cmd_version(config.as_ref()),
+        Commands::Add {
+            name,
+            validator_type,
+            command,
+            prompt,
+            runtime,
+            model,
+            gate,
+            blocking,
+            tags,
+            input,
+            timeout,
+            from,
+            config,
+            dry_run,
+            yes,
+        } => baton::add::cmd_add(baton::add::AddOptions {
+            name,
+            validator_type,
+            command,
+            prompt,
+            runtime,
+            model,
+            gate,
+            blocking,
+            tags,
+            input,
+            timeout,
+            from,
+            config,
+            dry_run,
+            yes,
+        }),
         Commands::Update { version, yes } => cmd_update(version, yes),
         Commands::Uninstall { all, yes } => cmd_uninstall(all, yes),
     };
