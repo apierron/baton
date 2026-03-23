@@ -927,10 +927,8 @@ pub fn plan_dispatch(
             for (slot_name, slot) in slots {
                 if let Some(ref path) = slot.path {
                     // DP-006: fixed input
-                    fixed_inputs.insert(
-                        slot_name.clone(),
-                        vec![InputFile::new(PathBuf::from(path))],
-                    );
+                    fixed_inputs
+                        .insert(slot_name.clone(), vec![InputFile::new(PathBuf::from(path))]);
                 } else if slot.key.is_some() {
                     keyed_slots.push((slot_name, slot));
                 } else {
@@ -974,18 +972,15 @@ pub fn plan_dispatch(
 
                 // Collect all key values
                 let all_keys: HashSet<String> = slot_keys.keys().cloned().collect();
-                let slot_names: Vec<&String> =
-                    keyed_slots.iter().map(|(name, _)| *name).collect();
+                let slot_names: Vec<&String> = keyed_slots.iter().map(|(name, _)| *name).collect();
 
                 let mut invocations = Vec::new();
                 for key_val in &all_keys {
                     // DP-005: check completeness
                     let group = slot_keys.get(key_val);
-                    let complete = slot_names.iter().all(|name| {
-                        group
-                            .map(|g| g.contains_key(*name))
-                            .unwrap_or(false)
-                    });
+                    let complete = slot_names
+                        .iter()
+                        .all(|name| group.map(|g| g.contains_key(*name)).unwrap_or(false));
 
                     if !complete {
                         warnings.push(format!(
@@ -3816,7 +3811,9 @@ mod tests {
         assert_eq!(invocations.len(), 1); // only "a" group is complete
         assert_eq!(invocations[0].group_key, Some("a".into()));
         assert!(!warnings.is_empty()); // warning about incomplete "b" group
-        assert!(warnings.iter().any(|w| w.contains("incomplete") && w.contains("b")));
+        assert!(warnings
+            .iter()
+            .any(|w| w.contains("incomplete") && w.contains("b")));
     }
 
     #[test]

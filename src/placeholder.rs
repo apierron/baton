@@ -810,8 +810,7 @@ mod tests {
         let prior = BTreeMap::new();
         let mut warns = ResolutionWarnings::new();
 
-        let result =
-            resolve_placeholders("{input.code.paths}", &mut inputs, &prior, &mut warns);
+        let result = resolve_placeholders("{input.code.paths}", &mut inputs, &prior, &mut warns);
         assert_eq!(result, "/tmp/a.py /tmp/b.py");
         assert!(warns.warnings.is_empty());
     }
@@ -822,8 +821,7 @@ mod tests {
         let prior = BTreeMap::new();
         let mut warns = ResolutionWarnings::new();
 
-        let result =
-            resolve_placeholders("{input.missing.paths}", &mut inputs, &prior, &mut warns);
+        let result = resolve_placeholders("{input.missing.paths}", &mut inputs, &prior, &mut warns);
         assert_eq!(result, "");
         assert_eq!(warns.warnings.len(), 1);
         assert!(warns.warnings[0].contains("missing"));

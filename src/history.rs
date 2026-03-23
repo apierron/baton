@@ -276,7 +276,14 @@ pub fn store_invocation(conn: &Connection, result: &InvocationResult) -> Result<
     conn.execute(
         "INSERT INTO invocations (id, timestamp, cli_args, git_state, config_hash, baton_version)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![invocation_id, timestamp, None::<String>, None::<String>, None::<String>, baton_version],
+        params![
+            invocation_id,
+            timestamp,
+            None::<String>,
+            None::<String>,
+            None::<String>,
+            baton_version
+        ],
     )
     .map_err(|e| BatonError::DatabaseError(format!("Failed to insert invocation: {e}")))?;
 
@@ -397,7 +404,7 @@ pub struct GateResultDetail {
 
 /// Query validator runs by file path (searches input_files JSON).
 pub fn query_by_file(conn: &Connection, file_path: &str) -> Result<Vec<ValidatorRunSummary>> {
-    let pattern = format!("%\"path\":\"{}\"%" , file_path.replace('"', "\\\""));
+    let pattern = format!("%\"path\":\"{}\"%", file_path.replace('"', "\\\""));
     let mut stmt = conn
         .prepare(
             "SELECT vr.id, vr.invocation_id, vr.gate, vr.validator, vr.group_key, vr.status, vr.feedback, vr.duration_ms, vr.input_files, i.timestamp
@@ -434,7 +441,7 @@ pub fn query_by_file(conn: &Connection, file_path: &str) -> Result<Vec<Validator
 
 /// Query validator runs by content hash (searches input_files JSON).
 pub fn query_by_hash(conn: &Connection, hash: &str) -> Result<Vec<ValidatorRunSummary>> {
-    let pattern = format!("%\"hash\":\"{}\"%" , hash);
+    let pattern = format!("%\"hash\":\"{}\"%", hash);
     let mut stmt = conn
         .prepare(
             "SELECT vr.id, vr.invocation_id, vr.gate, vr.validator, vr.group_key, vr.status, vr.feedback, vr.duration_ms, vr.input_files, i.timestamp
