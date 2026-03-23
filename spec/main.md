@@ -280,6 +280,46 @@ SPEC-MN-IN-011: unknown-profile-exits-1
   When `--profile` is provided with an unrecognized value, prints an error listing valid profiles and returns exit code 1.
   test: cli::init_unknown_profile_exits_1
 
+### Interactive mode
+
+SPEC-MN-IN-020: tty-no-flags-enters-interactive
+  When stdin is a TTY and no --profile, --minimal, or --prompts-only flags are provided,
+  cmd_init enters interactive mode using dialoguer prompts.
+  test: MANUAL (requires TTY)
+
+SPEC-MN-IN-021: non-tty-uses-defaults
+  When stdin is not a TTY and no flags are provided, cmd_init uses the default
+  behavior (generic profile, prompts included) without prompting.
+  test: cli::init_no_flags_non_tty_uses_generic_with_prompts
+
+SPEC-MN-IN-022: flags-skip-interactive
+  When any of --profile, --minimal, or --prompts-only are provided, interactive
+  mode is skipped regardless of TTY status. The flags are used directly.
+  test: cli::init_flags_override_interactive
+
+SPEC-MN-IN-023: interactive-code-validators-prompt
+  In interactive mode, the first prompt asks "Include code validators?" (Confirm, default yes).
+  If the user selects no, only base.toml content is written (no validators or gates).
+  test: MANUAL (requires TTY)
+
+SPEC-MN-IN-024: interactive-language-prompt
+  When the user selects yes for code validators, a Select prompt asks
+  "Which language?" with options [Rust, Python, Generic]. The selection maps
+  to the corresponding profile config from defaults/configs/.
+  test: MANUAL (requires TTY)
+
+SPEC-MN-IN-025: interactive-prompts-prompt
+  The final prompt asks "Include starter prompt templates?" (Confirm, default yes).
+  Yes creates the prompts/ directory with templates; no skips it (equivalent to --minimal).
+  test: MANUAL (requires TTY)
+
+SPEC-MN-IN-026: base-only-config-valid-toml
+  When code validators are declined, the generated baton.toml contains only the base
+  config (version and defaults section). This config is valid TOML, contains version
+  and [defaults], and has no [validators] or [gates] sections. Users are expected to
+  add validators via `baton add` afterward.
+  test: cli::init_base_only_config_valid
+
 ---
 
 ## cmd_list

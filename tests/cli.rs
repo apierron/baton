@@ -1615,6 +1615,70 @@ fn init_unknown_profile_exits_1() {
         .stderr(predicates::str::contains("unknown profile"));
 }
 
+// ─── cmd_init interactive mode ───────────────────────────
+
+/// SPEC-MN-IN-021: non-tty with no flags uses generic profile with prompts
+#[test]
+fn init_no_flags_non_tty_uses_generic_with_prompts() {
+    let dir = TempDir::new().unwrap();
+
+    let output = baton()
+        .arg("init")
+        .current_dir(dir.path())
+        .write_stdin("") // pipe empty stdin — not a TTY
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(dir.path().join("baton.toml").exists());
+    assert!(dir.path().join("prompts").exists());
+    assert!(dir.path().join("prompts/spec-compliance.md").exists());
+
+    let content = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
+    // Should use generic profile by default
+    assert!(content.contains("[validators.lint]"));
+    assert!(content.contains("[gates.example]"));
+}
+
+/// SPEC-MN-IN-022: explicit flags skip interactive mode
+#[test]
+fn init_flags_override_interactive() {
+    let dir = TempDir::new().unwrap();
+
+    let output = baton()
+        .args(["init", "--profile", "rust"])
+        .current_dir(dir.path())
+        .write_stdin("") // pipe empty stdin — not a TTY
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let content = fs::read_to_string(dir.path().join("baton.toml")).unwrap();
+    assert!(content.contains("[validators.clippy]"));
+    assert!(content.contains("cargo clippy"));
+}
+
+/// SPEC-MN-IN-026: base-only config (no code validators) is valid TOML
+#[test]
+fn init_base_only_config_valid() {
+    let base_config = r#"version = "0.6"
+
+[defaults]
+timeout_seconds = 300
+blocking = true
+prompts_dir = "./prompts"
+log_dir = "./.baton/logs"
+history_db = "./.baton/history.db"
+tmp_dir = "./.baton/tmp"
+"#;
+
+    let parsed: toml::Value = toml::from_str(base_config).unwrap();
+    assert_eq!(parsed["version"].as_str().unwrap(), "0.6");
+    assert!(parsed.get("defaults").is_some());
+    assert!(parsed.get("validators").is_none());
+    assert!(parsed.get("gates").is_none());
+}
+
 // ─── cmd_list gaps ───────────────────────────────────────
 
 #[test]
