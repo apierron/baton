@@ -4,6 +4,7 @@ on:
   push:
     branches: [master]
   pull_request:
+  workflow_dispatch:
 
 jobs:
   lint:
@@ -25,6 +26,21 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test
+
+  smoke:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run smoke tests
+        env:
+          BATON_SMOKE_RUNTIME: api
+          BATON_SMOKE_BASE_URL: https://api.anthropic.com
+          BATON_SMOKE_API_KEY_ENV: ANTHROPIC_API_KEY
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BATON_SMOKE_MODEL: claude-haiku-4-5-20251001
+        run: cargo test --test smoke -- --ignored --nocapture
 
   coverage:
     runs-on: ubuntu-latest

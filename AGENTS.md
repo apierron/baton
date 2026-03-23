@@ -86,6 +86,32 @@ Quick reference:
 - **List spec files:** `ls spec/*.md`
 - **Files:** `types.md`, `config.md`, `prompt.md`, `placeholder.md`, `verdict_parser.md`, `exec.md`, `history.md`, `runtime.md`, `provider.md`, `main.md`
 
+## Smoke Tests
+
+Integration tests that call real LLM runtimes. Skipped by `cargo test` (marked `#[ignore]`).
+
+```bash
+# Run with Claude Code (default — requires `claude` in PATH, authenticated)
+make smoke
+
+# Run with an API provider
+BATON_SMOKE_RUNTIME=api \
+BATON_SMOKE_BASE_URL=https://api.anthropic.com \
+BATON_SMOKE_API_KEY_ENV=ANTHROPIC_API_KEY \
+BATON_SMOKE_MODEL=claude-haiku-4-5-20251001 \
+make smoke-api
+```
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BATON_SMOKE_RUNTIME` | `claude-code` | Runtime type (`claude-code`, `api`) |
+| `BATON_SMOKE_BASE_URL` | `claude` | Binary path or API URL |
+| `BATON_SMOKE_MODEL` | `sonnet` | Model name |
+| `BATON_SMOKE_API_KEY_ENV` | *(empty)* | Env var name holding API key |
+| `BATON_SMOKE_TIMEOUT` | `60` | Timeout in seconds |
+
+In CI, smoke tests run only on `workflow_dispatch` (manual trigger) using the `api` runtime with a `ANTHROPIC_API_KEY` secret.
+
 ## Not Yet Implemented
 
 Timeout enforcement on script validators, signal handling (SIGINT/SIGTERM), log file writing (only SQLite history), TTY auto-detection for `--format`, wiring `plan_dispatch()` into `run_gate()` loop (dispatch planner is implemented but gate execution still passes all files as a flat pool), wiring `store_invocation()` into `cmd_check()` (v2 history functions exist but `cmd_check` still calls `store_verdict()`)
