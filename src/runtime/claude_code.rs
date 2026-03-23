@@ -507,27 +507,51 @@ impl RuntimeAdapter for ClaudeCodeAdapter {
 mod tests {
     use super::*;
 
-    /// Creates an executable shell script in a temp directory, returning the
-    /// path and a guard that cleans up the directory on drop.
+    /// Creates a test script that outputs the given text to stdout, optionally
+    /// writing to stderr, and exits with the given code.
     ///
-    /// The file is fully closed before returning, avoiding ETXTBSY ("Text file
-    /// busy") errors on Linux when the script is immediately executed.
-    #[cfg(unix)]
-    fn make_test_script(content: &[u8]) -> (String, tempfile::TempDir) {
-        use std::os::unix::fs::PermissionsExt;
+    /// Generates a platform-appropriate script (`.sh` on Unix, `.cmd` on Windows).
+    /// The file is fully closed before returning, avoiding ETXTBSY on Linux.
+    fn make_test_script_parts(
+        stdout_text: Option<&str>,
+        stderr_text: Option<&str>,
+        exit_code: i32,
+    ) -> (String, tempfile::TempDir) {
         let dir = tempfile::TempDir::new().unwrap();
-        let script_path = dir.path().join("script.sh");
-        std::fs::write(&script_path, content).unwrap();
-        std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        (script_path.to_str().unwrap().to_string(), dir)
-    }
 
-    #[cfg(not(unix))]
-    fn make_test_script(content: &[u8]) -> (String, tempfile::TempDir) {
-        let dir = tempfile::TempDir::new().unwrap();
-        let script_path = dir.path().join("script.sh");
-        std::fs::write(&script_path, content).unwrap();
-        (script_path.to_str().unwrap().to_string(), dir)
+        if cfg!(unix) {
+            let script_path = dir.path().join("script.sh");
+            let mut content = String::from("#!/bin/sh\n");
+            if let Some(text) = stdout_text {
+                content.push_str(&format!("echo '{}'\n", text));
+            }
+            if let Some(text) = stderr_text {
+                content.push_str(&format!("echo '{}' >&2\n", text));
+            }
+            if exit_code != 0 {
+                content.push_str(&format!("exit {exit_code}\n"));
+            }
+            std::fs::write(&script_path, content).unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755))
+                    .unwrap();
+            }
+            (script_path.to_str().unwrap().to_string(), dir)
+        } else {
+            let script_path = dir.path().join("script.cmd");
+            let mut content = String::from("@echo off\r\n");
+            if let Some(text) = stdout_text {
+                content.push_str(&format!("echo {}\r\n", text));
+            }
+            if let Some(text) = stderr_text {
+                content.push_str(&format!("echo {} >&2\r\n", text));
+            }
+            content.push_str(&format!("exit /b {exit_code}\r\n"));
+            std::fs::write(&script_path, content).unwrap();
+            (script_path.to_str().unwrap().to_string(), dir)
+        }
     }
 
     // ═══════════════════════════════════════════════════════════════
@@ -894,8 +918,10 @@ mod tests {
 
     #[test]
     fn collect_result_parses_json() {
-        let (script_path, _dir) = make_test_script(
-            b"#!/bin/sh\necho '{\"type\":\"result\",\"result\":\"PASS - looks good\"}'",
+        let (script_path, _dir) = make_test_script_parts(
+            Some(r#"{"type":"result","result":"PASS - looks good"}"#),
+            None,
+            0,
         );
 
         let adapter = ClaudeCodeAdapter::new(script_path, None, None, 600, 0).unwrap();
@@ -920,8 +946,12 @@ mod tests {
 
     #[test]
     fn collect_result_extracts_cost() {
-        let (script_path, _dir) = make_test_script(
-            b"#!/bin/sh\necho '{\"result\":\"ok\",\"cost_usd\":0.05,\"usage\":{\"input_tokens\":1000,\"output_tokens\":200}}'",
+        let (script_path, _dir) = make_test_script_parts(
+            Some(
+                r#"{"result":"ok","cost_usd":0.05,"usage":{"input_tokens":1000,"output_tokens":200}}"#,
+            ),
+            None,
+            0,
         );
 
         let adapter = ClaudeCodeAdapter::new(script_path, None, None, 600, 0).unwrap();
@@ -948,7 +978,7 @@ mod tests {
 
     #[test]
     fn collect_result_non_json_output() {
-        let (script_path, _dir) = make_test_script(b"#!/bin/sh\necho 'plain text output'");
+        let (script_path, _dir) = make_test_script_parts(Some("plain text output"), None, 0);
 
         let adapter = ClaudeCodeAdapter::new(script_path, None, None, 600, 0).unwrap();
 
@@ -972,7 +1002,7 @@ mod tests {
 
     #[test]
     fn collect_result_failed_status() {
-        let (script_path, _dir) = make_test_script(b"#!/bin/sh\nexit 1");
+        let (script_path, _dir) = make_test_script_parts(None, None, 1);
 
         let adapter = ClaudeCodeAdapter::new(script_path, None, None, 600, 0).unwrap();
 
@@ -1096,8 +1126,10 @@ mod tests {
 
     #[test]
     fn post_completion_success() {
-        let (script_path, _dir) = make_test_script(
-            b"#!/bin/sh\necho '{\"type\":\"result\",\"result\":\"PASS - looks good\"}'",
+        let (script_path, _dir) = make_test_script_parts(
+            Some(r#"{"type":"result","result":"PASS - looks good"}"#),
+            None,
+            0,
         );
 
         let adapter = ClaudeCodeAdapter::new(script_path, None, None, 600, 30).unwrap();
@@ -1115,8 +1147,12 @@ mod tests {
 
     #[test]
     fn post_completion_extracts_cost() {
-        let (script_path, _dir) = make_test_script(
-            b"#!/bin/sh\necho '{\"result\":\"ok\",\"cost_usd\":0.03,\"usage\":{\"input_tokens\":500,\"output_tokens\":100}}'",
+        let (script_path, _dir) = make_test_script_parts(
+            Some(
+                r#"{"result":"ok","cost_usd":0.03,"usage":{"input_tokens":500,"output_tokens":100}}"#,
+            ),
+            None,
+            0,
         );
 
         let adapter = ClaudeCodeAdapter::new(script_path, None, None, 600, 30).unwrap();
@@ -1138,7 +1174,7 @@ mod tests {
     #[test]
     fn post_completion_empty_content_error() {
         let (script_path, _dir) =
-            make_test_script(b"#!/bin/sh\necho '{\"type\":\"result\",\"result\":\"\"}'");
+            make_test_script_parts(Some(r#"{"type":"result","result":""}"#), None, 0);
 
         let adapter = ClaudeCodeAdapter::new(script_path, None, None, 600, 30).unwrap();
 
@@ -1157,7 +1193,7 @@ mod tests {
 
     #[test]
     fn post_completion_non_zero_exit() {
-        let (script_path, _dir) = make_test_script(b"#!/bin/sh\necho 'error message' >&2\nexit 1");
+        let (script_path, _dir) = make_test_script_parts(None, Some("error message"), 1);
 
         let adapter = ClaudeCodeAdapter::new(script_path, None, None, 600, 30).unwrap();
 
@@ -1195,7 +1231,7 @@ mod tests {
     #[test]
     fn post_completion_parses_content() {
         let (script_path, _dir) =
-            make_test_script(b"#!/bin/sh\necho '{\"result\":\"FAIL - found issues in code\"}'");
+            make_test_script_parts(Some(r#"{"result":"FAIL - found issues in code"}"#), None, 0);
 
         let adapter = ClaudeCodeAdapter::new(script_path, None, None, 600, 30).unwrap();
 
