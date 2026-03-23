@@ -507,6 +507,29 @@ impl RuntimeAdapter for ClaudeCodeAdapter {
 mod tests {
     use super::*;
 
+    /// Creates an executable shell script in a temp directory, returning the
+    /// path and a guard that cleans up the directory on drop.
+    ///
+    /// The file is fully closed before returning, avoiding ETXTBSY ("Text file
+    /// busy") errors on Linux when the script is immediately executed.
+    #[cfg(unix)]
+    fn make_test_script(content: &[u8]) -> (String, tempfile::TempDir) {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::TempDir::new().unwrap();
+        let script_path = dir.path().join("script.sh");
+        std::fs::write(&script_path, content).unwrap();
+        std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (script_path.to_str().unwrap().to_string(), dir)
+    }
+
+    #[cfg(not(unix))]
+    fn make_test_script(content: &[u8]) -> (String, tempfile::TempDir) {
+        let dir = tempfile::TempDir::new().unwrap();
+        let script_path = dir.path().join("script.sh");
+        std::fs::write(&script_path, content).unwrap();
+        (script_path.to_str().unwrap().to_string(), dir)
+    }
+
     // ═══════════════════════════════════════════════════════════════
     // parse_claude_output
     // ═══════════════════════════════════════════════════════════════
@@ -871,21 +894,9 @@ mod tests {
 
     #[test]
     fn collect_result_parses_json() {
-        // Use a script that outputs JSON to stdout
-        let script = tempfile::Builder::new().suffix(".sh").tempfile().unwrap();
-        std::io::Write::write_all(
-            &mut script.as_file().try_clone().unwrap(),
+        let (script_path, _dir) = make_test_script(
             b"#!/bin/sh\necho '{\"type\":\"result\",\"result\":\"PASS - looks good\"}'",
-        )
-        .unwrap();
-        let script_path = script.path().to_str().unwrap().to_string();
-
-        // Make executable
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        );
 
         let adapter = ClaudeCodeAdapter::new(script_path, None, None, 600, 0).unwrap();
 
@@ -909,19 +920,9 @@ mod tests {
 
     #[test]
     fn collect_result_extracts_cost() {
-        let script = tempfile::Builder::new().suffix(".sh").tempfile().unwrap();
-        std::io::Write::write_all(
-            &mut script.as_file().try_clone().unwrap(),
+        let (script_path, _dir) = make_test_script(
             b"#!/bin/sh\necho '{\"result\":\"ok\",\"cost_usd\":0.05,\"usage\":{\"input_tokens\":1000,\"output_tokens\":200}}'",
-        )
-        .unwrap();
-        let script_path = script.path().to_str().unwrap().to_string();
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        );
 
         let adapter = ClaudeCodeAdapter::new(script_path, None, None, 600, 0).unwrap();
 
@@ -947,19 +948,7 @@ mod tests {
 
     #[test]
     fn collect_result_non_json_output() {
-        let script = tempfile::Builder::new().suffix(".sh").tempfile().unwrap();
-        std::io::Write::write_all(
-            &mut script.as_file().try_clone().unwrap(),
-            b"#!/bin/sh\necho 'plain text output'",
-        )
-        .unwrap();
-        let script_path = script.path().to_str().unwrap().to_string();
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        let (script_path, _dir) = make_test_script(b"#!/bin/sh\necho 'plain text output'");
 
         let adapter = ClaudeCodeAdapter::new(script_path, None, None, 600, 0).unwrap();
 
@@ -983,19 +972,7 @@ mod tests {
 
     #[test]
     fn collect_result_failed_status() {
-        let script = tempfile::Builder::new().suffix(".sh").tempfile().unwrap();
-        std::io::Write::write_all(
-            &mut script.as_file().try_clone().unwrap(),
-            b"#!/bin/sh\nexit 1",
-        )
-        .unwrap();
-        let script_path = script.path().to_str().unwrap().to_string();
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        let (script_path, _dir) = make_test_script(b"#!/bin/sh\nexit 1");
 
         let adapter = ClaudeCodeAdapter::new(script_path, None, None, 600, 0).unwrap();
 
@@ -1119,19 +1096,9 @@ mod tests {
 
     #[test]
     fn post_completion_success() {
-        let script = tempfile::Builder::new().suffix(".sh").tempfile().unwrap();
-        std::io::Write::write_all(
-            &mut script.as_file().try_clone().unwrap(),
+        let (script_path, _dir) = make_test_script(
             b"#!/bin/sh\necho '{\"type\":\"result\",\"result\":\"PASS - looks good\"}'",
-        )
-        .unwrap();
-        let script_path = script.path().to_str().unwrap().to_string();
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        );
 
         let adapter = ClaudeCodeAdapter::new(script_path, None, None, 600, 30).unwrap();
 
@@ -1148,19 +1115,9 @@ mod tests {
 
     #[test]
     fn post_completion_extracts_cost() {
-        let script = tempfile::Builder::new().suffix(".sh").tempfile().unwrap();
-        std::io::Write::write_all(
-            &mut script.as_file().try_clone().unwrap(),
+        let (script_path, _dir) = make_test_script(
             b"#!/bin/sh\necho '{\"result\":\"ok\",\"cost_usd\":0.03,\"usage\":{\"input_tokens\":500,\"output_tokens\":100}}'",
-        )
-        .unwrap();
-        let script_path = script.path().to_str().unwrap().to_string();
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        );
 
         let adapter = ClaudeCodeAdapter::new(script_path, None, None, 600, 30).unwrap();
 
@@ -1180,19 +1137,8 @@ mod tests {
 
     #[test]
     fn post_completion_empty_content_error() {
-        let script = tempfile::Builder::new().suffix(".sh").tempfile().unwrap();
-        std::io::Write::write_all(
-            &mut script.as_file().try_clone().unwrap(),
-            b"#!/bin/sh\necho '{\"type\":\"result\",\"result\":\"\"}'",
-        )
-        .unwrap();
-        let script_path = script.path().to_str().unwrap().to_string();
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        let (script_path, _dir) =
+            make_test_script(b"#!/bin/sh\necho '{\"type\":\"result\",\"result\":\"\"}'");
 
         let adapter = ClaudeCodeAdapter::new(script_path, None, None, 600, 30).unwrap();
 
@@ -1211,19 +1157,7 @@ mod tests {
 
     #[test]
     fn post_completion_non_zero_exit() {
-        let script = tempfile::Builder::new().suffix(".sh").tempfile().unwrap();
-        std::io::Write::write_all(
-            &mut script.as_file().try_clone().unwrap(),
-            b"#!/bin/sh\necho 'error message' >&2\nexit 1",
-        )
-        .unwrap();
-        let script_path = script.path().to_str().unwrap().to_string();
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        let (script_path, _dir) = make_test_script(b"#!/bin/sh\necho 'error message' >&2\nexit 1");
 
         let adapter = ClaudeCodeAdapter::new(script_path, None, None, 600, 30).unwrap();
 
@@ -1260,19 +1194,8 @@ mod tests {
 
     #[test]
     fn post_completion_parses_content() {
-        let script = tempfile::Builder::new().suffix(".sh").tempfile().unwrap();
-        std::io::Write::write_all(
-            &mut script.as_file().try_clone().unwrap(),
-            b"#!/bin/sh\necho '{\"result\":\"FAIL - found issues in code\"}'",
-        )
-        .unwrap();
-        let script_path = script.path().to_str().unwrap().to_string();
-
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
+        let (script_path, _dir) =
+            make_test_script(b"#!/bin/sh\necho '{\"result\":\"FAIL - found issues in code\"}'");
 
         let adapter = ClaudeCodeAdapter::new(script_path, None, None, 600, 30).unwrap();
 
