@@ -260,6 +260,294 @@ pub struct VerdictSummary {
     pub artifact_hash: String,
 }
 
+// ─── v2 history functions ────────────────────────────────
+
+use crate::types::{InvocationResult, Status, ValidatorResult};
+
+/// Store an invocation result in the v2 history schema.
+///
+/// Inserts one row into `invocations`, one per gate into `gate_results`,
+/// and one per validator run into `validator_runs`. Returns the generated UUID.
+pub fn store_invocation(conn: &Connection, result: &InvocationResult) -> Result<String> {
+    let invocation_id = uuid::Uuid::new_v4().to_string();
+    let timestamp = chrono::Utc::now().to_rfc3339();
+    let baton_version = env!("CARGO_PKG_VERSION");
+
+    conn.execute(
+        "INSERT INTO invocations (id, timestamp, cli_args, git_state, config_hash, baton_version)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![invocation_id, timestamp, None::<String>, None::<String>, None::<String>, baton_version],
+    )
+    .map_err(|e| BatonError::DatabaseError(format!("Failed to insert invocation: {e}")))?;
+
+    for gate_result in &result.gate_results {
+        let gate_id = uuid::Uuid::new_v4().to_string();
+        let (pass_count, fail_count, warn_count, error_count, skip_count) =
+            count_statuses(&gate_result.validator_results);
+        let validator_count = gate_result.validator_results.len() as i64;
+
+        conn.execute(
+            "INSERT INTO gate_results (id, invocation_id, gate, status, duration_ms, validator_count, pass_count, fail_count, warn_count, error_count, skip_count)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                gate_id,
+                invocation_id,
+                gate_result.gate_name,
+                gate_result.status.to_string(),
+                gate_result.duration.as_millis() as i64,
+                validator_count,
+                pass_count,
+                fail_count,
+                warn_count,
+                error_count,
+                skip_count,
+            ],
+        )
+        .map_err(|e| BatonError::DatabaseError(format!("Failed to insert gate result: {e}")))?;
+
+        for vr in &gate_result.validator_results {
+            let run_id = uuid::Uuid::new_v4().to_string();
+            let tokens_used = vr
+                .cost
+                .as_ref()
+                .and_then(|c| c.input_tokens.map(|i| i + c.output_tokens.unwrap_or(0)));
+
+            conn.execute(
+                "INSERT INTO validator_runs (id, invocation_id, gate, validator, group_key, status, feedback, duration_ms, tokens_used, input_files)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    run_id,
+                    invocation_id,
+                    gate_result.gate_name,
+                    vr.name,
+                    None::<String>, // group_key — not yet populated from Invocation
+                    vr.status.to_string(),
+                    vr.feedback,
+                    vr.duration_ms,
+                    tokens_used,
+                    None::<String>, // input_files JSON — populated when dispatch planner is wired
+                ],
+            )
+            .map_err(|e| {
+                BatonError::DatabaseError(format!("Failed to insert validator run: {e}"))
+            })?;
+        }
+    }
+
+    Ok(invocation_id)
+}
+
+fn count_statuses(results: &[ValidatorResult]) -> (i64, i64, i64, i64, i64) {
+    let mut pass = 0i64;
+    let mut fail = 0i64;
+    let mut warn = 0i64;
+    let mut error = 0i64;
+    let mut skip = 0i64;
+    for r in results {
+        match r.status {
+            Status::Pass => pass += 1,
+            Status::Fail => fail += 1,
+            Status::Warn => warn += 1,
+            Status::Error => error += 1,
+            Status::Skip => skip += 1,
+        }
+    }
+    (pass, fail, warn, error, skip)
+}
+
+/// Summary row for v2 validator run queries.
+#[derive(Debug, Clone)]
+pub struct ValidatorRunSummary {
+    pub id: String,
+    pub invocation_id: String,
+    pub gate: String,
+    pub validator: String,
+    pub group_key: Option<String>,
+    pub status: String,
+    pub feedback: Option<String>,
+    pub duration_ms: i64,
+    pub input_files: Option<String>,
+    pub timestamp: String,
+}
+
+/// Full invocation detail with nested gate results and validator runs.
+#[derive(Debug, Clone)]
+pub struct InvocationDetail {
+    pub id: String,
+    pub timestamp: String,
+    pub baton_version: String,
+    pub gate_results: Vec<GateResultDetail>,
+    pub validator_runs: Vec<ValidatorRunSummary>,
+}
+
+/// Gate result detail row.
+#[derive(Debug, Clone)]
+pub struct GateResultDetail {
+    pub id: String,
+    pub gate: String,
+    pub status: String,
+    pub duration_ms: i64,
+    pub validator_count: i64,
+    pub pass_count: i64,
+    pub fail_count: i64,
+    pub warn_count: i64,
+    pub error_count: i64,
+    pub skip_count: i64,
+}
+
+/// Query validator runs by file path (searches input_files JSON).
+pub fn query_by_file(conn: &Connection, file_path: &str) -> Result<Vec<ValidatorRunSummary>> {
+    let pattern = format!("%\"path\":\"{}\"%" , file_path.replace('"', "\\\""));
+    let mut stmt = conn
+        .prepare(
+            "SELECT vr.id, vr.invocation_id, vr.gate, vr.validator, vr.group_key, vr.status, vr.feedback, vr.duration_ms, vr.input_files, i.timestamp
+             FROM validator_runs vr
+             JOIN invocations i ON i.id = vr.invocation_id
+             WHERE vr.input_files LIKE ?1
+             ORDER BY i.timestamp DESC",
+        )
+        .map_err(|e| BatonError::DatabaseError(format!("Query error: {e}")))?;
+
+    let rows = stmt
+        .query_map(params![pattern], |row| {
+            Ok(ValidatorRunSummary {
+                id: row.get(0)?,
+                invocation_id: row.get(1)?,
+                gate: row.get(2)?,
+                validator: row.get(3)?,
+                group_key: row.get(4)?,
+                status: row.get(5)?,
+                feedback: row.get(6)?,
+                duration_ms: row.get(7)?,
+                input_files: row.get(8)?,
+                timestamp: row.get(9)?,
+            })
+        })
+        .map_err(|e| BatonError::DatabaseError(format!("Query error: {e}")))?;
+
+    let mut results = Vec::new();
+    for row in rows {
+        results.push(row.map_err(|e| BatonError::DatabaseError(format!("Row error: {e}")))?);
+    }
+    Ok(results)
+}
+
+/// Query validator runs by content hash (searches input_files JSON).
+pub fn query_by_hash(conn: &Connection, hash: &str) -> Result<Vec<ValidatorRunSummary>> {
+    let pattern = format!("%\"hash\":\"{}\"%" , hash);
+    let mut stmt = conn
+        .prepare(
+            "SELECT vr.id, vr.invocation_id, vr.gate, vr.validator, vr.group_key, vr.status, vr.feedback, vr.duration_ms, vr.input_files, i.timestamp
+             FROM validator_runs vr
+             JOIN invocations i ON i.id = vr.invocation_id
+             WHERE vr.input_files LIKE ?1
+             ORDER BY i.timestamp DESC",
+        )
+        .map_err(|e| BatonError::DatabaseError(format!("Query error: {e}")))?;
+
+    let rows = stmt
+        .query_map(params![pattern], |row| {
+            Ok(ValidatorRunSummary {
+                id: row.get(0)?,
+                invocation_id: row.get(1)?,
+                gate: row.get(2)?,
+                validator: row.get(3)?,
+                group_key: row.get(4)?,
+                status: row.get(5)?,
+                feedback: row.get(6)?,
+                duration_ms: row.get(7)?,
+                input_files: row.get(8)?,
+                timestamp: row.get(9)?,
+            })
+        })
+        .map_err(|e| BatonError::DatabaseError(format!("Query error: {e}")))?;
+
+    let mut results = Vec::new();
+    for row in rows {
+        results.push(row.map_err(|e| BatonError::DatabaseError(format!("Row error: {e}")))?);
+    }
+    Ok(results)
+}
+
+/// Query full invocation detail by ID.
+pub fn query_invocation(conn: &Connection, id: &str) -> Result<InvocationDetail> {
+    // Get invocation row
+    let (timestamp, baton_version): (String, String) = conn
+        .query_row(
+            "SELECT timestamp, baton_version FROM invocations WHERE id = ?1",
+            params![id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => {
+                BatonError::DatabaseError(format!("Invocation not found: {id}"))
+            }
+            _ => BatonError::DatabaseError(format!("Query error: {e}")),
+        })?;
+
+    // Get gate results
+    let mut gate_stmt = conn
+        .prepare(
+            "SELECT id, gate, status, duration_ms, validator_count, pass_count, fail_count, warn_count, error_count, skip_count
+             FROM gate_results WHERE invocation_id = ?1",
+        )
+        .map_err(|e| BatonError::DatabaseError(format!("Query error: {e}")))?;
+
+    let gate_results: Vec<GateResultDetail> = gate_stmt
+        .query_map(params![id], |row| {
+            Ok(GateResultDetail {
+                id: row.get(0)?,
+                gate: row.get(1)?,
+                status: row.get(2)?,
+                duration_ms: row.get(3)?,
+                validator_count: row.get(4)?,
+                pass_count: row.get(5)?,
+                fail_count: row.get(6)?,
+                warn_count: row.get(7)?,
+                error_count: row.get(8)?,
+                skip_count: row.get(9)?,
+            })
+        })
+        .map_err(|e| BatonError::DatabaseError(format!("Query error: {e}")))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| BatonError::DatabaseError(format!("Row error: {e}")))?;
+
+    // Get validator runs
+    let mut vr_stmt = conn
+        .prepare(
+            "SELECT id, invocation_id, gate, validator, group_key, status, feedback, duration_ms, input_files
+             FROM validator_runs WHERE invocation_id = ?1",
+        )
+        .map_err(|e| BatonError::DatabaseError(format!("Query error: {e}")))?;
+
+    let validator_runs: Vec<ValidatorRunSummary> = vr_stmt
+        .query_map(params![id], |row| {
+            Ok(ValidatorRunSummary {
+                id: row.get(0)?,
+                invocation_id: row.get(1)?,
+                gate: row.get(2)?,
+                validator: row.get(3)?,
+                group_key: row.get(4)?,
+                status: row.get(5)?,
+                feedback: row.get(6)?,
+                duration_ms: row.get(7)?,
+                input_files: row.get(8)?,
+                timestamp: timestamp.clone(),
+            })
+        })
+        .map_err(|e| BatonError::DatabaseError(format!("Query error: {e}")))?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|e| BatonError::DatabaseError(format!("Row error: {e}")))?;
+
+    Ok(InvocationDetail {
+        id: id.to_string(),
+        timestamp,
+        baton_version,
+        gate_results,
+        validator_runs,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -711,49 +999,186 @@ mod tests {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // v2 migration: store_invocation tests (SPEC-HI-SI-*)
-    // These test the new store_invocation function that replaces
-    // store_verdict. They depend on the new types and schema.
+    // v2 store_invocation tests (SPEC-HI-SI-*)
     // ═══════════════════════════════════════════════════════════════
 
-    // NOTE: store_invocation, query_by_file, query_by_hash, and
-    // query_invocation don't exist yet. These tests define the expected
-    // API contract. They will fail to compile until the functions are added.
-    // To keep the build green during incremental development, these are
-    // gated behind a cfg flag. Remove the ignore when implementing.
+    use crate::types::{Cost, GateResult, InvocationResult, Status};
 
-    // SPEC-HI-SI-001 through SPEC-HI-SI-007 tests:
-    // The store_invocation function should:
-    // - Generate a UUID v4 as primary key
-    // - Insert one invocations row with timestamp, cli_args, baton_version
-    // - Insert gate_results rows with aggregate counts
-    // - Insert validator_runs rows with input_files JSON
-    // - Store tokens_used when present
-    // - Return the generated invocation ID
+    fn test_invocation_result() -> InvocationResult {
+        InvocationResult {
+            id: String::new(),
+            gate_results: vec![GateResult {
+                gate_name: "pre-commit".into(),
+                status: Status::Pass,
+                validator_results: vec![
+                    crate::types::ValidatorResult {
+                        name: "lint".into(),
+                        status: Status::Pass,
+                        feedback: None,
+                        duration_ms: 50,
+                        cost: None,
+                    },
+                    crate::types::ValidatorResult {
+                        name: "typecheck".into(),
+                        status: Status::Fail,
+                        feedback: Some("type error".into()),
+                        duration_ms: 120,
+                        cost: Some(Cost {
+                            input_tokens: Some(500),
+                            output_tokens: Some(200),
+                            model: Some("gpt-4".into()),
+                            estimated_usd: Some(0.01),
+                        }),
+                    },
+                ],
+                duration: std::time::Duration::from_millis(170),
+            }],
+            duration: std::time::Duration::from_millis(170),
+        }
+    }
 
-    // SPEC-HI-QR-001 through SPEC-HI-QR-006 tests:
-    // query_recent should:
-    // - Return all invocations (up to limit) when no filters
-    // - Filter by gate name
-    // - Filter by status
-    // - Order by timestamp DESC
-    // - Apply LIMIT
-    // - Return empty vec on empty DB
+    #[test]
+    fn store_invocation_returns_uuid() {
+        // SPEC-HI-SI-001: invocation-id-is-uuid-v4
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+        let id = store_invocation(&conn, &test_invocation_result()).unwrap();
+        assert_eq!(id.len(), 36);
+        assert_eq!(id.chars().filter(|c| *c == '-').count(), 4);
+    }
 
-    // SPEC-HI-QF-001 through SPEC-HI-QF-003 tests:
-    // query_by_file should:
-    // - Search input_files JSON for matching file paths
-    // - Order by timestamp DESC
-    // - Return empty vec on no match
+    #[test]
+    fn store_invocation_unique_ids() {
+        // SPEC-HI-SI-001: each call produces a unique ID
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+        let id1 = store_invocation(&conn, &test_invocation_result()).unwrap();
+        let id2 = store_invocation(&conn, &test_invocation_result()).unwrap();
+        assert_ne!(id1, id2);
+    }
 
-    // SPEC-HI-QH-001 through SPEC-HI-QH-003 tests:
-    // query_by_hash should:
-    // - Search input_files JSON for matching content hashes
-    // - Order by timestamp DESC
-    // - Return empty vec on no match
+    #[test]
+    fn store_invocation_inserts_invocation_row() {
+        // SPEC-HI-SI-002: invocation-row-inserted
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+        let id = store_invocation(&conn, &test_invocation_result()).unwrap();
 
-    // SPEC-HI-QI-001 through SPEC-HI-QI-002 tests:
-    // query_invocation should:
-    // - Return full invocation with gate results and validator runs
-    // - Return error when ID not found
+        let (timestamp, version): (String, String) = conn
+            .query_row(
+                "SELECT timestamp, baton_version FROM invocations WHERE id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert!(!timestamp.is_empty());
+        assert!(!version.is_empty());
+    }
+
+    #[test]
+    fn store_invocation_inserts_gate_results() {
+        // SPEC-HI-SI-003: gate-result-rows-inserted
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+        let id = store_invocation(&conn, &test_invocation_result()).unwrap();
+
+        let (gate, status, vc, pc, fc): (String, String, i64, i64, i64) = conn
+            .query_row(
+                "SELECT gate, status, validator_count, pass_count, fail_count FROM gate_results WHERE invocation_id = ?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
+            )
+            .unwrap();
+        assert_eq!(gate, "pre-commit");
+        assert_eq!(status, "pass");
+        assert_eq!(vc, 2);
+        assert_eq!(pc, 1);
+        assert_eq!(fc, 1);
+    }
+
+    #[test]
+    fn store_invocation_inserts_validator_runs() {
+        // SPEC-HI-SI-004: validator-run-rows-inserted
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+        let id = store_invocation(&conn, &test_invocation_result()).unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM validator_runs WHERE invocation_id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn store_invocation_stores_tokens() {
+        // SPEC-HI-SI-006: tokens-used-stored
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+        let id = store_invocation(&conn, &test_invocation_result()).unwrap();
+
+        let tokens: Option<i64> = conn
+            .query_row(
+                "SELECT tokens_used FROM validator_runs WHERE invocation_id = ?1 AND validator = 'typecheck'",
+                params![id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(tokens, Some(700)); // 500 input + 200 output
+    }
+
+    // ─── query_by_file tests (SPEC-HI-QF-*) ───────────────
+
+    #[test]
+    fn query_by_file_no_match_returns_empty() {
+        // SPEC-HI-QF-003
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+        store_invocation(&conn, &test_invocation_result()).unwrap();
+
+        let results = query_by_file(&conn, "/nonexistent/file.py").unwrap();
+        assert!(results.is_empty());
+    }
+
+    // ─── query_by_hash tests (SPEC-HI-QH-*) ───────────────
+
+    #[test]
+    fn query_by_hash_no_match_returns_empty() {
+        // SPEC-HI-QH-003
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+        store_invocation(&conn, &test_invocation_result()).unwrap();
+
+        let results = query_by_hash(&conn, "deadbeef").unwrap();
+        assert!(results.is_empty());
+    }
+
+    // ─── query_invocation tests (SPEC-HI-QI-*) ────────────
+
+    #[test]
+    fn query_invocation_returns_full_detail() {
+        // SPEC-HI-QI-001
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+        let id = store_invocation(&conn, &test_invocation_result()).unwrap();
+
+        let detail = query_invocation(&conn, &id).unwrap();
+        assert_eq!(detail.id, id);
+        assert_eq!(detail.gate_results.len(), 1);
+        assert_eq!(detail.gate_results[0].gate, "pre-commit");
+        assert_eq!(detail.validator_runs.len(), 2);
+    }
+
+    #[test]
+    fn query_invocation_not_found_returns_error() {
+        // SPEC-HI-QI-002
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+
+        let result = query_invocation(&conn, "nonexistent-id");
+        assert!(result.is_err());
+    }
 }

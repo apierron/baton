@@ -88,4 +88,4 @@ Quick reference:
 
 ## Not Yet Implemented
 
-Timeout enforcement on script validators, signal handling (SIGINT/SIGTERM), log file writing (only SQLite history), TTY auto-detection for `--format`
+Timeout enforcement on script validators, signal handling (SIGINT/SIGTERM), log file writing (only SQLite history), TTY auto-detection for `--format`, wiring `plan_dispatch()` into `run_gate()` loop (dispatch planner is implemented but gate execution still passes all files as a flat pool), wiring `store_invocation()` into `cmd_check()` (v2 history functions exist but `cmd_check` still calls `store_verdict()`)

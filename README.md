@@ -174,6 +174,7 @@ Use `--format human` for a readable summary or `--format summary` for a one-line
 ```text
 baton check            Run validators against input files
 baton init             Scaffold a new baton project
+baton add              Add a validator to baton.toml (interactive or via flags)
 baton list             List gates and validators in a config
 baton history          Query invocation history from the SQLite database
 baton validate-config  Check a baton.toml for errors and warnings
@@ -199,9 +200,11 @@ baton version          Print version information
 | `--dry-run` | Print invocation plan and exit |
 | `--timeout <seconds>` | Override default timeout for all validators |
 | `--no-log` | Don't write to history database |
+| `--no-recursive` | Disable recursive directory walking for positional args |
 | `--verbose` | Print each validator's result as it completes |
 | `--suppress-warnings` | Treat warn statuses as pass |
 | `--suppress-errors` | Treat error statuses as pass |
+| `--suppress-all` | Suppress warnings, errors, and failures |
 
 ## Validator Types
 
@@ -283,7 +286,7 @@ Available placeholders:
 
 - Per-file: `{file}` (content), `{file.path}`, `{file.dir}`, `{file.name}`, `{file.stem}`, `{file.ext}`, `{file.content}` (alias for `{file}`)
 - Batch: `{input}`, `{input.paths}`
-- Named: `{input.<name>}`, `{input.<name>.path}`, `{input.<name>.name}`, `{input.<name>.content}`
+- Named: `{input.<name>}`, `{input.<name>.path}`, `{input.<name>.paths}`, `{input.<name>.name}`, `{input.<name>.content}`
 - Verdict: `{verdict.<name>.status}`, `{verdict.<name>.feedback}`
 
 Three starter templates are included with `baton init`: spec-compliance, adversarial-review, and doc-completeness.

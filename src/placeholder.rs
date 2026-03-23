@@ -35,6 +35,9 @@ impl ResolutionWarnings {
 /// - `{input.<name>.name}` — filename of first file in named slot
 /// - `{input.<name>.stem}` — stem of first file in named slot
 /// - `{input.<name>.content}` — content of first file in named slot
+/// - `{input.<name>.paths}` — space-separated paths for named slot (multiple files)
+/// - `{input}` / `{input.content}` — concatenated content of all files (batch mode)
+/// - `{input.paths}` — space-separated paths of all files (batch mode)
 /// - `{verdict.<validator_name>.status}` — status of a prior validator
 /// - `{verdict.<validator_name>.feedback}` — feedback from a prior validator
 pub fn resolve_placeholders(
@@ -180,9 +183,52 @@ fn resolve_single(
         return String::new();
     }
 
+    // {input} or {input.content} — concatenated content of all files in the primary slot (batch mode)
+    if placeholder == "input" || placeholder == "input.content" {
+        if let Some(key) = first_file_key(inputs) {
+            if let Some(files) = inputs.get_mut(&key) {
+                let mut parts = Vec::new();
+                for f in files.iter_mut() {
+                    if let Ok(content) = f.get_content() {
+                        parts.push(content.to_string());
+                    }
+                }
+                return parts.join("\n");
+            }
+        }
+        return String::new();
+    }
+
+    // {input.paths} — space-separated absolute paths of all files in the primary slot
+    if placeholder == "input.paths" {
+        if let Some(key) = first_file_key(inputs) {
+            if let Some(files) = inputs.get(&key) {
+                return files
+                    .iter()
+                    .map(|f| f.path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+            }
+        }
+        return String::new();
+    }
+
     // {input.<name>} or {input.<name>.<prop>}
     if let Some(rest) = placeholder.strip_prefix("input.") {
-        // Check for .path, .name, .stem, .content suffixes
+        // Check for .paths (plural), .path, .name, .stem, .content suffixes
+        if let Some(name) = rest.strip_suffix(".paths") {
+            if let Some(files) = inputs.get(name) {
+                return files
+                    .iter()
+                    .map(|f| f.path.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+            }
+            warnings.warnings.push(format!(
+                "Placeholder '{{input.{name}.paths}}' references undefined input '{name}'"
+            ));
+            return String::new();
+        }
         if let Some(name) = rest.strip_suffix(".path") {
             if let Some(files) = inputs.get(name) {
                 if let Some(f) = files.first() {
@@ -673,5 +719,124 @@ mod tests {
 
         assert_eq!(code_input.get_content().unwrap(), "print('hello')");
         assert_eq!(spec_input.get_content().unwrap(), "must print hello");
+    }
+
+    // ─── Batch placeholder tests (SPEC-PH-BP-001/002, NP-006) ───
+
+    #[test]
+    fn resolve_batch_input_concatenates_content() {
+        // SPEC-PH-BP-001: {input} in batch mode → concatenated file contents
+        use crate::types::InputFile;
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut f1 = NamedTempFile::new().unwrap();
+        write!(f1, "line one").unwrap();
+        let mut f2 = NamedTempFile::new().unwrap();
+        write!(f2, "line two").unwrap();
+
+        let mut inputs = BTreeMap::new();
+        inputs.insert(
+            "file".to_string(),
+            vec![
+                InputFile::new(f1.path().to_path_buf()),
+                InputFile::new(f2.path().to_path_buf()),
+            ],
+        );
+        let prior = BTreeMap::new();
+        let mut warns = ResolutionWarnings::new();
+
+        let result = resolve_placeholders("{input}", &mut inputs, &prior, &mut warns);
+        assert_eq!(result, "line one\nline two");
+        assert!(warns.warnings.is_empty());
+    }
+
+    #[test]
+    fn resolve_batch_input_content_alias() {
+        // SPEC-PH-BP-001: {input.content} is an alias for {input}
+        use crate::types::InputFile;
+        use std::io::Write;
+        use tempfile::NamedTempFile;
+
+        let mut f1 = NamedTempFile::new().unwrap();
+        write!(f1, "content").unwrap();
+
+        let mut inputs = BTreeMap::new();
+        inputs.insert(
+            "file".to_string(),
+            vec![InputFile::new(f1.path().to_path_buf())],
+        );
+        let prior = BTreeMap::new();
+        let mut warns = ResolutionWarnings::new();
+
+        let result = resolve_placeholders("{input.content}", &mut inputs, &prior, &mut warns);
+        assert_eq!(result, "content");
+    }
+
+    #[test]
+    fn resolve_input_paths_space_separated() {
+        // SPEC-PH-BP-002: {input.paths} → space-separated absolute paths
+        use crate::types::InputFile;
+
+        let mut inputs = BTreeMap::new();
+        inputs.insert(
+            "file".to_string(),
+            vec![
+                InputFile::new(std::path::PathBuf::from("/tmp/a.py")),
+                InputFile::new(std::path::PathBuf::from("/tmp/b.py")),
+            ],
+        );
+        let prior = BTreeMap::new();
+        let mut warns = ResolutionWarnings::new();
+
+        let result = resolve_placeholders("{input.paths}", &mut inputs, &prior, &mut warns);
+        assert_eq!(result, "/tmp/a.py /tmp/b.py");
+        assert!(warns.warnings.is_empty());
+    }
+
+    #[test]
+    fn resolve_named_input_paths_plural() {
+        // SPEC-PH-NP-006: {input.<name>.paths} → space-separated paths for named slot
+        use crate::types::InputFile;
+
+        let mut inputs = BTreeMap::new();
+        inputs.insert(
+            "code".to_string(),
+            vec![
+                InputFile::new(std::path::PathBuf::from("/tmp/a.py")),
+                InputFile::new(std::path::PathBuf::from("/tmp/b.py")),
+            ],
+        );
+        let prior = BTreeMap::new();
+        let mut warns = ResolutionWarnings::new();
+
+        let result =
+            resolve_placeholders("{input.code.paths}", &mut inputs, &prior, &mut warns);
+        assert_eq!(result, "/tmp/a.py /tmp/b.py");
+        assert!(warns.warnings.is_empty());
+    }
+
+    #[test]
+    fn resolve_named_input_paths_undefined_warns() {
+        let mut inputs = BTreeMap::new();
+        let prior = BTreeMap::new();
+        let mut warns = ResolutionWarnings::new();
+
+        let result =
+            resolve_placeholders("{input.missing.paths}", &mut inputs, &prior, &mut warns);
+        assert_eq!(result, "");
+        assert_eq!(warns.warnings.len(), 1);
+        assert!(warns.warnings[0].contains("missing"));
+    }
+
+    #[test]
+    fn resolve_batch_input_empty_pool() {
+        // {input} with no files resolves to empty string
+        let mut inputs = BTreeMap::new();
+        let prior = BTreeMap::new();
+        let mut warns = ResolutionWarnings::new();
+
+        let result = resolve_placeholders("{input}", &mut inputs, &prior, &mut warns);
+        assert_eq!(result, "");
     }
 }

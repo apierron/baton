@@ -143,11 +143,11 @@ Placeholders available when a validator operates in batch mode (`collect = true`
 
 SPEC-PH-BP-001: input-resolves-to-concatenated-content
   `{input}` in batch mode resolves to the concatenated contents of all matched files.
-  test: TODO
+  test: placeholder::tests::resolve_batch_input_concatenates_content
 
 SPEC-PH-BP-002: input-paths-resolves-to-space-separated
   `{input.paths}` resolves to space-separated absolute paths.
-  test: TODO
+  test: placeholder::tests::resolve_input_paths_space_separated
 
 ---
 
@@ -177,7 +177,7 @@ SPEC-PH-NP-005: named-input-content
 
 SPEC-PH-NP-006: named-input-paths-plural
   `{input.<name>.paths}` resolves to space-separated paths when the slot has multiple files.
-  test: TODO
+  test: placeholder::tests::resolve_named_input_paths_plural
 
 SPEC-PH-NP-007: missing-named-input-warns
   Referencing an `{input.<name>}` that doesn't exist in the validator's declarations produces a warning and resolves to empty string.

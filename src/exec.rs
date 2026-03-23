@@ -4,7 +4,8 @@
 //! dispatches to script/LLM/human executors, and computes the final verdict.
 
 use chrono::Utc;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::Instant;
 
@@ -695,6 +696,375 @@ fn drive_session(
         feedback: parsed.evidence,
         duration_ms: 0,
         cost: session_result.cost,
+    }
+}
+
+// ─── File collector ──────────────────────────────────────
+
+/// Options for building the input file pool.
+pub struct FileCollectOptions {
+    pub files: Vec<PathBuf>,
+    pub diff: Option<String>,
+    pub file_list: Option<String>,
+    pub recursive: bool,
+}
+
+/// Build the input pool from positional args, `--diff`, and `--files`.
+///
+/// Directories are walked recursively unless `recursive` is false.
+/// The pool is deduplicated by canonical (absolute, symlink-resolved) path.
+pub fn collect_file_pool(opts: &FileCollectOptions) -> Result<Vec<InputFile>> {
+    let mut pool: Vec<InputFile> = Vec::new();
+
+    // Positional files/directories
+    for file_path in &opts.files {
+        if !file_path.exists() {
+            return Err(BatonError::ValidationError(format!(
+                "File not found: {}",
+                file_path.display()
+            )));
+        }
+        if file_path.is_dir() {
+            if opts.recursive {
+                walk_dir(file_path, &mut pool);
+            } else {
+                // Non-recursive: only direct children that are files
+                if let Ok(entries) = std::fs::read_dir(file_path) {
+                    for entry in entries.flatten() {
+                        let p = entry.path();
+                        if !p.is_dir() {
+                            pool.push(InputFile::new(p));
+                        }
+                    }
+                }
+            }
+        } else {
+            pool.push(InputFile::new(file_path.clone()));
+        }
+    }
+
+    // --diff <refspec>: run git diff --name-only
+    if let Some(ref refspec) = opts.diff {
+        match Command::new("git")
+            .args(["diff", "--name-only", refspec])
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    let p = PathBuf::from(line.trim());
+                    if p.exists() {
+                        pool.push(InputFile::new(p));
+                    }
+                }
+            }
+            Ok(output) => {
+                return Err(BatonError::ValidationError(format!(
+                    "git diff failed: {}",
+                    String::from_utf8_lossy(&output.stderr).trim()
+                )));
+            }
+            Err(e) => {
+                return Err(BatonError::ValidationError(format!(
+                    "could not run git diff: {e}"
+                )));
+            }
+        }
+    }
+
+    // --files <path | ->: read newline-separated paths
+    if let Some(ref source) = opts.file_list {
+        let content = if source == "-" {
+            use std::io::Read;
+            let mut buf = String::new();
+            std::io::stdin().read_to_string(&mut buf)?;
+            buf
+        } else {
+            std::fs::read_to_string(source).map_err(|e| {
+                BatonError::ValidationError(format!("reading file list '{source}': {e}"))
+            })?
+        };
+        for line in content.lines() {
+            let line = line.trim();
+            if !line.is_empty() {
+                pool.push(InputFile::new(PathBuf::from(line)));
+            }
+        }
+    }
+
+    // Deduplicate by canonical path
+    let mut seen = HashSet::new();
+    pool.retain(|f| {
+        if let Ok(canonical) = std::fs::canonicalize(&f.path) {
+            seen.insert(canonical)
+        } else {
+            true // keep files that can't be canonicalized
+        }
+    });
+
+    Ok(pool)
+}
+
+/// Recursively walk a directory, collecting all files.
+fn walk_dir(dir: &std::path::Path, pool: &mut Vec<InputFile>) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                walk_dir(&p, pool);
+            } else {
+                pool.push(InputFile::new(p));
+            }
+        }
+    }
+}
+
+// ─── Dispatch planner ────────────────────────────────────
+
+use crate::config::InputDecl;
+
+/// Match a filename against a glob pattern (e.g. "*.py", "src/**/*.rs").
+fn glob_matches(pattern: &str, path: &std::path::Path) -> bool {
+    let filename = path.file_name().unwrap_or_default().to_string_lossy();
+    let path_str = path.to_string_lossy();
+    // Try matching against full path first, then filename only
+    glob_match::glob_match(pattern, &path_str) || glob_match::glob_match(pattern, &filename)
+}
+
+/// Extract a key value from a file path based on a key expression.
+///
+/// Supported expressions: `{stem}`, `{name}`, `{ext}`.
+fn extract_key(expr: &str, path: &std::path::Path) -> Option<String> {
+    match expr {
+        "{stem}" => path.file_stem().map(|s| s.to_string_lossy().to_string()),
+        "{name}" => path.file_name().map(|s| s.to_string_lossy().to_string()),
+        "{ext}" => path.extension().map(|s| s.to_string_lossy().to_string()),
+        _ => Option::None,
+    }
+}
+
+/// Plan dispatch: turn a validator's input declaration + file pool into invocations.
+///
+/// Returns `(invocations, warnings)`. An empty invocations vec with warnings
+/// means the validator should be skipped.
+pub fn plan_dispatch(
+    validator: &ValidatorConfig,
+    pool: &[InputFile],
+) -> (Vec<Invocation>, Vec<String>) {
+    let mut warnings = Vec::new();
+
+    match &validator.input {
+        InputDecl::None => {
+            // DP-001: single invocation, no files
+            let inv = Invocation {
+                validator_name: validator.name.clone(),
+                group_key: Option::None,
+                inputs: BTreeMap::new(),
+            };
+            (vec![inv], warnings)
+        }
+        InputDecl::PerFile { pattern } => {
+            // DP-002: one invocation per matching file
+            let matching: Vec<&InputFile> = pool
+                .iter()
+                .filter(|f| glob_matches(pattern, &f.path))
+                .collect();
+
+            if matching.is_empty() {
+                // DP-007
+                warnings.push(format!(
+                    "Validator '{}': no files match pattern '{}'",
+                    validator.name, pattern
+                ));
+                return (vec![], warnings);
+            }
+
+            let invocations = matching
+                .into_iter()
+                .map(|f| {
+                    let mut inputs = BTreeMap::new();
+                    inputs.insert("file".to_string(), vec![f.clone()]);
+                    Invocation {
+                        validator_name: validator.name.clone(),
+                        group_key: Option::None,
+                        inputs,
+                    }
+                })
+                .collect();
+            (invocations, warnings)
+        }
+        InputDecl::Batch { pattern } => {
+            // DP-003: single invocation with all matching files
+            let matching: Vec<InputFile> = pool
+                .iter()
+                .filter(|f| glob_matches(pattern, &f.path))
+                .cloned()
+                .collect();
+
+            if matching.is_empty() {
+                warnings.push(format!(
+                    "Validator '{}': no files match pattern '{}'",
+                    validator.name, pattern
+                ));
+                return (vec![], warnings);
+            }
+
+            let mut inputs = BTreeMap::new();
+            inputs.insert("file".to_string(), matching);
+            let inv = Invocation {
+                validator_name: validator.name.clone(),
+                group_key: Option::None,
+                inputs,
+            };
+            (vec![inv], warnings)
+        }
+        InputDecl::Named(slots) => {
+            // Separate fixed inputs from glob-matched inputs
+            let mut fixed_inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
+            let mut keyed_slots: Vec<(&String, &crate::config::InputSlot)> = Vec::new();
+            let mut unkeyed_slots: Vec<(&String, &crate::config::InputSlot)> = Vec::new();
+
+            for (slot_name, slot) in slots {
+                if let Some(ref path) = slot.path {
+                    // DP-006: fixed input
+                    fixed_inputs.insert(
+                        slot_name.clone(),
+                        vec![InputFile::new(PathBuf::from(path))],
+                    );
+                } else if slot.key.is_some() {
+                    keyed_slots.push((slot_name, slot));
+                } else {
+                    unkeyed_slots.push((slot_name, slot));
+                }
+            }
+
+            if keyed_slots.is_empty() && unkeyed_slots.is_empty() {
+                // Only fixed inputs — single invocation
+                let inv = Invocation {
+                    validator_name: validator.name.clone(),
+                    group_key: Option::None,
+                    inputs: fixed_inputs,
+                };
+                return (vec![inv], warnings);
+            }
+
+            if !keyed_slots.is_empty() {
+                // DP-004: group by key
+                // For each keyed slot, match files and extract keys
+                let mut slot_keys: BTreeMap<String, BTreeMap<String, Vec<InputFile>>> =
+                    BTreeMap::new(); // key_value -> slot_name -> files
+
+                for (slot_name, slot) in &keyed_slots {
+                    let pattern = slot.match_pattern.as_deref().unwrap_or("*");
+                    let key_expr = slot.key.as_deref().unwrap();
+
+                    for file in pool {
+                        if glob_matches(pattern, &file.path) {
+                            if let Some(key_val) = extract_key(key_expr, &file.path) {
+                                slot_keys
+                                    .entry(key_val)
+                                    .or_default()
+                                    .entry((*slot_name).clone())
+                                    .or_default()
+                                    .push(file.clone());
+                            }
+                        }
+                    }
+                }
+
+                // Collect all key values
+                let all_keys: HashSet<String> = slot_keys.keys().cloned().collect();
+                let slot_names: Vec<&String> =
+                    keyed_slots.iter().map(|(name, _)| *name).collect();
+
+                let mut invocations = Vec::new();
+                for key_val in &all_keys {
+                    // DP-005: check completeness
+                    let group = slot_keys.get(key_val);
+                    let complete = slot_names.iter().all(|name| {
+                        group
+                            .map(|g| g.contains_key(*name))
+                            .unwrap_or(false)
+                    });
+
+                    if !complete {
+                        warnings.push(format!(
+                            "Validator '{}': incomplete group for key '{}', skipping",
+                            validator.name, key_val
+                        ));
+                        continue;
+                    }
+
+                    let mut inputs = fixed_inputs.clone();
+                    if let Some(group) = group {
+                        for (slot_name, files) in group {
+                            inputs.insert(slot_name.clone(), files.clone());
+                        }
+                    }
+
+                    // Also add unkeyed slots
+                    for (slot_name, slot) in &unkeyed_slots {
+                        let pattern = slot.match_pattern.as_deref().unwrap_or("*");
+                        let matching: Vec<InputFile> = pool
+                            .iter()
+                            .filter(|f| glob_matches(pattern, &f.path))
+                            .cloned()
+                            .collect();
+                        if !matching.is_empty() {
+                            if slot.collect {
+                                inputs.insert((*slot_name).clone(), matching);
+                            } else if let Some(first) = matching.into_iter().next() {
+                                inputs.insert((*slot_name).clone(), vec![first]);
+                            }
+                        }
+                    }
+
+                    invocations.push(Invocation {
+                        validator_name: validator.name.clone(),
+                        group_key: Some(key_val.clone()),
+                        inputs,
+                    });
+                }
+
+                if invocations.is_empty() && !all_keys.is_empty() {
+                    warnings.push(format!(
+                        "Validator '{}': all groups incomplete",
+                        validator.name
+                    ));
+                }
+                if all_keys.is_empty() {
+                    warnings.push(format!(
+                        "Validator '{}': no files match any keyed input patterns",
+                        validator.name
+                    ));
+                }
+
+                return (invocations, warnings);
+            }
+
+            // Only unkeyed named slots — single invocation
+            let mut inputs = fixed_inputs;
+            for (slot_name, slot) in &unkeyed_slots {
+                let pattern = slot.match_pattern.as_deref().unwrap_or("*");
+                let matching: Vec<InputFile> = pool
+                    .iter()
+                    .filter(|f| glob_matches(pattern, &f.path))
+                    .cloned()
+                    .collect();
+                if slot.collect {
+                    inputs.insert((*slot_name).clone(), matching);
+                } else if let Some(first) = matching.into_iter().next() {
+                    inputs.insert((*slot_name).clone(), vec![first]);
+                }
+            }
+
+            let inv = Invocation {
+                validator_name: validator.name.clone(),
+                group_key: Option::None,
+                inputs,
+            };
+            (vec![inv], warnings)
+        }
     }
 }
 
@@ -3154,26 +3524,27 @@ mod tests {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // v2 migration: File collector tests (SPEC-EX-FC-*)
+    // File collector tests (SPEC-EX-FC-*)
     // ═══════════════════════════════════════════════════════════════
-
-    // NOTE: These tests define the contract for the file collector
-    // module that will be added to exec.rs. The function signatures
-    // don't exist yet — tests use the new InputFile type to validate
-    // the expected behavior patterns.
 
     #[test]
     fn file_collector_single_file() {
         // SPEC-EX-FC-001: positional file args populate the input pool
-        use crate::types::InputFile;
         use std::io::Write;
         use tempfile::NamedTempFile;
 
         let mut f = NamedTempFile::new().unwrap();
         write!(f, "content").unwrap();
 
-        let input = InputFile::new(f.path().to_path_buf());
-        assert!(input.path.exists());
+        let opts = FileCollectOptions {
+            files: vec![f.path().to_path_buf()],
+            diff: None,
+            file_list: None,
+            recursive: true,
+        };
+        let pool = collect_file_pool(&opts).unwrap();
+        assert_eq!(pool.len(), 1);
+        assert_eq!(pool[0].path, f.path().to_path_buf());
     }
 
     #[test]
@@ -3186,23 +3557,14 @@ mod tests {
         std::fs::write(dir.path().join("a.py"), "a").unwrap();
         std::fs::write(dir.path().join("sub/b.py"), "b").unwrap();
 
-        fn walk_dir(path: &std::path::Path) -> Vec<std::path::PathBuf> {
-            let mut files = Vec::new();
-            if path.is_dir() {
-                for entry in std::fs::read_dir(path).unwrap() {
-                    let entry = entry.unwrap();
-                    let p = entry.path();
-                    if p.is_dir() {
-                        files.extend(walk_dir(&p));
-                    } else {
-                        files.push(p);
-                    }
-                }
-            }
-            files
-        }
-        let found = walk_dir(dir.path());
-        assert_eq!(found.len(), 2);
+        let opts = FileCollectOptions {
+            files: vec![dir.path().to_path_buf()],
+            diff: None,
+            file_list: None,
+            recursive: true,
+        };
+        let pool = collect_file_pool(&opts).unwrap();
+        assert_eq!(pool.len(), 2);
     }
 
     #[test]
@@ -3216,15 +3578,14 @@ mod tests {
 
         let canonical = std::fs::canonicalize(&file_path).unwrap();
 
-        let paths = vec![file_path.clone(), canonical.clone()];
-        let mut seen = std::collections::HashSet::new();
-        let deduped: Vec<std::path::PathBuf> = paths
-            .into_iter()
-            .filter_map(|p| std::fs::canonicalize(&p).ok())
-            .filter(|p| seen.insert(p.clone()))
-            .collect();
-
-        assert_eq!(deduped.len(), 1);
+        let opts = FileCollectOptions {
+            files: vec![file_path, canonical],
+            diff: None,
+            file_list: None,
+            recursive: true,
+        };
+        let pool = collect_file_pool(&opts).unwrap();
+        assert_eq!(pool.len(), 1);
     }
 
     #[test]
@@ -3238,165 +3599,270 @@ mod tests {
         std::fs::write(&a, "a").unwrap();
         std::fs::write(&b, "b").unwrap();
 
-        let file_list = format!("{}\n{}\n", a.display(), b.display());
-        let paths: Vec<std::path::PathBuf> = file_list
-            .lines()
-            .filter(|l| !l.is_empty())
-            .map(std::path::PathBuf::from)
-            .collect();
+        let list_file = dir.path().join("filelist.txt");
+        std::fs::write(&list_file, format!("{}\n{}\n", a.display(), b.display())).unwrap();
 
-        assert_eq!(paths.len(), 2);
-        assert!(paths[0].exists());
-        assert!(paths[1].exists());
+        let opts = FileCollectOptions {
+            files: vec![],
+            diff: None,
+            file_list: Some(list_file.display().to_string()),
+            recursive: true,
+        };
+        let pool = collect_file_pool(&opts).unwrap();
+        assert_eq!(pool.len(), 2);
+    }
+
+    #[test]
+    fn file_collector_no_recursive() {
+        // SPEC-EX-FC-005: --no-recursive disables recursive directory walking
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("sub")).unwrap();
+        std::fs::write(dir.path().join("a.py"), "a").unwrap();
+        std::fs::write(dir.path().join("sub/b.py"), "b").unwrap();
+
+        let opts = FileCollectOptions {
+            files: vec![dir.path().to_path_buf()],
+            diff: None,
+            file_list: None,
+            recursive: false,
+        };
+        let pool = collect_file_pool(&opts).unwrap();
+        // Only the top-level file, not the one in sub/
+        assert_eq!(pool.len(), 1);
+    }
+
+    #[test]
+    fn file_collector_not_found_errors() {
+        let opts = FileCollectOptions {
+            files: vec![std::path::PathBuf::from("/nonexistent/file.py")],
+            diff: None,
+            file_list: None,
+            recursive: true,
+        };
+        assert!(collect_file_pool(&opts).is_err());
+    }
+
+    #[test]
+    fn file_collector_empty_lines_skipped() {
+        // Empty lines in file list should be skipped
+        use tempfile::TempDir;
+
+        let dir = TempDir::new().unwrap();
+        let a = dir.path().join("a.py");
+        std::fs::write(&a, "a").unwrap();
+
+        let list_file = dir.path().join("filelist.txt");
+        std::fs::write(&list_file, format!("\n{}\n\n", a.display())).unwrap();
+
+        let opts = FileCollectOptions {
+            files: vec![],
+            diff: None,
+            file_list: Some(list_file.display().to_string()),
+            recursive: true,
+        };
+        let pool = collect_file_pool(&opts).unwrap();
+        assert_eq!(pool.len(), 1);
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // v2 migration: Dispatch planner tests (SPEC-EX-DP-*)
+    // Dispatch planner tests (SPEC-EX-DP-*)
     // ═══════════════════════════════════════════════════════════════
+
+    fn validator_with_input(name: &str, input: crate::config::InputDecl) -> ValidatorConfig {
+        ValidatorConfig {
+            name: name.into(),
+            input,
+            ..th::ValidatorBuilder::script(name, "echo ok").build()
+        }
+    }
 
     #[test]
     fn dispatch_no_input_produces_single_invocation() {
         // SPEC-EX-DP-001: validator with no input field produces one invocation
-        use crate::types::Invocation;
-
-        // A validator with no input declaration should produce exactly one
-        // invocation with an empty inputs map
-        let inv = Invocation {
-            validator_name: "lint".into(),
-            group_key: None,
-            inputs: BTreeMap::new(),
-        };
-        assert!(inv.inputs.is_empty());
-        assert!(inv.group_key.is_none());
+        let v = validator_with_input("lint", crate::config::InputDecl::None);
+        let pool: Vec<InputFile> = vec![];
+        let (invocations, warnings) = plan_dispatch(&v, &pool);
+        assert_eq!(invocations.len(), 1);
+        assert!(invocations[0].inputs.is_empty());
+        assert!(invocations[0].group_key.is_none());
+        assert!(warnings.is_empty());
     }
 
     #[test]
     fn dispatch_per_file_produces_one_per_match() {
         // SPEC-EX-DP-002: per-file input produces one invocation per matching file
-        use crate::types::{InputFile, Invocation};
-
-        // Simulate: validator with input = "*.py" and pool has 3 .py files
-        let files = vec![
+        let v = validator_with_input(
+            "lint",
+            crate::config::InputDecl::PerFile {
+                pattern: "*.py".into(),
+            },
+        );
+        let pool = vec![
             InputFile::new(std::path::PathBuf::from("/tmp/a.py")),
             InputFile::new(std::path::PathBuf::from("/tmp/b.py")),
-            InputFile::new(std::path::PathBuf::from("/tmp/c.py")),
+            InputFile::new(std::path::PathBuf::from("/tmp/c.rs")),
         ];
-
-        // The dispatch planner should produce 3 invocations
-        let invocations: Vec<Invocation> = files
-            .into_iter()
-            .map(|f| Invocation {
-                validator_name: "lint".into(),
-                group_key: None,
-                inputs: {
-                    let mut m = BTreeMap::new();
-                    m.insert("file".into(), vec![f]);
-                    m
-                },
-            })
-            .collect();
-
-        assert_eq!(invocations.len(), 3);
+        let (invocations, warnings) = plan_dispatch(&v, &pool);
+        assert_eq!(invocations.len(), 2); // a.py and b.py match, c.rs doesn't
         assert_eq!(
             invocations[0].inputs["file"][0].path,
             std::path::PathBuf::from("/tmp/a.py")
         );
         assert_eq!(
-            invocations[2].inputs["file"][0].path,
-            std::path::PathBuf::from("/tmp/c.py")
+            invocations[1].inputs["file"][0].path,
+            std::path::PathBuf::from("/tmp/b.py")
         );
+        assert!(warnings.is_empty());
     }
 
     #[test]
     fn dispatch_batch_produces_single_invocation() {
         // SPEC-EX-DP-003: batch input (collect = true) produces one invocation
-        use crate::types::{InputFile, Invocation};
-
-        let files = vec![
+        let v = validator_with_input(
+            "batch-lint",
+            crate::config::InputDecl::Batch {
+                pattern: "*.py".into(),
+            },
+        );
+        let pool = vec![
             InputFile::new(std::path::PathBuf::from("/tmp/a.py")),
             InputFile::new(std::path::PathBuf::from("/tmp/b.py")),
         ];
-
-        let inv = Invocation {
-            validator_name: "batch-lint".into(),
-            group_key: None,
-            inputs: {
-                let mut m = BTreeMap::new();
-                m.insert("file".into(), files);
-                m
-            },
-        };
-
-        // Single invocation with all files
-        assert_eq!(inv.inputs["file"].len(), 2);
+        let (invocations, warnings) = plan_dispatch(&v, &pool);
+        assert_eq!(invocations.len(), 1);
+        assert_eq!(invocations[0].inputs["file"].len(), 2);
+        assert!(warnings.is_empty());
     }
 
     #[test]
     fn dispatch_keyed_inputs_grouped_by_key() {
         // SPEC-EX-DP-004: named inputs with key expressions grouped by key value
-        use crate::types::{InputFile, Invocation};
+        use crate::config::InputSlot;
 
-        // Simulate: code and spec inputs keyed by {stem}
-        // code: a.py, b.py; spec: a.md, b.md
-        // Should produce 2 invocations: {key=a, code=a.py, spec=a.md}
-        //                               {key=b, code=b.py, spec=b.md}
-        let invocations = [
-            Invocation {
-                validator_name: "check".into(),
-                group_key: Some("a".into()),
-                inputs: {
-                    let mut m = BTreeMap::new();
-                    m.insert(
-                        "code".into(),
-                        vec![InputFile::new(std::path::PathBuf::from("/tmp/a.py"))],
-                    );
-                    m.insert(
-                        "spec".into(),
-                        vec![InputFile::new(std::path::PathBuf::from("/tmp/a.md"))],
-                    );
-                    m
-                },
+        let mut slots = BTreeMap::new();
+        slots.insert(
+            "code".into(),
+            InputSlot {
+                match_pattern: Some("*.py".into()),
+                path: None,
+                key: Some("{stem}".into()),
+                collect: false,
             },
-            Invocation {
-                validator_name: "check".into(),
-                group_key: Some("b".into()),
-                inputs: {
-                    let mut m = BTreeMap::new();
-                    m.insert(
-                        "code".into(),
-                        vec![InputFile::new(std::path::PathBuf::from("/tmp/b.py"))],
-                    );
-                    m.insert(
-                        "spec".into(),
-                        vec![InputFile::new(std::path::PathBuf::from("/tmp/b.md"))],
-                    );
-                    m
-                },
+        );
+        slots.insert(
+            "spec".into(),
+            InputSlot {
+                match_pattern: Some("*.md".into()),
+                path: None,
+                key: Some("{stem}".into()),
+                collect: false,
             },
+        );
+
+        let v = validator_with_input("check", crate::config::InputDecl::Named(slots));
+        let pool = vec![
+            InputFile::new(std::path::PathBuf::from("/tmp/a.py")),
+            InputFile::new(std::path::PathBuf::from("/tmp/b.py")),
+            InputFile::new(std::path::PathBuf::from("/tmp/a.md")),
+            InputFile::new(std::path::PathBuf::from("/tmp/b.md")),
         ];
+
+        let (mut invocations, warnings) = plan_dispatch(&v, &pool);
+        invocations.sort_by(|a, b| a.group_key.cmp(&b.group_key));
 
         assert_eq!(invocations.len(), 2);
         assert_eq!(invocations[0].group_key, Some("a".into()));
         assert_eq!(invocations[1].group_key, Some("b".into()));
         assert_eq!(invocations[0].inputs.len(), 2); // code + spec
+        assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn dispatch_incomplete_group_skips() {
+        // SPEC-EX-DP-005: incomplete group skipped with warning
+        use crate::config::InputSlot;
+
+        let mut slots = BTreeMap::new();
+        slots.insert(
+            "code".into(),
+            InputSlot {
+                match_pattern: Some("*.py".into()),
+                path: None,
+                key: Some("{stem}".into()),
+                collect: false,
+            },
+        );
+        slots.insert(
+            "spec".into(),
+            InputSlot {
+                match_pattern: Some("*.md".into()),
+                path: None,
+                key: Some("{stem}".into()),
+                collect: false,
+            },
+        );
+
+        let v = validator_with_input("check", crate::config::InputDecl::Named(slots));
+        // a has both code and spec, b only has code (no b.md)
+        let pool = vec![
+            InputFile::new(std::path::PathBuf::from("/tmp/a.py")),
+            InputFile::new(std::path::PathBuf::from("/tmp/b.py")),
+            InputFile::new(std::path::PathBuf::from("/tmp/a.md")),
+        ];
+
+        let (invocations, warnings) = plan_dispatch(&v, &pool);
+        assert_eq!(invocations.len(), 1); // only "a" group is complete
+        assert_eq!(invocations[0].group_key, Some("a".into()));
+        assert!(!warnings.is_empty()); // warning about incomplete "b" group
+        assert!(warnings.iter().any(|w| w.contains("incomplete") && w.contains("b")));
+    }
+
+    #[test]
+    fn dispatch_fixed_input_injected() {
+        // SPEC-EX-DP-006: fixed inputs injected into every invocation
+        use crate::config::InputSlot;
+
+        let mut slots = BTreeMap::new();
+        slots.insert(
+            "config".into(),
+            InputSlot {
+                match_pattern: None,
+                path: Some("/etc/config.toml".into()),
+                key: None,
+                collect: false,
+            },
+        );
+
+        let v = validator_with_input("check", crate::config::InputDecl::Named(slots));
+        let pool: Vec<InputFile> = vec![];
+
+        let (invocations, _) = plan_dispatch(&v, &pool);
+        assert_eq!(invocations.len(), 1);
+        assert!(invocations[0].inputs.contains_key("config"));
+        assert_eq!(
+            invocations[0].inputs["config"][0].path,
+            std::path::PathBuf::from("/etc/config.toml")
+        );
     }
 
     #[test]
     fn dispatch_no_matching_files_produces_empty() {
         // SPEC-EX-DP-007: no matching files means validator is skipped
-        // When no files in the pool match a validator's glob, the dispatch
-        // planner should produce zero invocations for that validator.
-        // The execution pipeline should then record a Skip result.
-        let pool: Vec<std::path::PathBuf> = vec![
-            std::path::PathBuf::from("/tmp/readme.md"),
-            std::path::PathBuf::from("/tmp/notes.txt"),
+        let v = validator_with_input(
+            "lint",
+            crate::config::InputDecl::PerFile {
+                pattern: "*.py".into(),
+            },
+        );
+        let pool = vec![
+            InputFile::new(std::path::PathBuf::from("/tmp/readme.md")),
+            InputFile::new(std::path::PathBuf::from("/tmp/notes.txt")),
         ];
-        // A validator wanting "*.py" would find no matches
-        let matching: Vec<&std::path::PathBuf> = pool
-            .iter()
-            .filter(|p| p.extension().is_some_and(|ext| ext == "py"))
-            .collect();
-        assert!(matching.is_empty());
+        let (invocations, warnings) = plan_dispatch(&v, &pool);
+        assert!(invocations.is_empty());
+        assert!(!warnings.is_empty());
     }
 
     // ═══════════════════════════════════════════════════════════════

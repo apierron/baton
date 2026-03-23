@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::process;
 
 use baton::config::{discover_config, parse_config, validate_config};
+use baton::exec;
 use baton::exec::run_gate;
 use baton::history;
 use baton::runtime;
@@ -80,6 +81,10 @@ enum Commands {
         /// Suppress warnings, errors, and failures
         #[arg(long)]
         suppress_all: bool,
+
+        /// Disable recursive directory walking for positional args
+        #[arg(long)]
+        no_recursive: bool,
     },
 
     /// Initialize a new baton project
@@ -323,6 +328,7 @@ fn main() {
             suppress_warnings,
             suppress_errors,
             suppress_all,
+            no_recursive,
         } => cmd_check(
             config.as_ref(),
             &files,
@@ -337,6 +343,7 @@ fn main() {
             suppress_warnings,
             suppress_errors,
             suppress_all,
+            no_recursive,
         ),
         Commands::Init {
             minimal,
@@ -427,6 +434,7 @@ fn cmd_check(
     suppress_warnings: bool,
     suppress_errors: bool,
     suppress_all: bool,
+    no_recursive: bool,
 ) -> i32 {
     let (config, _config_file) = match load_config(config_path) {
         Ok(c) => c,
@@ -436,75 +444,20 @@ fn cmd_check(
         }
     };
 
-    // Build input pool from positional files
-    let mut input_pool: Vec<InputFile> = Vec::new();
-    for file_path in files {
-        if !file_path.exists() {
-            eprintln!("Error: File not found: {}", file_path.display());
+    // Build input pool
+    let collect_opts = exec::FileCollectOptions {
+        files: files.to_vec(),
+        diff: diff.map(|s| s.to_string()),
+        file_list: file_list.map(|s| s.to_string()),
+        recursive: !no_recursive,
+    };
+    let input_pool = match exec::collect_file_pool(&collect_opts) {
+        Ok(pool) => pool,
+        Err(e) => {
+            eprintln!("Error: {e}");
             return 2;
         }
-        if file_path.is_dir() {
-            walk_dir(file_path, &mut input_pool);
-        } else {
-            input_pool.push(InputFile::new(file_path.clone()));
-        }
-    }
-
-    // Add git-changed files via --diff
-    if let Some(refspec) = diff {
-        match std::process::Command::new("git")
-            .args(["diff", "--name-only", refspec])
-            .output()
-        {
-            Ok(output) if output.status.success() => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                for line in stdout.lines() {
-                    let p = PathBuf::from(line.trim());
-                    if p.exists() {
-                        input_pool.push(InputFile::new(p));
-                    }
-                }
-            }
-            Ok(output) => {
-                eprintln!(
-                    "Error: git diff failed: {}",
-                    String::from_utf8_lossy(&output.stderr).trim()
-                );
-                return 2;
-            }
-            Err(e) => {
-                eprintln!("Error: could not run git diff: {e}");
-                return 2;
-            }
-        }
-    }
-
-    // Add file list via --files
-    if let Some(source) = file_list {
-        let content = if source == "-" {
-            use std::io::Read;
-            let mut buf = String::new();
-            if let Err(e) = std::io::stdin().read_to_string(&mut buf) {
-                eprintln!("Error: reading stdin: {e}");
-                return 2;
-            }
-            buf
-        } else {
-            match std::fs::read_to_string(source) {
-                Ok(c) => c,
-                Err(e) => {
-                    eprintln!("Error: reading file list '{source}': {e}");
-                    return 2;
-                }
-            }
-        };
-        for line in content.lines() {
-            let line = line.trim();
-            if !line.is_empty() {
-                input_pool.push(InputFile::new(PathBuf::from(line)));
-            }
-        }
-    }
+    };
 
     // Determine which gates to run (check before moving only/skip)
     let mut gate_names: Vec<String> = config.gates.keys().cloned().collect();
@@ -646,19 +599,6 @@ fn cmd_check(
     }
 
     worst_exit
-}
-
-fn walk_dir(dir: &std::path::Path, pool: &mut Vec<InputFile>) {
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let p = entry.path();
-            if p.is_dir() {
-                walk_dir(&p, pool);
-            } else {
-                pool.push(InputFile::new(p));
-            }
-        }
-    }
 }
 
 /// Compute skip reason for a validator based on --only/--skip.

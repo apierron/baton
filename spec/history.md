@@ -93,31 +93,32 @@ Inserts an InvocationResult and its associated gate results and validator runs i
 
 SPEC-HI-SI-001: invocation-id-is-uuid-v4
   store_invocation generates a UUID v4 string as the invocation's primary key. Each call produces a unique ID.
-  test: TODO
+  test: history::tests::store_invocation_returns_uuid
+  test: history::tests::store_invocation_unique_ids
 
 SPEC-HI-SI-002: invocation-row-inserted
   store_invocation inserts one row into the invocations table. The timestamp is stored as an RFC 3339 string.
-  test: TODO
+  test: history::tests::store_invocation_inserts_invocation_row
 
 SPEC-HI-SI-003: gate-result-rows-inserted
   For each GateResult, store_invocation inserts one row into gate_results with aggregate counts (pass/fail/warn/error/skip).
-  test: TODO
+  test: history::tests::store_invocation_inserts_gate_results
 
 SPEC-HI-SI-004: validator-run-rows-inserted
   For each ValidatorResult within each gate, store_invocation inserts one row into validator_runs. The row includes the gate name, validator name, group_key, and input_files as a JSON column.
-  test: TODO
+  test: history::tests::store_invocation_inserts_validator_runs
 
 SPEC-HI-SI-005: input-files-stored-as-json
   The input_files column contains a JSON array of objects, each with `path` (string) and `hash` (string, SHA-256 of file content at time of validation).
-  test: TODO
+  test: TODO (input_files JSON population depends on dispatch planner wiring)
 
 SPEC-HI-SI-006: tokens-used-stored
   When a ValidatorResult has token usage data, the tokens_used column is populated. Otherwise it is NULL.
-  test: TODO
+  test: history::tests::store_invocation_stores_tokens
 
 SPEC-HI-SI-007: returns-invocation-id-on-success
   On success, store_invocation returns Ok(String) containing the UUID that was used as the invocation's primary key.
-  test: TODO
+  test: history::tests::store_invocation_returns_uuid
 
 ---
 
@@ -165,7 +166,7 @@ SPEC-HI-QF-002: ordered-by-timestamp-desc
 
 SPEC-HI-QF-003: no-match-returns-empty-vec
   When no validator runs reference the given path, returns Ok(Vec::new()).
-  test: TODO
+  test: history::tests::query_by_file_no_match_returns_empty
 
 ---
 
@@ -183,7 +184,7 @@ SPEC-HI-QH-002: ordered-by-timestamp-desc
 
 SPEC-HI-QH-003: no-match-returns-empty-vec
   When no validator runs have a file with the given hash, returns Ok(Vec::new()).
-  test: TODO
+  test: history::tests::query_by_hash_no_match_returns_empty
 
 ---
 
@@ -193,11 +194,11 @@ Queries detail for a specific invocation by ID, returning the full invocation wi
 
 SPEC-HI-QI-001: returns-full-invocation
   Given an invocation ID, returns the invocation row plus all associated gate_results and validator_runs.
-  test: TODO
+  test: history::tests::query_invocation_returns_full_detail
 
 SPEC-HI-QI-002: not-found-returns-error
   When the invocation ID does not exist, returns an error.
-  test: TODO
+  test: history::tests::query_invocation_not_found_returns_error
 
 ---
 

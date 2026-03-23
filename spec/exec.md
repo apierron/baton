@@ -519,7 +519,7 @@ SPEC-EX-FC-004: deduplication-by-canonical-path
 
 SPEC-EX-FC-005: no-recursive-flag
   `--no-recursive` disables recursive directory walking.
-  test: TODO
+  test: exec::tests::file_collector_no_recursive
 
 ---
 
@@ -547,11 +547,11 @@ SPEC-EX-DP-004: keyed-inputs-joined-by-key
 
 SPEC-EX-DP-005: incomplete-group-skips-with-warning
   If a key value appears in one input slot but not another, the group is skipped and a warning is emitted.
-  test: TODO
+  test: exec::tests::dispatch_incomplete_group_skips
 
 SPEC-EX-DP-006: fixed-inputs-injected-into-every-invocation
   An input with `path` (fixed) is present in every invocation, regardless of key grouping.
-  test: TODO
+  test: exec::tests::dispatch_fixed_input_injected
 
 SPEC-EX-DP-007: no-matching-files-skips-validator
   If a validator requires file input but no files in the pool match, the validator is skipped with a warning.
