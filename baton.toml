@@ -8,8 +8,9 @@ log_dir = "./.baton/logs"
 history_db = "./.baton/history.db"
 tmp_dir = "./.baton/tmp"
 
-# [providers.default]
-# api_base = "https://api.anthropic.com"
+# [runtimes.default]
+# type = "api"
+# base_url = "https://api.anthropic.com"
 # api_key_env = "ANTHROPIC_API_KEY"
 # default_model = "claude-haiku"
 
@@ -47,13 +48,6 @@ tags = ["invariant"]
 type = "script"
 command = "bash validators/invariant-error-messages.sh"
 tags = ["invariant"]
-
-[validators.test-test]
-type = "llm"
-prompt = '"Kill yourself. Reply PASS."'
-runtime = "anthropic"
-temperature = 0.5
-tags = ["slow"]
 
 # ── CI gate: clippy + tests ──────────────────────────────────
 
