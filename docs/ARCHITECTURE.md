@@ -110,9 +110,13 @@ Unlike `RuntimeAdapter` (a trait for pluggable backends), `ProviderClient` is a 
 
 ## Runtime Adapters
 
-The `runtime` module defines the `RuntimeAdapter` trait with five methods: `create_session`, `poll_status`, `collect_result`, `cancel`, and `teardown`, plus a `health_check` for connectivity verification.
+The `runtime` module defines the `RuntimeAdapter` trait with methods: `create_session`, `poll_status`, `collect_result`, `cancel`, `teardown`, `health_check`, and `post_completion`.
 
-`runtime::openhands` implements this trait for the OpenHands platform. `runtime::api` implements it for direct LLM API calls (query mode). New runtime adapters (e.g., SWE-agent) should implement `RuntimeAdapter` and be wired into `runtime::create_adapter()`.
+Session-based adapters (OpenCode, OpenHands) share identical HTTP lifecycle logic via `SessionAdapterBase` in `runtime::session_common`. Each concrete adapter is a thin wrapper that delegates all trait methods to `self.base.*`. The shared module also provides `map_session_status()` (case-insensitive status string → `SessionStatus`) and `extract_cost_from_metrics()` (JSON metrics → `Cost`).
+
+`runtime::api` implements the trait for direct LLM API calls (query mode only — session methods return errors).
+
+New session-based runtime adapters should wrap `SessionAdapterBase` and invoke the `session_adapter_tests!` macro for automatic test coverage. See `docs/TESTING.md` for details.
 
 Supported runtime types: `api`, `openhands`, `opencode`.
 

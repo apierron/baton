@@ -7,6 +7,7 @@
 pub mod api;
 pub mod opencode;
 pub mod openhands;
+pub(crate) mod session_common;
 
 use std::collections::BTreeMap;
 use std::fmt::Debug;

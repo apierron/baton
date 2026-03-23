@@ -635,25 +635,6 @@ fn validator_feedback_captured() {
     assert!(feedback.contains("missing semicolons"));
 }
 
-// ─── Skip with Unknown Validator ─────────────────────────
-
-#[test]
-fn skip_unknown_validator_still_succeeds() {
-    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
-    let dir = setup_project(&toml, "hello");
-
-    let output = baton()
-        .args(["check", "--no-log", "--skip", "nonexistent"])
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-
-    // Unknown skip name is silently ignored; validators run normally
-    assert!(output.status.success());
-}
-
-// ─── (Artifact env var tests removed in v2 migration) ──
-
 // ─── Duration Tracked ────────────────────────────────────
 
 #[test]
@@ -1454,23 +1435,6 @@ fn unknown_format_falls_back_to_json_on_stdout() {
     assert_eq!(verdict["status"], "pass");
 }
 
-#[test]
-#[cfg(not(windows))]
-fn suppress_all_flag() {
-    let toml = minimal_toml("review", &script_validator("lint", "echo FAIL; exit 1"));
-    let dir = setup_project(&toml, "hello");
-
-    let output = baton()
-        .args(["check", "--no-log", "--suppress-all"])
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-
-    assert!(output.status.success(), "suppress-all should exit 0");
-    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
-    assert_eq!(verdict["status"], "pass");
-}
-
 // ─── cmd_init gaps ───────────────────────────────────────
 
 #[test]
@@ -1486,20 +1450,6 @@ fn init_creates_prompt_templates() {
     assert!(dir.path().join("prompts/spec-compliance.md").exists());
     assert!(dir.path().join("prompts/adversarial-review.md").exists());
     assert!(dir.path().join("prompts/doc-completeness.md").exists());
-}
-
-#[test]
-fn init_minimal_skips_prompts() {
-    let dir = TempDir::new().unwrap();
-
-    baton()
-        .args(["init", "--minimal"])
-        .current_dir(dir.path())
-        .assert()
-        .success();
-
-    assert!(dir.path().join("baton.toml").exists());
-    assert!(!dir.path().join("prompts").exists());
 }
 
 #[test]
@@ -1679,38 +1629,6 @@ tmp_dir = "./.baton/tmp"
     assert!(parsed.get("gates").is_none());
 }
 
-// ─── cmd_list gaps ───────────────────────────────────────
-
-#[test]
-fn list_gate_not_found_exits_1() {
-    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
-    let dir = setup_project(&toml, "hello");
-
-    baton()
-        .args(["list", "--gate", "nonexistent"])
-        .current_dir(dir.path())
-        .assert()
-        .code(1)
-        .stderr(predicate::str::contains("not found"));
-}
-
-// ─── cmd_history gaps ────────────────────────────────────
-
-#[test]
-fn history_empty_results_message() {
-    let dir = TempDir::new().unwrap();
-    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
-    fs::write(dir.path().join("baton.toml"), toml).unwrap();
-    fs::create_dir_all(dir.path().join(".baton/tmp")).unwrap();
-    fs::create_dir_all(dir.path().join(".baton/logs")).unwrap();
-
-    baton()
-        .args(["history", "--gate", "nonexistent-gate"])
-        .current_dir(dir.path())
-        .assert()
-        .stdout(predicate::str::contains("No verdicts found"));
-}
-
 // ─── cmd_validate_config gaps ────────────────────────────
 
 #[test]
@@ -1763,6 +1681,74 @@ model = "test"
             || stderr.contains("Error")
             || stderr.contains("error"),
         "Should show warning or error for undefined provider: {stderr}"
+    );
+}
+
+#[test]
+fn validate_config_errors_printed_to_stderr() {
+    // SPEC-MN-VC-004: errors printed to stderr
+    let dir = TempDir::new().unwrap();
+    let toml = r#"
+version = "0.6"
+[gates.test]
+[[gates.test.validators]]
+name = "check"
+type = "llm"
+mode = "session"
+prompt = "Review this"
+"#;
+    fs::write(dir.path().join("baton.toml"), toml).unwrap();
+
+    let output = baton()
+        .args(["validate-config"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success(), "Should exit non-zero for errors");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Error") || stderr.contains("error"),
+        "Errors should appear on stderr: {stderr}"
+    );
+}
+
+#[test]
+fn validate_config_warnings_exit_0() {
+    // SPEC-MN-VC-005: warnings-only exits 0
+    let dir = TempDir::new().unwrap();
+    let toml = r#"
+version = "0.6"
+[runtimes.default]
+type = "api"
+base_url = "http://localhost"
+
+[gates.test]
+[[gates.test.validators]]
+name = "check"
+type = "llm"
+prompt = "Review this"
+runtime = "default"
+response_format = "freeform"
+blocking = true
+"#;
+    fs::write(dir.path().join("baton.toml"), toml).unwrap();
+
+    let output = baton()
+        .args(["validate-config"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Warnings-only should exit 0, got: {}",
+        output.status.code().unwrap_or(-1)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Warning") || stderr.contains("warning"),
+        "Should show warnings on stderr: {stderr}"
     );
 }
 

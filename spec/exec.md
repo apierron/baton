@@ -256,17 +256,17 @@ Unified LLM validator execution with runtime fallback. Resolves prompt and place
 
 SPEC-EX-LV-001: no-config-errors
   If config is None, returns Status::Error "[baton] LLM validator requires config with runtime settings".
-  test: UNTESTED
+  test: exec::tests::llm_completion_no_config, exec::tests::llm_session_no_config
 
 SPEC-EX-LV-002: empty-runtimes-errors
   If the validator's runtimes list is empty, returns Status::Error.
-  test: UNTESTED
+  test: exec::tests::llm_session_missing_runtime
 
 ### execute_llm_validator: prompt resolution
 
 SPEC-EX-LV-010: prompt-required
   If the validator has no prompt, returns Status::Error.
-  test: UNTESTED
+  test: IMPLICIT (all LLM tests provide prompts; no-prompt path folded into no-config error path)
 
 SPEC-EX-LV-011: prompt-file-resolution
   File-reference prompts are loaded via resolve_prompt_value.
@@ -274,7 +274,7 @@ SPEC-EX-LV-011: prompt-file-resolution
 
 SPEC-EX-LV-012: prompt-placeholders-resolved
   Placeholders in the prompt are resolved before use.
-  test: UNTESTED
+  test: exec::tests::llm_completion_with_placeholders
 
 ### execute_llm_validator: runtime fallback loop
 
@@ -291,7 +291,7 @@ If all runtimes exhausted, return Error "no reachable runtime".
 
 SPEC-EX-LV-020: runtime-config-lookup
   Each runtime name in the list is looked up in config.runtimes. If not found, returns Status::Error (should not happen if validate_config ran).
-  test: UNTESTED
+  test: exec::tests::llm_session_undefined_runtime
 
 SPEC-EX-LV-021: adapter-creation-failure-tries-next
   If create_adapter fails for a runtime, a warning is logged and the next runtime is tried.
@@ -303,7 +303,7 @@ SPEC-EX-LV-022: health-check-failure-tries-next
 
 SPEC-EX-LV-023: query-mode-calls-post-completion
   In query mode, builds a CompletionRequest from the resolved prompt, model, temperature, max_tokens, and system_prompt, then calls adapter.post_completion().
-  test: UNTESTED
+  test: exec::tests::llm_completion_pass_verdict, exec::tests::llm_completion_with_system_prompt
 
 SPEC-EX-LV-024: query-mode-not-supported-tries-next
   If post_completion returns RuntimeError "not supported", the next runtime is tried.
@@ -311,7 +311,7 @@ SPEC-EX-LV-024: query-mode-not-supported-tries-next
 
 SPEC-EX-LV-025: query-mode-parses-result
   On successful completion, parses the result using verdict or freeform response format, same as the old execute_llm_completion.
-  test: UNTESTED
+  test: exec::tests::llm_completion_pass_verdict, exec::tests::llm_completion_fail_verdict, exec::tests::llm_completion_warn_verdict, exec::tests::llm_completion_freeform_returns_warn
 
 SPEC-EX-LV-026: session-mode-skips-api-runtime
   In session mode, if the runtime type is "api", skip it and try next.
@@ -323,15 +323,15 @@ SPEC-EX-LV-027: session-mode-drives-session
 
 SPEC-EX-LV-028: all-runtimes-exhausted-errors
   If all runtimes in the list are exhausted (unreachable, unsupported, or skipped), returns Status::Error "[baton] No reachable runtime for validator 'X'".
-  test: UNTESTED
+  test: exec::tests::llm_completion_unreachable_provider
 
 SPEC-EX-LV-029: model-resolution-chain
   Model comes from: validator.model → runtime_config.default_model → "default".
-  test: UNTESTED
+  test: exec::tests::llm_completion_uses_default_model
 
 SPEC-EX-LV-030: cost-propagated
   Cost from CompletionResult or SessionResult is propagated to ValidatorResult.
-  test: UNTESTED
+  test: exec::tests::llm_completion_cost_tracking, exec::tests::session_cost_propagated
 
 ---
 
@@ -353,7 +353,7 @@ SPEC-EX-DS-003: poll-timeout-cancels-and-tears-down
 
 SPEC-EX-DS-004: poll-error-cancels-and-tears-down
   If poll_status returns an error, the session is cancelled and torn down.
-  test: UNTESTED (MockRuntimeAdapter doesn't support poll errors currently)
+  test: exec::tests::session_poll_error_cancels_and_tears_down
 
 SPEC-EX-DS-005: completed-status-proceeds-to-collect
   When poll returns Completed, the loop exits and collect_result is called.

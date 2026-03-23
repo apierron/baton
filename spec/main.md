@@ -419,11 +419,11 @@ SPEC-MN-VC-003: warnings-printed-to-stderr
 
 SPEC-MN-VC-004: errors-printed-to-stderr
   Each error is printed as "Error: {e}" to stderr.
-  test: UNTESTED
+  test: cli::validate_config_errors_printed_to_stderr
 
 SPEC-MN-VC-005: errors-exit-1-warnings-exit-0
   If `validation.has_errors()` is true, returns exit code 1. If only warnings are present (no errors), returns exit code 0.
-  test: UNTESTED
+  test: cli::validate_config_warnings_exit_0
 
 ---
 

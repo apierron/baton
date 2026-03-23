@@ -2656,4 +2656,60 @@ validators = []
         let result = parse_config(toml, &config_dir());
         assert!(result.is_err());
     }
+
+    // ─── Session / API Runtime Validation ────────────
+
+    #[test]
+    fn validate_session_mode_all_api_runtimes_errors() {
+        // SPEC-CF-VC-025: session mode with ALL api runtimes → error
+        let toml = r#"
+version = "0.6"
+[runtimes.rt1]
+type = "api"
+base_url = "http://localhost:8001"
+
+[runtimes.rt2]
+type = "api"
+base_url = "http://localhost:8002"
+
+[gates.test]
+[[gates.test.validators]]
+name = "check"
+type = "llm"
+mode = "session"
+prompt = "Review this"
+runtime = ["rt1", "rt2"]
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        let validation = validate_config(&config);
+        assert!(
+            validation.has_errors(),
+            "Expected error when all runtimes are api type for session mode. Errors: {:?}, Warnings: {:?}",
+            validation.errors,
+            validation.warnings
+        );
+    }
+
+    #[test]
+    fn api_runtime_double_trailing_slash_only_one_stripped() {
+        // SPEC-CF-PC-028: only a single trailing slash is stripped
+        let toml = r#"
+version = "0.6"
+[runtimes.default]
+type = "api"
+base_url = "https://api.example.com//"
+default_model = "test-model"
+
+[gates.test]
+[[gates.test.validators]]
+name = "check"
+type = "script"
+command = "echo ok"
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        assert_eq!(
+            config.runtimes["default"].base_url,
+            "https://api.example.com/"
+        );
+    }
 }

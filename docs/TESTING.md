@@ -48,6 +48,30 @@ mod tests {
 }
 ```
 
+## Runtime Adapter Tests
+
+Session-based runtime adapters (OpenCode, OpenHands, and any future adapters) share identical HTTP lifecycle logic. To avoid duplicating ~40 tests per adapter, the shared test suite lives in a macro:
+
+```rust
+// src/runtime/session_common.rs defines the macro
+session_adapter_tests!(AdapterType, "ENV_PREFIX", |server| { /* factory */ });
+```
+
+Each adapter file (`opencode.rs`, `openhands.rs`) invokes this macro in its `mod tests` block. The macro generates tests for: status mapping, cost extraction, constructor behavior, auth headers, and all HTTP operations (health check, create session, poll, collect, cancel, teardown).
+
+**Adding a new session-based runtime adapter:**
+
+1. Create `src/runtime/my_adapter.rs` with a struct wrapping `SessionAdapterBase`
+2. Implement `RuntimeAdapter` by delegating all methods to `self.base.*`
+3. Add a `#[cfg(test)] mod tests` block that invokes `session_adapter_tests!`
+4. Wire it into `create_adapter()` in `src/runtime/mod.rs`
+
+The macro gives you full test coverage automatically. Only add adapter-specific tests outside the macro if the adapter has unique behavior.
+
+**Key files:**
+- `src/runtime/session_common.rs` — `SessionAdapterBase` (shared impl) + `session_adapter_tests!` (shared tests) + `map_session_status()` + `extract_cost_from_metrics()`
+- `src/runtime/opencode.rs` / `openhands.rs` — thin wrappers that delegate to `SessionAdapterBase`
+
 ## Patterns
 
 ### Filesystem Tests

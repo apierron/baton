@@ -54,6 +54,7 @@ See `docs/ARCHITECTURE.md` for the full dependency table and design rationale (t
 - Validators are defined top-level in `[validators]`; gates reference them with optional `blocking`/`run_if` overrides
 - Error messages must include the offending value and enough context to act on
 - All tests in `#[cfg(test)] mod tests` at bottom of each module, using `tempfile` for filesystem tests
+- Runtime adapter tests use the `session_adapter_tests!` macro in `session_common.rs` — new session adapters invoke this macro for automatic coverage
 
 See `docs/CONVENTIONS.md` for the full list.
 

@@ -113,7 +113,7 @@ SPEC-CF-PC-027: api-type-runtime-base-url-env-vars-resolved
 
 SPEC-CF-PC-028: api-type-runtime-trailing-slash-stripped
   For runtimes with type="api", after env var resolution, if `base_url` ends with '/', the trailing slash is removed. Only a single trailing slash is stripped (the code calls `pop()` once). This normalizes URLs so downstream code can append paths without double-slash issues.
-  test: UNTESTED
+  test: config::tests::api_runtime_trailing_slash_stripped, config::tests::api_runtime_double_trailing_slash_only_one_stripped
 
 ### parse_config: gate and validator parsing
 
@@ -236,11 +236,11 @@ SPEC-CF-VC-011: validation-checks-only-llm-validators
 
 SPEC-CF-VC-025: session-mode-all-api-runtimes-errors
   If mode=session and ALL listed runtimes have type="api", an error is produced containing "no session-capable runtimes". Session mode requires at least one runtime that supports interactive sessions (e.g., type="cli"), not just API runtimes.
-  test: UNTESTED
+  test: config::tests::validate_session_mode_all_api_runtimes_errors
 
 SPEC-CF-VC-026: session-mode-any-api-runtime-warns
   If mode=session and ANY listed runtime has type="api", a warning is produced for each such runtime containing "api runtime 'X' will be skipped for session mode". This is not an error because the validator can still run on the non-API runtimes.
-  test: UNTESTED
+  test: config::tests::validate_session_mode_api_runtime_warns
 
 SPEC-CF-VC-027: api-runtime-api-key-env-check
   For runtimes with type="api", if `api_key_env` is set and non-empty, check that the named environment variable exists (std::env::var returns Ok). If the env var is not set, an error is produced containing the runtime name and the env var name. If `api_key_env` is empty or unset, this check is skipped.

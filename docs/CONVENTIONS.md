@@ -37,6 +37,7 @@ Serde default functions (`fn default_timeout() -> u64 { 300 }`) live immediately
 - Tests for `config.rs` live in `config.rs`, not in a separate `tests/` directory.
 - Integration tests (testing the compiled binary) use `assert_cmd` and live in `tests/`.
 - Shared test helpers live in `src/test_helpers.rs` (`#[cfg(test)]` gated, `pub mod` in `lib.rs`). This module provides `ValidatorBuilder`, result/gate/config factories, `MockRuntimeAdapter`, and factories for `InputFile` and `Invocation`. Import as `use crate::test_helpers as th;`. If a helper is only needed by one module, keep it local to that module's `mod tests`.
+- Runtime adapter tests use the `session_adapter_tests!` macro from `session_common.rs` to avoid duplicating ~40 tests per adapter. New session adapters invoke this macro rather than writing tests from scratch.
 
 ## Placeholder Resolution Is Lazy
 
