@@ -716,3 +716,240 @@ SPEC-RT-API-030: session-methods-return-error
   test: runtime::api::tests::collect_result_returns_error
   test: runtime::api::tests::cancel_returns_error
   test: runtime::api::tests::teardown_returns_error
+
+---
+
+## ClaudeCodeAdapter
+
+Subprocess-based runtime adapter for Claude Code (Anthropic's CLI tool). Unlike OpenHands/OpenCode which use HTTP APIs, this adapter spawns `claude` as a child process. Supports both query mode (one-shot completions via `post_completion`) and session mode (background subprocess lifecycle).
+
+Internal state: tracks running child processes via `Mutex<HashMap<String, ChildState>>` because trait methods take `&self`. Each session has a workspace directory (temp dir with input files), an optional `Child` process handle, and collected stdout/stderr.
+
+### ClaudeCodeAdapter::new
+
+Constructs the adapter from connection parameters. The `base_url` config field is repurposed as the path to the `claude` binary (defaults to `"claude"`).
+
+SPEC-RT-CC-001: claude-path-from-base-url
+  The `base_url` config value is stored as the path to the `claude` binary. If `base_url` is `"claude"` (the default), the system PATH is used to locate the binary at runtime.
+  test: runtime::claude_code::tests::new_stores_claude_path
+
+SPEC-RT-CC-002: api-key-env-resolved-from-environment
+  When `api_key_env` is `Some(name)` and `name` is non-empty, the constructor reads the environment variable. If set, the value is stored for passing to subprocess environments. If not set, returns `Err(ConfigError)` with a message containing the variable name and "is not set".
+  test: runtime::claude_code::tests::new_missing_env_var_returns_config_error
+  test: runtime::claude_code::tests::new_valid_env_var_is_resolved
+
+SPEC-RT-CC-003: api-key-env-none-means-no-auth
+  When `api_key_env` is `None`, no API key is resolved. The subprocess inherits the parent process's environment (which may already have `ANTHROPIC_API_KEY` set).
+  test: runtime::claude_code::tests::new_no_api_key_env
+
+SPEC-RT-CC-004: api-key-env-empty-string-means-no-auth
+  When `api_key_env` is `Some("")` (empty string), it is treated the same as `None`.
+  test: runtime::claude_code::tests::new_empty_api_key_env
+
+SPEC-RT-CC-005: max-iterations-stored-as-max-turns
+  The `max_iterations` config value is stored as `max_turns` for use with Claude Code's `--max-turns` flag.
+  test: runtime::claude_code::tests::new_stores_config_fields
+
+SPEC-RT-CC-006: sessions-map-initialized-empty
+  The internal sessions map is initialized as an empty `HashMap` wrapped in a `Mutex`.
+  test: IMPLICIT via constructor tests
+
+---
+
+### ClaudeCodeAdapter::health_check
+
+Verifies that the `claude` binary is available and functional by running `claude --version`.
+
+SPEC-RT-CC-HC-001: runs-claude-version
+  Spawns `{claude_path} --version` as a subprocess. On success (exit code 0), returns `Ok(HealthResult)` with `reachable=true` and `version` extracted from stdout.
+  test: runtime::claude_code::tests::health_check_success
+
+SPEC-RT-CC-HC-002: binary-not-found-returns-not-reachable
+  If the binary cannot be found (spawn fails with `NotFound`), returns `Ok(HealthResult)` with `reachable=false` and a diagnostic message.
+  test: runtime::claude_code::tests::health_check_binary_not_found
+
+SPEC-RT-CC-HC-003: non-zero-exit-returns-not-reachable
+  If the binary exits with a non-zero status, returns `Ok(HealthResult)` with `reachable=false` and a message containing the exit code.
+  test: runtime::claude_code::tests::health_check_non_zero_exit
+
+---
+
+### ClaudeCodeAdapter::create_session
+
+Creates a new agent session by spawning `claude -p` as a background subprocess.
+
+SPEC-RT-CC-CS-001: workspace-dir-created-as-temp-dir
+  A new temporary directory is created for the session's workspace. Input files from `config.files` are copied into this directory.
+  test: runtime::claude_code::tests::create_session_creates_workspace
+
+SPEC-RT-CC-CS-002: files-copied-to-workspace
+  For each entry in `config.files`, the file at the path (value) is read from disk and written to the workspace directory using the map key as the filename.
+  test: runtime::claude_code::tests::create_session_copies_files
+
+SPEC-RT-CC-CS-003: file-read-error-returns-validation-error
+  If reading a source file fails, returns `Err(ValidationError)` with a message containing the file name and path.
+  test: runtime::claude_code::tests::create_session_file_read_error
+
+SPEC-RT-CC-CS-004: subprocess-spawned-with-print-mode
+  Spawns `{claude_path} -p "{task}" --output-format json` with the workspace directory as the current working directory. If `default_model` is set, adds `--model {model}`. If `max_turns > 0`, adds `--max-turns {max_turns}`.
+  test: runtime::claude_code::tests::create_session_spawns_subprocess
+
+SPEC-RT-CC-CS-005: api-key-passed-via-env
+  If an API key was resolved during construction, it is passed to the subprocess via the `ANTHROPIC_API_KEY` environment variable.
+  test: UNTESTED
+
+SPEC-RT-CC-CS-006: handle-returned-with-session-id
+  On success, returns `Ok(SessionHandle)` with `id` set to a generated UUID and `workspace_id` set to the workspace directory path.
+  test: runtime::claude_code::tests::create_session_returns_handle
+
+SPEC-RT-CC-CS-007: spawn-failure-returns-runtime-error
+  If spawning the subprocess fails, returns `Err(RuntimeError)` with "Failed to spawn claude" and the error details.
+  test: runtime::claude_code::tests::create_session_spawn_failure
+
+SPEC-RT-CC-CS-008: child-stored-in-sessions-map
+  The spawned `Child` process handle is stored in the internal sessions map keyed by the session ID.
+  test: IMPLICIT via poll_status and collect_result tests
+
+---
+
+### ClaudeCodeAdapter::poll_status
+
+Checks whether the background `claude` subprocess has exited.
+
+SPEC-RT-CC-PS-001: running-when-child-not-exited
+  If `child.try_wait()` returns `Ok(None)`, the process is still running. Returns `Ok(SessionStatus::Running)`.
+  test: runtime::claude_code::tests::poll_status_running
+
+SPEC-RT-CC-PS-002: completed-on-zero-exit
+  If `child.try_wait()` returns `Ok(Some(status))` with `status.success()`, returns `Ok(SessionStatus::Completed)`.
+  test: runtime::claude_code::tests::poll_status_completed
+
+SPEC-RT-CC-PS-003: failed-on-non-zero-exit
+  If `child.try_wait()` returns `Ok(Some(status))` with a non-zero exit code, returns `Ok(SessionStatus::Failed)`.
+  test: runtime::claude_code::tests::poll_status_failed
+
+SPEC-RT-CC-PS-004: unknown-session-returns-error
+  If the session ID is not found in the sessions map, returns `Err(RuntimeError)` with "Unknown session".
+  test: runtime::claude_code::tests::poll_status_unknown_session
+
+SPEC-RT-CC-PS-005: try-wait-error-returns-runtime-error
+  If `child.try_wait()` returns `Err`, returns `Err(RuntimeError)` with the error details.
+  test: UNTESTED
+
+---
+
+### ClaudeCodeAdapter::collect_result
+
+Waits for the subprocess to finish (if still running) and collects its output.
+
+SPEC-RT-CC-CR-001: waits-for-child-to-complete
+  If the child process has not yet exited, calls `child.wait()` to block until completion.
+  test: IMPLICIT via collect_result tests
+
+SPEC-RT-CC-CR-002: stdout-parsed-as-json
+  The child's stdout is read and parsed as JSON. The `result` field becomes the `output`. The full stdout becomes `raw_log`.
+  test: runtime::claude_code::tests::collect_result_parses_json
+
+SPEC-RT-CC-CR-003: cost-extracted-from-json
+  Cost data is extracted from the JSON output's `usage` and `cost_usd` fields. `usage.input_tokens` → `Cost.input_tokens`, `usage.output_tokens` → `Cost.output_tokens`, `cost_usd` → `Cost.estimated_usd`.
+  test: runtime::claude_code::tests::collect_result_extracts_cost
+
+SPEC-RT-CC-CR-004: non-json-stdout-used-as-raw-output
+  If stdout is not valid JSON, the raw text is used as `output` and `raw_log`. Cost is `None`.
+  test: runtime::claude_code::tests::collect_result_non_json_output
+
+SPEC-RT-CC-CR-005: unknown-session-returns-error
+  If the session ID is not found in the sessions map, returns `Err(RuntimeError)` with "Unknown session".
+  test: runtime::claude_code::tests::collect_result_unknown_session
+
+SPEC-RT-CC-CR-006: status-from-exit-code
+  The `SessionResult.status` is `Completed` for exit code 0, `Failed` for non-zero exit codes.
+  test: runtime::claude_code::tests::collect_result_failed_status
+
+---
+
+### ClaudeCodeAdapter::cancel
+
+Kills the running `claude` subprocess. Idempotent.
+
+SPEC-RT-CC-CN-001: kills-child-process
+  If the session exists and has a running child process, calls `child.kill()`. Always returns `Ok(())` regardless of whether the kill succeeds.
+  test: runtime::claude_code::tests::cancel_kills_process
+
+SPEC-RT-CC-CN-002: unknown-session-returns-ok
+  If the session ID is not found in the sessions map, returns `Ok(())` silently. This is idempotent behavior for cleanup paths.
+  test: runtime::claude_code::tests::cancel_unknown_session_ok
+
+---
+
+### ClaudeCodeAdapter::teardown
+
+Cleans up the workspace directory and removes the session from the internal map. Idempotent.
+
+SPEC-RT-CC-TD-001: removes-workspace-directory
+  If the session exists, removes the workspace directory (identified by `handle.workspace_id`). Ignores errors from directory removal.
+  test: runtime::claude_code::tests::teardown_removes_workspace
+
+SPEC-RT-CC-TD-002: removes-session-from-map
+  Removes the session entry from the internal sessions map.
+  test: runtime::claude_code::tests::teardown_removes_from_map
+
+SPEC-RT-CC-TD-003: unknown-session-returns-ok
+  If the session ID is not found, returns `Ok(())` silently.
+  test: runtime::claude_code::tests::teardown_unknown_session_ok
+
+---
+
+### ClaudeCodeAdapter::post_completion
+
+Runs a one-shot completion by spawning `claude -p` synchronously and parsing the JSON output.
+
+SPEC-RT-CC-PC-001: spawns-claude-with-prompt
+  Constructs a prompt from the `messages` array in the `CompletionRequest` (concatenates message contents). Spawns `{claude_path} -p "{prompt}" --output-format json`. If `request.model` is non-empty, adds `--model {model}`.
+  test: runtime::claude_code::tests::post_completion_success
+
+SPEC-RT-CC-PC-002: parses-json-output-for-content
+  Parses stdout as JSON. Extracts `result` field as `CompletionResult.content`.
+  test: runtime::claude_code::tests::post_completion_parses_content
+
+SPEC-RT-CC-PC-003: extracts-cost-from-output
+  Extracts `usage.input_tokens`, `usage.output_tokens`, and `cost_usd` from the JSON output into `CompletionResult.cost`.
+  test: runtime::claude_code::tests::post_completion_extracts_cost
+
+SPEC-RT-CC-PC-004: empty-content-returns-error
+  If the `result` field is empty or missing, returns `Err(ValidationError)` with "empty response".
+  test: runtime::claude_code::tests::post_completion_empty_content_error
+
+SPEC-RT-CC-PC-005: non-zero-exit-returns-error
+  If the subprocess exits with a non-zero code, returns `Err(RuntimeError)` with stderr content.
+  test: runtime::claude_code::tests::post_completion_non_zero_exit
+
+SPEC-RT-CC-PC-006: spawn-failure-returns-error
+  If spawning the subprocess fails, returns `Err(RuntimeError)` with "Failed to spawn claude".
+  test: runtime::claude_code::tests::post_completion_spawn_failure
+
+---
+
+### create_adapter for claude-code
+
+SPEC-RT-CA-007: claude-code-type-creates-adapter
+  When `runtime_config.runtime_type` is `"claude-code"`, `create_adapter` constructs a `ClaudeCodeAdapter` via `ClaudeCodeAdapter::new`, passing through base_url, api_key_env, default_model, timeout_seconds, and max_iterations. Returns `Ok(Box<dyn RuntimeAdapter>)`.
+  test: runtime::tests::create_claude_code_adapter
+
+### parse_claude_output (internal helper)
+
+SPEC-RT-CC-PO-001: parses-result-field
+  Given valid JSON with a `"result"` string field, returns the result text as content.
+  test: runtime::claude_code::tests::parse_output_result_field
+
+SPEC-RT-CC-PO-002: parses-cost-fields
+  Extracts `cost_usd` (f64) → `estimated_usd`, `usage.input_tokens` (i64) → `input_tokens`, `usage.output_tokens` (i64) → `output_tokens` from the JSON.
+  test: runtime::claude_code::tests::parse_output_cost_fields
+
+SPEC-RT-CC-PO-003: missing-result-returns-empty
+  If the `"result"` field is absent, returns empty string as content.
+  test: runtime::claude_code::tests::parse_output_missing_result
+
+SPEC-RT-CC-PO-004: missing-usage-returns-no-cost
+  If `"usage"` and `"cost_usd"` are absent, cost is `None`.
+  test: runtime::claude_code::tests::parse_output_no_cost

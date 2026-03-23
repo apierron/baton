@@ -14,7 +14,7 @@ tmp_dir = "./.baton/tmp"
 # api_key_env = "ANTHROPIC_API_KEY"
 # default_model = "claude-haiku"
 
-# ── Validators ─────────────────────────────────────────────
+# ── Existing validators ───────────────────────────────────
 
 [validators.clippy]
 type = "script"
@@ -27,12 +27,12 @@ command = "cargo test"
 [validators.fuzz-config-parser]
 type = "script"
 command = "bash validators/fuzz-config-parser.sh"
-tags = ["deep", "fuzz"]
+tags = ["fuzz"]
 
 [validators.fuzz-verdict-parser]
 type = "script"
 command = "bash validators/fuzz-verdict-parser.sh"
-tags = ["deep", "fuzz"]
+tags = ["fuzz"]
 
 [validators.invariant-no-hashmap]
 type = "script"
@@ -49,7 +49,187 @@ type = "script"
 command = "bash validators/invariant-error-messages.sh"
 tags = ["invariant"]
 
-# ── CI gate: clippy + tests ──────────────────────────────────
+# ── Tier 1: Invariant enforcement ─────────────────────────
+
+[validators.invariant-no-unwrap-in-prod]
+type = "script"
+command = "bash validators/invariant-no-unwrap-in-prod.sh"
+tags = ["invariant"]
+
+[validators.invariant-no-std-result]
+type = "script"
+command = "bash validators/invariant-no-std-result.sh"
+tags = ["invariant"]
+
+[validators.invariant-no-hardcoded-version]
+type = "script"
+command = "bash validators/invariant-no-hardcoded-version.sh"
+tags = ["invariant"]
+
+[validators.invariant-two-stage-config]
+type = "script"
+command = "bash validators/invariant-two-stage-config.sh"
+tags = ["invariant"]
+
+[validators.invariant-test-at-bottom]
+type = "script"
+command = "bash validators/invariant-test-at-bottom.sh"
+tags = ["invariant"]
+
+[validators.invariant-derive-order]
+type = "script"
+command = "bash validators/invariant-derive-order.sh"
+tags = ["invariant"]
+
+[validators.invariant-no-println-in-lib]
+type = "script"
+command = "bash validators/invariant-no-println-in-lib.sh"
+tags = ["invariant"]
+
+[validators.invariant-no-global-state]
+type = "script"
+command = "bash validators/invariant-no-global-state.sh"
+tags = ["invariant"]
+
+# ── Tier 2: Fuzz validators ───────────────────────────────
+
+[validators.fuzz-placeholder-resolution]
+type = "script"
+command = "bash validators/fuzz-placeholder-resolution.sh"
+tags = ["fuzz"]
+
+[validators.fuzz-run-if-expression]
+type = "script"
+command = "bash validators/fuzz-run-if-expression.sh"
+tags = ["fuzz"]
+
+[validators.fuzz-env-var-resolution]
+type = "script"
+command = "bash validators/fuzz-env-var-resolution.sh"
+tags = ["fuzz"]
+
+[validators.fuzz-cli-args]
+type = "script"
+command = "bash validators/fuzz-cli-args.sh"
+tags = ["fuzz"]
+
+# ── Tier 3: Security validators ───────────────────────────
+
+[validators.security-no-secrets-in-source]
+type = "script"
+command = "bash validators/security-no-secrets-in-source.sh"
+tags = ["security"]
+
+[validators.security-no-content-in-errors]
+type = "script"
+command = "bash validators/security-no-content-in-errors.sh"
+tags = ["security"]
+
+[validators.security-env-no-shell-execution]
+type = "script"
+command = "bash validators/security-env-no-shell-execution.sh"
+tags = ["security"]
+
+[validators.security-no-path-traversal]
+type = "script"
+command = "bash validators/security-no-path-traversal.sh"
+tags = ["security"]
+
+# ── Tier 4: Spec-code sync ────────────────────────────────
+
+[validators.spec-test-refs-exist]
+type = "script"
+command = "bash validators/spec-test-refs-exist.sh"
+tags = ["spec-sync"]
+
+[validators.spec-format-valid]
+type = "script"
+command = "bash validators/spec-format-valid.sh"
+tags = ["spec-sync"]
+
+[validators.spec-untested-count]
+type = "script"
+command = "bash validators/spec-untested-count.sh"
+tags = ["spec-sync"]
+
+[validators.spec-toml-refs-valid]
+type = "script"
+command = "bash validators/spec-toml-refs-valid.sh"
+tags = ["spec-sync"]
+
+# ── Tier 5: LLM semantic validators ──────────────────────
+# These require a runtime configured above. Uncomment when ready.
+
+# [validators.llm-cross-module-consistency]
+# type = "llm"
+# runtime = "default"
+# prompt_file = "cross-module-consistency.md"
+# tags = ["llm"]
+
+# [validators.llm-error-variant-coverage]
+# type = "llm"
+# runtime = "default"
+# prompt_file = "error-variant-coverage.md"
+# tags = ["llm"]
+
+# [validators.llm-status-exhaustiveness]
+# type = "llm"
+# runtime = "default"
+# prompt_file = "status-exhaustiveness.md"
+# tags = ["llm"]
+
+# [validators.llm-placeholder-contract]
+# type = "llm"
+# runtime = "default"
+# prompt_file = "placeholder-contract.md"
+# tags = ["llm"]
+
+# [validators.llm-runtime-adapter-contract]
+# type = "llm"
+# runtime = "default"
+# prompt_file = "runtime-adapter-contract.md"
+# tags = ["llm"]
+
+# [validators.llm-adversarial-review]
+# type = "llm"
+# runtime = "default"
+# prompt_file = "adversarial-review.md"
+# tags = ["llm"]
+
+# [validators.llm-spec-compliance]
+# type = "llm"
+# runtime = "default"
+# prompt_file = "spec-compliance.md"
+# tags = ["llm"]
+
+# ── Tier 6: Regression guards & quality ───────────────────
+
+[validators.regression-test-count]
+type = "script"
+command = "bash validators/regression-test-count.sh"
+tags = ["regression"]
+
+[validators.regression-spec-assertion-count]
+type = "script"
+command = "bash validators/regression-spec-assertion-count.sh"
+tags = ["regression"]
+
+[validators.regression-exit-code-contract]
+type = "script"
+command = "bash validators/regression-exit-code-contract.sh"
+tags = ["regression"]
+
+[validators.quality-no-todo-fixme]
+type = "script"
+command = "bash validators/quality-no-todo-fixme.sh"
+tags = ["quality"]
+
+[validators.quality-max-fn-length]
+type = "script"
+command = "bash validators/quality-max-fn-length.sh"
+tags = ["quality"]
+
+# ── CI gate: clippy + tests ───────────────────────────────
 
 [gates.ci]
 description = "Clippy linting and full test suite"
@@ -58,16 +238,92 @@ validators = [
     { ref = "tests", blocking = true },
 ]
 
-# ── Deep gate: CI + fuzzing + invariant checks ───────────────
+# ── Deep gate: CI + fuzzing + invariants + security ───────
 
 [gates.deep]
-description = "Full CI plus fuzzing and invariant validation"
+description = "Full CI plus fuzzing, invariants, and security validation"
 validators = [
     { ref = "clippy", blocking = true },
     { ref = "tests", blocking = true },
+    # Existing fuzz
     { ref = "fuzz-config-parser", blocking = false, run_if = "tests.status == pass" },
     { ref = "fuzz-verdict-parser", blocking = false, run_if = "tests.status == pass" },
+    # Existing invariants
     { ref = "invariant-no-hashmap", blocking = true },
     { ref = "invariant-module-layers", blocking = true },
     { ref = "invariant-error-messages", blocking = false, run_if = "clippy.status == pass" },
+    # New invariants
+    { ref = "invariant-no-unwrap-in-prod", blocking = false },
+    { ref = "invariant-no-std-result", blocking = true },
+    { ref = "invariant-no-hardcoded-version", blocking = true },
+    { ref = "invariant-two-stage-config", blocking = true },
+    { ref = "invariant-test-at-bottom", blocking = false },
+    { ref = "invariant-derive-order", blocking = false },
+    { ref = "invariant-no-println-in-lib", blocking = true },
+    { ref = "invariant-no-global-state", blocking = true },
+    # New fuzz
+    { ref = "fuzz-placeholder-resolution", blocking = false, run_if = "tests.status == pass" },
+    { ref = "fuzz-run-if-expression", blocking = false, run_if = "tests.status == pass" },
+    { ref = "fuzz-env-var-resolution", blocking = false, run_if = "tests.status == pass" },
+    { ref = "fuzz-cli-args", blocking = false, run_if = "tests.status == pass" },
+    # Security
+    { ref = "security-no-secrets-in-source", blocking = true },
+    { ref = "security-no-content-in-errors", blocking = true },
+    { ref = "security-env-no-shell-execution", blocking = true },
+    { ref = "security-no-path-traversal", blocking = false },
+    # Spec sync (lightweight)
+    { ref = "spec-toml-refs-valid", blocking = true },
+]
+
+# ── Release gate: deep + spec sync + regression + quality ─
+
+[gates.release]
+description = "Everything: deep + spec sync + regression guards + quality"
+validators = [
+    { ref = "clippy", blocking = true },
+    { ref = "tests", blocking = true },
+    # Fuzz
+    { ref = "fuzz-config-parser", blocking = false, run_if = "tests.status == pass" },
+    { ref = "fuzz-verdict-parser", blocking = false, run_if = "tests.status == pass" },
+    { ref = "fuzz-placeholder-resolution", blocking = false, run_if = "tests.status == pass" },
+    { ref = "fuzz-run-if-expression", blocking = false, run_if = "tests.status == pass" },
+    { ref = "fuzz-env-var-resolution", blocking = false, run_if = "tests.status == pass" },
+    { ref = "fuzz-cli-args", blocking = false, run_if = "tests.status == pass" },
+    # Invariants
+    { ref = "invariant-no-hashmap", blocking = true },
+    { ref = "invariant-module-layers", blocking = true },
+    { ref = "invariant-error-messages", blocking = false, run_if = "clippy.status == pass" },
+    { ref = "invariant-no-unwrap-in-prod", blocking = false },
+    { ref = "invariant-no-std-result", blocking = true },
+    { ref = "invariant-no-hardcoded-version", blocking = true },
+    { ref = "invariant-two-stage-config", blocking = true },
+    { ref = "invariant-test-at-bottom", blocking = false },
+    { ref = "invariant-derive-order", blocking = false },
+    { ref = "invariant-no-println-in-lib", blocking = true },
+    { ref = "invariant-no-global-state", blocking = true },
+    # Security
+    { ref = "security-no-secrets-in-source", blocking = true },
+    { ref = "security-no-content-in-errors", blocking = true },
+    { ref = "security-env-no-shell-execution", blocking = true },
+    { ref = "security-no-path-traversal", blocking = false },
+    # Spec sync
+    { ref = "spec-toml-refs-valid", blocking = true },
+    { ref = "spec-test-refs-exist", blocking = false },
+    { ref = "spec-format-valid", blocking = false },
+    { ref = "spec-untested-count", blocking = false },
+    # Regression guards
+    { ref = "regression-test-count", blocking = false },
+    { ref = "regression-spec-assertion-count", blocking = false },
+    { ref = "regression-exit-code-contract", blocking = true },
+    # Quality
+    { ref = "quality-no-todo-fixme", blocking = false },
+    { ref = "quality-max-fn-length", blocking = false },
+    # LLM validators (uncomment when runtime is configured)
+    # { ref = "llm-cross-module-consistency", blocking = false },
+    # { ref = "llm-error-variant-coverage", blocking = false },
+    # { ref = "llm-status-exhaustiveness", blocking = false },
+    # { ref = "llm-placeholder-contract", blocking = false },
+    # { ref = "llm-runtime-adapter-contract", blocking = false },
+    # { ref = "llm-adversarial-review", blocking = false },
+    # { ref = "llm-spec-compliance", blocking = false },
 ]

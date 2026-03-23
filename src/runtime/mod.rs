@@ -1,10 +1,11 @@
 //! Runtime adapter abstraction for validators.
 //!
 //! Defines the [`RuntimeAdapter`] trait, session lifecycle types, and
-//! completion request/result types. Supports API, OpenHands, and OpenCode
-//! as runtime backends.
+//! completion request/result types. Supports API, Claude Code, OpenHands,
+//! and OpenCode as runtime backends.
 
 pub mod api;
+pub mod claude_code;
 pub mod opencode;
 pub mod openhands;
 pub(crate) mod session_common;
@@ -152,8 +153,18 @@ pub fn create_adapter(
             )?;
             Ok(Box::new(adapter))
         }
+        "claude-code" => {
+            let adapter = claude_code::ClaudeCodeAdapter::new(
+                runtime_config.base_url.clone(),
+                runtime_config.api_key_env.as_deref(),
+                runtime_config.default_model.clone(),
+                runtime_config.timeout_seconds,
+                runtime_config.max_iterations,
+            )?;
+            Ok(Box::new(adapter))
+        }
         other => Err(BatonError::ConfigError(format!(
-            "Unknown runtime type '{other}' for runtime '{runtime_name}'. Supported: api, openhands, opencode."
+            "Unknown runtime type '{other}' for runtime '{runtime_name}'. Supported: api, claude-code, openhands, opencode."
         ))),
     }
 }
@@ -304,6 +315,21 @@ mod tests {
             default_model: None,
             sandbox: false,
             timeout_seconds: 300,
+            max_iterations: 10,
+        };
+        let result = create_adapter("test", &config);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn create_claude_code_adapter() {
+        let config = crate::config::Runtime {
+            runtime_type: "claude-code".into(),
+            base_url: "claude".into(),
+            api_key_env: None,
+            default_model: Some("sonnet".into()),
+            sandbox: false,
+            timeout_seconds: 120,
             max_iterations: 10,
         };
         let result = create_adapter("test", &config);
