@@ -1,4 +1,7 @@
-//! Final status computation for gate verdicts.
+//! Final gate status computation from individual validator results.
+//!
+//! Applies status suppression (`suppress_errors`, `suppress_warnings`) before
+//! aggregating: Error beats Fail; Skip and Warn are ignored in the final roll-up.
 
 use crate::types::*;
 

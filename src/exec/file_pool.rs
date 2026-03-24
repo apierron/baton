@@ -1,4 +1,9 @@
 //! Input file pool collection from CLI sources.
+//!
+//! Gathers [`InputFile`]s from positional arguments, `--diff <refspec>`
+//! (via `git diff --name-only`), and `--files <path|->` (newline-delimited list).
+//! Directories are walked recursively. The resulting pool is deduplicated by
+//! canonical (absolute, symlink-resolved) path.
 
 use std::collections::HashSet;
 use std::path::PathBuf;

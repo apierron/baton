@@ -1,4 +1,8 @@
 //! Human review validator execution.
+//!
+//! Always returns `Status::Fail` with a `[human-review-requested]` feedback
+//! message containing the rendered prompt. Intended to surface review requests
+//! in CI output rather than blocking on interactive input.
 
 use std::collections::BTreeMap;
 

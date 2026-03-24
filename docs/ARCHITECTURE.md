@@ -126,6 +126,22 @@ New session-based runtime adapters should wrap `SessionAdapterBase` and invoke t
 
 Supported runtime types: `api`, `openhands`, `opencode`.
 
+## Exec Submodules
+
+The `exec` module is split into `src/exec/` following the same subdirectory pattern as `src/runtime/`. `exec/mod.rs` is the public entry point; each submodule owns one cohesive concern:
+
+| Submodule | Responsibility |
+| --------- | -------------- |
+| `run_if` | Parse and evaluate `run_if` boolean expressions against prior validator results |
+| `status` | Aggregate validator results into a gate-level `VerdictStatus` with suppression |
+| `file_pool` | Collect input files from positional args, `--diff`, and `--files`; deduplicate |
+| `dispatch` | Map a validator's `input` declaration + file pool to concrete `Invocation`s |
+| `script` | Execute script validators via subprocess (`sh -c` / `cmd /C`) |
+| `human` | Emit a review-requested failure for human validators |
+| `llm` | Execute LLM validators in query mode (one-shot) or session mode (agent lifecycle) |
+
+`execute_validator` and `run_gate` live in `mod.rs`. The executor functions (`execute_script_validator`, etc.) are `pub(super)` — accessible to `mod.rs` for dispatch but not part of the public API.
+
 ## Spec Files
 
 Detailed behavioral specifications for each module live in `spec/*.md`. Each spec file is a complete decision tree for its module — it enumerates every decision point, error return, and invariant as machine-readable `SPEC-XX-YY-NNN` assertions, with associated tests for each assertion. These specs are the authoritative behavior reference: when the implementation disagrees with the spec, the implementation is wrong.

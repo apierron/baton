@@ -1,4 +1,12 @@
-//! LLM and session validator execution.
+//! LLM validator execution: query (one-shot) and session (agent lifecycle) modes.
+//!
+//! **Query mode** — resolves the prompt, builds a chat message list, calls
+//! `adapter.post_completion()`, and parses the response for a PASS/FAIL/WARN verdict.
+//!
+//! **Session mode** — creates an agent session via `adapter.create_session()`,
+//! polls until terminal, collects output, parses the verdict, then tears down.
+//! The `drive_session` function handles the full session lifecycle independently
+//! of config resolution so it can be tested with mock adapters.
 
 use std::collections::BTreeMap;
 use std::time::Instant;

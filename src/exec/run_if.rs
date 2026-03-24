@@ -1,4 +1,8 @@
-//! run_if condition evaluation for validator dispatch.
+//! `run_if` condition evaluation for validator dispatch.
+//!
+//! Parses and evaluates expressions of the form `name.status == value`,
+//! joined by `and`/`or` with left-to-right evaluation and no short-circuit.
+//! Missing validators are treated as `skip`.
 
 use std::collections::BTreeMap;
 

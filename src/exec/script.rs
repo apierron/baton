@@ -1,4 +1,8 @@
-//! Script validator execution.
+//! Script validator execution via subprocess.
+//!
+//! Resolves `{placeholders}` in the command string, spawns a shell (`sh -c` /
+//! `cmd /C`), captures stdout+stderr, and maps the exit code to Pass/Fail/Warn
+//! according to the validator's `warn_exit_codes` list.
 
 use std::collections::BTreeMap;
 use std::process::Command;

@@ -1,4 +1,9 @@
-//! Dispatch planner: maps validators + file pools to concrete invocations.
+//! Dispatch planner: maps validators + file pools to concrete [`Invocation`]s.
+//!
+//! Implements the four input declaration modes — `None` (single call, no files),
+//! `PerFile` (one call per matching file), `Batch` (one call with all matches),
+//! and `Named` (group files by a key expression such as `{stem}`).
+//! Returns `(invocations, warnings)`; empty invocations + warnings means skip.
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;

@@ -2,14 +2,24 @@
 //!
 //! Runs validators in pipeline order, evaluates `run_if` conditions,
 //! dispatches to script/LLM/human executors, and computes the final verdict.
+//!
+//! # Submodules
+//!
+//! - [`run_if`] — `run_if` expression evaluation for conditional validator dispatch
+//! - [`status`] — Final gate status computation with suppression support
+//! - [`file_pool`] — Input file collection from positional args, `--diff`, and `--files`
+//! - [`dispatch`] — Dispatch planner: maps validators + file pools to concrete [`Invocation`]s
+//! - [`script`] — Script validator execution via subprocess
+//! - [`human`] — Human review validator (always fails with a review-requested message)
+//! - [`llm`] — LLM validator execution: query (one-shot) and session (agent lifecycle) modes
 
-mod dispatch;
-mod file_pool;
-mod human;
-mod llm;
-mod run_if;
-mod script;
-mod status;
+pub mod dispatch;
+pub mod file_pool;
+pub mod human;
+pub mod llm;
+pub mod run_if;
+pub mod script;
+pub mod status;
 
 pub use dispatch::plan_dispatch;
 pub use file_pool::{collect_file_pool, FileCollectOptions};

@@ -36,8 +36,8 @@ This ordering keeps the spec, tests, and code in sync. The spec drives everythin
 ```text
 main.rs → commands/*
 commands/* → exec, config, history, runtime, provider, types
-exec → config, types, placeholder, runtime, error
-runtime → types, error, provider
+exec (src/exec/) → config, types, placeholder, runtime, error
+runtime (src/runtime/) → types, error, provider
 provider → types
 config → types, placeholder, error
 history, placeholder → types, error
@@ -54,7 +54,7 @@ See `docs/ARCHITECTURE.md` for the full dependency table and design rationale (t
 - Two-stage config: `parse_config()` (TOML deser) then `validate_config()` (semantic checks) — never merge these
 - Validators are defined top-level in `[validators]`; gates reference them with optional `blocking`/`run_if` overrides
 - Error messages must include the offending value and enough context to act on
-- All tests in `#[cfg(test)] mod tests` at bottom of each module, using `tempfile` for filesystem tests
+- All tests in `#[cfg(test)] mod tests` at bottom of each module (or submodule file), using `tempfile` for filesystem tests
 - Runtime adapter tests use the `session_adapter_tests!` macro in `session_common.rs` — new session adapters invoke this macro for automatic coverage
 
 See `docs/CONVENTIONS.md` for the full list.
