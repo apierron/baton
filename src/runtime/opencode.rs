@@ -1,6 +1,6 @@
 //! OpenCode runtime adapter implementation.
 //!
-//! Thin wrapper around [`SessionAdapterBase`] for the OpenCode agent runtime.
+//! Thin wrapper around `SessionAdapterBase` for the OpenCode agent runtime.
 
 use crate::error::Result;
 

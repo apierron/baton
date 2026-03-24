@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 
 use toml_edit::{value, Array, DocumentMut, InlineTable, Item, Table};
 
-use baton::config::{discover_config, parse_config, validate_config, BatonConfig};
-use baton::error::{BatonError, Result};
+use crate::config::{discover_config, parse_config, validate_config, BatonConfig};
+use crate::error::{BatonError, Result};
 
 // ─── Data types ──────────────────────────────────────────
 

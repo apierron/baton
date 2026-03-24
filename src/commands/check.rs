@@ -5,9 +5,9 @@
 
 use std::path::PathBuf;
 
-use baton::exec::{self, run_gate};
-use baton::history;
-use baton::types::*;
+use crate::exec::{self, run_gate};
+use crate::history;
+use crate::types::*;
 
 use super::{load_config, ValidatorTypeStr};
 
@@ -195,7 +195,7 @@ pub fn cmd_check(
 
 /// Compute skip reason for a validator based on `--only`/`--skip`.
 fn compute_skip_reason(
-    v: &baton::config::ValidatorConfig,
+    v: &crate::config::ValidatorConfig,
     only: &Option<Vec<String>>,
     skip: &Option<Vec<String>>,
 ) -> Option<&'static str> {

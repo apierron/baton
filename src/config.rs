@@ -473,6 +473,29 @@ impl ConfigValidation {
 // ─── Parsing ─────────────────────────────────────────────
 
 /// Parse a baton.toml from a string, with `config_dir` as the base for relative paths.
+///
+/// # Examples
+///
+/// ```
+/// use baton::config::parse_config;
+/// use std::path::Path;
+///
+/// let toml = r#"
+/// version = "0.6"
+///
+/// [validators.lint]
+/// type = "script"
+/// command = "echo ok"
+///
+/// [gates.main]
+/// validators = [{ ref = "lint" }]
+/// "#;
+///
+/// let config = parse_config(toml, Path::new(".")).unwrap();
+/// let gate = &config.gates["main"];
+/// assert_eq!(gate.name, "main");
+/// assert_eq!(gate.validators[0].name, "lint");
+/// ```
 pub fn parse_config(toml_str: &str, config_dir: &Path) -> Result<BatonConfig> {
     let raw: RawConfig = toml::from_str(toml_str)?;
 

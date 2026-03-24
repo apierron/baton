@@ -72,6 +72,7 @@ See `docs/CONVENTIONS.md` for the full list.
 | Golden rules, mechanical conventions | `docs/CONVENTIONS.md` |
 | Test patterns, running tests, what to cover | `docs/TESTING.md` |
 | Anti-patterns, security, what NOT to do | `docs/BOUNDARIES.md` |
+| Documentation maintenance, rustdoc practices | `docs/DOCS.md` |
 | Module-level specs (behavior reference, test coverage) | `spec/*.md` |
 | Spec file format, assertion IDs, how to use them | `docs/SPEC.md` |
 

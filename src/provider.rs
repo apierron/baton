@@ -43,7 +43,7 @@ pub enum ProviderError {
     HttpError { status: u16, body: String },
     /// Response body was not valid JSON or missing expected structure.
     MalformedResponse(String),
-    /// Completion response had empty content in choices[0].message.content.
+    /// Completion response had empty content in `choices[0].message.content`.
     EmptyContent {
         /// Cost is still extractable from a response with empty content.
         cost: Option<Cost>,

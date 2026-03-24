@@ -1,25 +1,7 @@
-//! Baton: a composable validation gate for AI agent outputs.
-//!
-//! Accepts input files to validate, runs a pipeline of validators (script,
-//! LLM, or human), produces a structured verdict (pass/fail/error), and
-//! persists results in SQLite.
-//!
-//! # Modules
-//!
-//! - [`config`] — TOML configuration parsing and validation
-//! - [`exec`] — Gate execution engine and validator dispatch
-//! - [`types`] — Core data types (InputFile, Invocation, Verdict, Status)
-//! - [`history`] — SQLite-based verdict persistence
-//! - [`prompt`] — Prompt template parsing with frontmatter support
-//! - [`placeholder`] — Template variable resolution
-//! - [`verdict_parser`] — Verdict extraction from LLM/agent text output
-//! - [`provider`] — HTTP client for OpenAI-compatible LLM provider APIs
-//! - [`runtime`] — Runtime adapter abstraction for agent-based validators
-//! - [`error`] — Error types
-//!
-//! CLI command handlers live in the binary's `commands/` module and are not
-//! part of the public library API.
+#![doc = include_str!("../README.md")]
+#![doc(html_root_url = "https://apierron.github.io/baton/baton/")]
 
+pub mod commands;
 pub mod config;
 pub mod error;
 pub mod exec;

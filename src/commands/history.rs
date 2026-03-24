@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use baton::history;
+use crate::history;
 
 use super::load_config;
 

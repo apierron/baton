@@ -15,11 +15,32 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      - name: Create custom header
+        run: |
+          cat > header.html << 'HEADER'
+          <style>
+            :root, :root.light {
+              --main-background-color: #f8f9fa;
+              --src-sidebar-background-color: #1a1a2e;
+            }
+            :root.rust {
+              --main-background-color: #f8f9fa;
+            }
+          </style>
+          HEADER
+
       - name: Build docs
-        run: cargo doc --no-deps
+        run: RUSTDOCFLAGS="--html-in-header header.html" cargo doc --no-deps
 
       - name: Add redirect index
-        run: echo '<meta http-equiv="refresh" content="0;url=baton/index.html">' > target/doc/index.html
+        run: |
+          cat > target/doc/index.html << 'HTML'
+          <!DOCTYPE html>
+          <html>
+          <head><meta http-equiv="refresh" content="0;url=baton/index.html"></head>
+          <body><p>Redirecting to <a href="baton/index.html">baton docs</a>...</p></body>
+          </html>
+          HTML
 
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4

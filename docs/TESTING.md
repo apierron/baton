@@ -69,6 +69,7 @@ Each adapter file (`opencode.rs`, `openhands.rs`) invokes this macro in its `mod
 The macro gives you full test coverage automatically. Only add adapter-specific tests outside the macro if the adapter has unique behavior.
 
 **Key files:**
+
 - `src/runtime/session_common.rs` — `SessionAdapterBase` (shared impl) + `session_adapter_tests!` (shared tests) + `map_session_status()` + `extract_cost_from_metrics()`
 - `src/runtime/opencode.rs` / `openhands.rs` — thin wrappers that delegate to `SessionAdapterBase`
 

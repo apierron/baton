@@ -1,4 +1,4 @@
-# Baton :magic_wand:
+# Baton 🪄
 
 [![CI](https://github.com/apierron/baton/actions/workflows/ci.yml/badge.svg)](https://github.com/apierron/baton/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/apierron/baton/branch/master/graph/badge.svg)](https://codecov.io/gh/apierron/baton)

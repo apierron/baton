@@ -1,4 +1,23 @@
-//! CLI command handlers. Each submodule implements one top-level baton subcommand.
+//! CLI command handlers for the `baton` binary.
+//!
+//! Each submodule implements one top-level subcommand. These are exposed in
+//! the library crate for documentation purposes but are not considered stable
+//! public API.
+//!
+//! | Subcommand | Module | Description |
+//! |---|---|---|
+//! | `baton check` | [`check`] | Run validators against input files |
+//! | `baton init` | [`init`] | Initialize a new baton project |
+//! | `baton add` | [`add`] | Add a validator to baton.toml |
+//! | `baton list` | [`list`] | List gates and validators |
+//! | `baton history` | [`history`] | Query invocation history |
+//! | `baton validate-config` | [`validate_config`] | Validate baton.toml |
+//! | `baton check-provider` | [`check_provider`] | Check provider connectivity |
+//! | `baton check-runtime` | [`check_runtime`] | Check runtime health |
+//! | `baton clean` | [`clean`] | Remove temporary files |
+//! | `baton update` | [`update`] | Self-update baton |
+//! | `baton uninstall` | [`uninstall`] | Uninstall baton |
+//! | `baton version` | [`version`] | Print version info |
 
 pub mod add;
 pub mod check;
@@ -15,18 +34,18 @@ pub mod version;
 
 use std::path::{Path, PathBuf};
 
-use baton::config::{discover_config, parse_config};
+use crate::config::{discover_config, parse_config};
 
 // ─── Shared helpers ───────────────────────────────────────
 
 /// Loads and parses baton.toml from an explicit path or by discovery.
 pub(crate) fn load_config(
     config_path: Option<&PathBuf>,
-) -> baton::error::Result<(baton::config::BatonConfig, PathBuf)> {
+) -> crate::error::Result<(crate::config::BatonConfig, PathBuf)> {
     let config_file = match config_path {
         Some(p) => {
             if !p.exists() {
-                return Err(baton::error::BatonError::ConfigError(format!(
+                return Err(crate::error::BatonError::ConfigError(format!(
                     "Config file not found: {}",
                     p.display()
                 )));
@@ -50,12 +69,12 @@ pub(crate) trait ValidatorTypeStr {
     fn validator_type_str(&self) -> &str;
 }
 
-impl ValidatorTypeStr for baton::config::ValidatorConfig {
+impl ValidatorTypeStr for crate::config::ValidatorConfig {
     fn validator_type_str(&self) -> &str {
         match self.validator_type {
-            baton::config::ValidatorType::Script => "script",
-            baton::config::ValidatorType::Llm => "llm",
-            baton::config::ValidatorType::Human => "human",
+            crate::config::ValidatorType::Script => "script",
+            crate::config::ValidatorType::Llm => "llm",
+            crate::config::ValidatorType::Human => "human",
         }
     }
 }

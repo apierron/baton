@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use baton::config::validate_config;
+use crate::config::validate_config;
 
 use super::load_config;
 

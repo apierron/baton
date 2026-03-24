@@ -12,7 +12,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::process;
 
-mod commands;
+use baton::commands;
 
 #[derive(Parser)]
 #[command(name = "baton", version = env!("CARGO_PKG_VERSION"), about = "A composable validation gate for AI agent outputs")]

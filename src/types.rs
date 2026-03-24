@@ -22,6 +22,19 @@ pub struct InputFile {
 
 impl InputFile {
     /// Creates an InputFile from a path. Does not read the file.
+    ///
+    /// Content and hash are loaded lazily on first access via
+    /// [`get_content`](InputFile::get_content) and [`get_hash`](InputFile::get_hash).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use baton::types::InputFile;
+    /// use std::path::PathBuf;
+    ///
+    /// let input = InputFile::new(PathBuf::from("src/main.rs"));
+    /// assert_eq!(input.path, PathBuf::from("src/main.rs"));
+    /// ```
     pub fn new(path: PathBuf) -> Self {
         InputFile {
             path,
@@ -229,7 +242,7 @@ impl Verdict {
         lines.join("\n")
     }
 
-    /// Returns a one-line summary: "PASS" or "FAIL at <validator>: <feedback>".
+    /// Returns a one-line summary: `"PASS"` or `"FAIL at <validator>: <feedback>"`.
     pub fn to_summary(&self) -> String {
         match self.status {
             VerdictStatus::Pass => "PASS".to_string(),

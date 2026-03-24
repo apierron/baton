@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use baton::runtime;
+use crate::runtime;
 
 use super::load_config;
 
@@ -17,7 +17,7 @@ pub fn cmd_check_provider(config_path: Option<&PathBuf>, name: Option<&str>, all
     };
 
     // Filter for api-type runtimes
-    let api_runtimes: Vec<(&String, &baton::config::Runtime)> = config
+    let api_runtimes: Vec<(&String, &crate::config::Runtime)> = config
         .runtimes
         .iter()
         .filter(|(_, r)| r.runtime_type == "api")
@@ -28,7 +28,7 @@ pub fn cmd_check_provider(config_path: Option<&PathBuf>, name: Option<&str>, all
         return 1;
     }
 
-    let runtimes_to_check: Vec<(&String, &baton::config::Runtime)> = if all {
+    let runtimes_to_check: Vec<(&String, &crate::config::Runtime)> = if all {
         api_runtimes
     } else if let Some(name) = name {
         match api_runtimes.iter().find(|(k, _)| k.as_str() == name) {

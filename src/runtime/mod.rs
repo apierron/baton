@@ -89,6 +89,17 @@ pub struct CompletionResult {
 ///
 /// Implementations manage the full session lifecycle: creation, polling,
 /// result collection, cancellation, and cleanup.
+///
+/// # Session lifecycle
+///
+/// 1. [`health_check`](RuntimeAdapter::health_check) — verify the runtime is reachable
+/// 2. [`create_session`](RuntimeAdapter::create_session) — start an agent session
+/// 3. [`poll_status`](RuntimeAdapter::poll_status) — wait for completion
+/// 4. [`collect_result`](RuntimeAdapter::collect_result) — retrieve the output
+/// 5. [`teardown`](RuntimeAdapter::teardown) — clean up resources
+///
+/// For one-shot queries without a session,
+/// use [`post_completion`](RuntimeAdapter::post_completion) instead.
 pub trait RuntimeAdapter: Send + Sync + Debug {
     /// Checks whether the runtime is reachable and returns version info.
     fn health_check(&self) -> Result<HealthResult>;

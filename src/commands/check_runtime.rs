@@ -19,7 +19,7 @@ pub fn cmd_check_runtime(config_path: Option<&PathBuf>, name: Option<&str>, all:
         return 1;
     }
 
-    let runtimes_to_check: Vec<(&String, &baton::config::Runtime)> = if all {
+    let runtimes_to_check: Vec<(&String, &crate::config::Runtime)> = if all {
         config.runtimes.iter().collect()
     } else if let Some(name) = name {
         match config.runtimes.get_key_value(name) {
@@ -46,7 +46,7 @@ pub fn cmd_check_runtime(config_path: Option<&PathBuf>, name: Option<&str>, all:
     for (rname, runtime_config) in &runtimes_to_check {
         eprintln!("Checking runtime '{rname}'...");
 
-        let adapter = match baton::runtime::create_adapter(rname, runtime_config) {
+        let adapter = match crate::runtime::create_adapter(rname, runtime_config) {
             Ok(a) => a,
             Err(e) => {
                 eprintln!("  ERROR: Failed to create adapter for runtime '{rname}': {e}");

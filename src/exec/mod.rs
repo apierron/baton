@@ -2,16 +2,6 @@
 //!
 //! Runs validators in pipeline order, evaluates `run_if` conditions,
 //! dispatches to script/LLM/human executors, and computes the final verdict.
-//!
-//! # Submodules
-//!
-//! - [`run_if`] — `run_if` expression evaluation for conditional validator dispatch
-//! - [`status`] — Final gate status computation with suppression support
-//! - [`file_pool`] — Input file collection from positional args, `--diff`, and `--files`
-//! - [`dispatch`] — Dispatch planner: maps validators + file pools to concrete [`Invocation`]s
-//! - [`script`] — Script validator execution via subprocess
-//! - [`human`] — Human review validator (always fails with a review-requested message)
-//! - [`llm`] — LLM validator execution: query (one-shot) and session (agent lifecycle) modes
 
 pub mod dispatch;
 pub mod file_pool;
@@ -81,9 +71,34 @@ pub fn execute_validator(
 
 /// Runs all validators in a gate's pipeline and returns a [`Verdict`].
 ///
-/// This is the main entry point for gate execution. Validates the artifact
-/// and context, then runs each validator in order, respecting `run_if`
-/// conditions, `--only`/`--skip`/`--tags` filters, and blocking semantics.
+/// This is the main entry point for gate execution. Runs each validator
+/// in order, respecting `run_if` conditions, `--only`/`--skip`/`--tags`
+/// filters, and blocking semantics.
+///
+/// # Examples
+///
+/// ```no_run
+/// use baton::config::parse_config;
+/// use baton::exec::run_gate;
+/// use baton::types::RunOptions;
+/// use std::path::Path;
+///
+/// let toml = r#"
+/// version = "0.6"
+///
+/// [validators.lint]
+/// type = "script"
+/// command = "cargo clippy -- -D warnings"
+///
+/// [gates.ci]
+/// validators = [{ ref = "lint" }]
+/// "#;
+///
+/// let config = parse_config(toml, Path::new(".")).unwrap();
+/// let gate = &config.gates["ci"];
+/// let verdict = run_gate(gate, &config, vec![], &RunOptions::new()).unwrap();
+/// println!("Gate result: {:?}", verdict.status);
+/// ```
 pub fn run_gate(
     gate: &GateConfig,
     config: &BatonConfig,

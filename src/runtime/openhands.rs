@@ -1,6 +1,6 @@
 //! OpenHands runtime adapter implementation.
 //!
-//! Thin wrapper around [`SessionAdapterBase`] for the OpenHands agent runtime.
+//! Thin wrapper around `SessionAdapterBase` for the OpenHands agent runtime.
 
 use crate::error::Result;
 

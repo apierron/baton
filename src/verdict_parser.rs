@@ -61,6 +61,19 @@ fn rfind_keyword(text: &str, keyword: &str) -> Option<usize> {
 }
 
 /// Parse a verdict from LLM/agent text output.
+///
+/// # Examples
+///
+/// ```
+/// use baton::verdict_parser::parse_verdict;
+/// use baton::types::Status;
+///
+/// let verdict = parse_verdict("PASS — code looks good");
+/// assert_eq!(verdict.status, Status::Pass);
+///
+/// let verdict = parse_verdict("FAIL — missing error handling");
+/// assert_eq!(verdict.status, Status::Fail);
+/// ```
 pub fn parse_verdict(text: &str) -> ParsedVerdict {
     let trimmed = text.trim();
     if trimmed.is_empty() {
