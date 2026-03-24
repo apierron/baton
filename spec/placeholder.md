@@ -190,7 +190,7 @@ SPEC-PH-NP-007: missing-named-input-warns
 Static checks on placeholder usage relative to the validator's input mode.
 
 SPEC-PH-VL-001: template-placeholders-validated-against-inputs
-  `baton validate-config` checks that every placeholder in a template matches the validator's declared inputs.
+  `baton doctor` checks that every placeholder in a template matches the validator's declared inputs.
   test: TODO
 
 SPEC-PH-VL-002: file-placeholder-in-named-mode-errors

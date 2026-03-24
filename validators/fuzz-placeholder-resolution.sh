@@ -27,7 +27,7 @@ fuzz_case() {
 
   # Write a minimal config that uses this prompt
   cat > "$config_dir/baton.toml" << 'EOF'
-version = "0.6"
+version = "0.7"
 
 [runtimes.default]
 type = "api"
@@ -49,8 +49,8 @@ EOF
   # Write a dummy input file
   echo "test content" > "$config_dir/input.txt"
 
-  # validate-config should not panic (it may error, but cleanly)
-  if ! "$BINARY" validate-config --config "$config_dir/baton.toml" >/dev/null 2>&1; then
+  # doctor should not panic (it may error, but cleanly)
+  if ! "$BINARY" doctor --offline --config "$config_dir/baton.toml" >/dev/null 2>&1; then
     : # Expected for some adversarial cases
   fi
 

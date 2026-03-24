@@ -110,7 +110,7 @@ Validators specify their runtime via the `runtime` field (string or list) instea
 
 ## Provider Client
 
-The `provider` module provides `ProviderClient`, a shared HTTP client for OpenAI-compatible LLM APIs. It handles API key resolution, Bearer auth, and structured error classification (auth failures, model-not-found, rate limiting, timeouts). It is now an internal utility used by the API adapter (`src/runtime/api.rs`) rather than being called directly from `exec.rs`. The CLI's `check-provider` command also uses it for connectivity checks.
+The `provider` module provides `ProviderClient`, a shared HTTP client for OpenAI-compatible LLM APIs. It handles API key resolution, Bearer auth, and structured error classification (auth failures, model-not-found, rate limiting, timeouts). It is now an internal utility used by the API adapter (`src/runtime/api.rs`) rather than being called directly from `exec.rs`.
 
 Unlike `RuntimeAdapter` (a trait for pluggable backends), `ProviderClient` is a concrete struct — all supported LLM providers use the OpenAI-compatible API format. If a non-OpenAI-compatible provider is added, the client can be extended or a trait can be extracted at that point.
 

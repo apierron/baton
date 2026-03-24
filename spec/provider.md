@@ -1,8 +1,8 @@
 # module: provider
 
-> **v0.6 note:** `provider.rs` is now an internal utility used by the API adapter (`src/runtime/api.rs`), not called directly from `exec.rs` or `main.rs`. The runtime layer mediates all provider access.
+> **v0.7 note:** `provider.rs` is now an internal utility used by the API adapter (`src/runtime/api.rs`), not called directly from `exec.rs` or `main.rs`. The runtime layer mediates all provider access.
 
-HTTP client abstraction for OpenAI-compatible LLM provider APIs. Centralizes API key resolution, auth header construction, HTTP error classification, and response parsing. Used by the API runtime adapter (`runtime::api`) and `main` (provider health checks via `check-provider`).
+HTTP client abstraction for OpenAI-compatible LLM provider APIs. Centralizes API key resolution, auth header construction, HTTP error classification, and response parsing. Used by the API runtime adapter (`runtime::api`).
 
 ## Public types
 

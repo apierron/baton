@@ -23,8 +23,8 @@ fuzz_case() {
   local artifact="$TMPDIR/artifact.txt"
   echo "test" > "$artifact"
 
-  # validate-config should return non-zero for bad configs, but must not panic
-  if ! "$BINARY" validate-config --config "$config_file" >/dev/null 2>&1; then
+  # doctor --offline should return non-zero for bad configs, but must not panic
+  if ! "$BINARY" doctor --offline --config "$config_file" >/dev/null 2>&1; then
     : # Expected — bad config should fail cleanly
   fi
 }

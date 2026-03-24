@@ -195,15 +195,16 @@ fn e2e_validate_list_check_workflow() {
     ]);
     let dir = setup_project(&toml, "hello");
 
-    // Step 1: validate-config
+    // Step 1: doctor (config validation)
+    fs::create_dir_all(dir.path().join("prompts")).unwrap();
     let output = baton()
         .current_dir(dir.path())
-        .args(["validate-config"])
+        .args(["doctor", "--offline"])
         .output()
         .unwrap();
     assert!(
         output.status.success(),
-        "validate-config should succeed: {}",
+        "doctor should succeed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 

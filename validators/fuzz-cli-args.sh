@@ -42,7 +42,7 @@ fuzz_case "bad-config" check --config /nonexistent/baton.toml
 fuzz_case "no-config" check --config "$TMPDIR/nope.toml"
 
 # Contradictory only+skip
-echo 'version = "0.6"
+echo 'version = "0.7"
 [validators.x]
 type = "script"
 command = "echo ok"
@@ -69,9 +69,9 @@ fuzz_case "long-only" check --config "$TMPDIR/basic.toml" --only "$long_name"
 # Unknown subcommand
 fuzz_case "unknown-cmd" frobnicate
 
-# validate-config with garbage
+# doctor with garbage config
 echo "not valid toml {{{" > "$TMPDIR/garbage.toml"
-fuzz_case "garbage-config" validate-config --config "$TMPDIR/garbage.toml"
+fuzz_case "garbage-config" doctor --offline --config "$TMPDIR/garbage.toml"
 
 # list with nonexistent gate
 fuzz_case "list-bad-gate" list --config "$TMPDIR/basic.toml" --gate nonexistent

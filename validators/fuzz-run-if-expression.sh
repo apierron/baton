@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fuzz the run_if expression parser with malformed inputs.
-# Ensures validate-config never panics on adversarial run_if values.
+# Ensures doctor never panics on adversarial run_if values.
 set -euo pipefail
 
 BINARY="./target/debug/baton"
@@ -21,7 +21,7 @@ fuzz_case() {
 
   local config_file="$TMPDIR/${name}.toml"
   cat > "$config_file" << EOF
-version = "0.6"
+version = "0.7"
 
 [validators.a]
 type = "script"
@@ -40,7 +40,7 @@ validators = [
 EOF
 
   local stderr_file="$TMPDIR/${name}_stderr.txt"
-  "$BINARY" validate-config --config "$config_file" >/dev/null 2>"$stderr_file" || true
+  "$BINARY" doctor --offline --config "$config_file" >/dev/null 2>"$stderr_file" || true
 
   if grep -q 'panic\|RUST_BACKTRACE\|thread.*panicked' "$stderr_file" 2>/dev/null; then
     echo "PANIC in case '$name'!"

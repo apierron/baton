@@ -84,7 +84,7 @@ pub fn execute_validator(
 /// use std::path::Path;
 ///
 /// let toml = r#"
-/// version = "0.6"
+/// version = "0.7"
 ///
 /// [validators.lint]
 /// type = "script"

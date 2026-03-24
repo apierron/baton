@@ -1005,7 +1005,7 @@ mod tests {
     use tempfile::TempDir;
 
     fn base_config() -> &'static str {
-        r#"version = "0.6"
+        r#"version = "0.7"
 
 [defaults]
 timeout_seconds = 300
@@ -1312,7 +1312,7 @@ validators = [
     #[test]
     fn apply_edits_preserves_comments() {
         let config_with_comments = r#"# Main config
-version = "0.6"
+version = "0.7"
 
 [defaults]
 timeout_seconds = 300
@@ -1425,10 +1425,10 @@ validators = [
     fn write_config_creates_file() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("baton.toml");
-        write_config(&path, "version = \"0.6\"\n").unwrap();
+        write_config(&path, "version = \"0.7\"\n").unwrap();
         assert_eq!(
             std::fs::read_to_string(&path).unwrap(),
-            "version = \"0.6\"\n"
+            "version = \"0.7\"\n"
         );
     }
 
@@ -1734,7 +1734,7 @@ system_prompt = "You are a reviewer"
     fn find_config_reads_existing() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("baton.toml");
-        std::fs::write(&path, "version = \"0.6\"\n").unwrap();
+        std::fs::write(&path, "version = \"0.7\"\n").unwrap();
         let (found_path, content) = find_config(Some(&path)).unwrap();
         assert_eq!(found_path, path);
         assert!(content.contains("version"));

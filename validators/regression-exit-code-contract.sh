@@ -17,7 +17,7 @@ FAILURES=0
 
 # Case 1: passing config → exit 0
 cat > "$TMPDIR/pass.toml" << 'EOF'
-version = "0.6"
+version = "0.7"
 [validators.ok]
 type = "script"
 command = "echo PASS"
@@ -36,7 +36,7 @@ fi
 
 # Case 2: failing validator → exit 1
 cat > "$TMPDIR/fail.toml" << 'EOF'
-version = "0.6"
+version = "0.7"
 [validators.bad]
 type = "script"
 command = "echo FAIL && exit 1"

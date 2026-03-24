@@ -481,7 +481,7 @@ impl ConfigValidation {
 /// use std::path::Path;
 ///
 /// let toml = r#"
-/// version = "0.6"
+/// version = "0.7"
 ///
 /// [validators.lint]
 /// type = "script"
@@ -499,9 +499,9 @@ impl ConfigValidation {
 pub fn parse_config(toml_str: &str, config_dir: &Path) -> Result<BatonConfig> {
     let raw: RawConfig = toml::from_str(toml_str)?;
 
-    if raw.version != "0.4" && raw.version != "0.5" && raw.version != "0.6" {
+    if raw.version != "0.4" && raw.version != "0.5" && raw.version != "0.6" && raw.version != "0.7" {
         return Err(BatonError::ConfigError(format!(
-            "Unsupported version '{}'. Expected '0.4', '0.5', or '0.6'.",
+            "Unsupported version '{}'. Expected '0.4', '0.5', '0.6', or '0.7'.",
             raw.version
         )));
     }
@@ -1505,7 +1505,7 @@ blocking = true
     #[test]
     fn api_runtime_trailing_slash_stripped() {
         let toml = r#"
-version = "0.6"
+version = "0.7"
 [runtimes.default]
 type = "api"
 base_url = "https://api.example.com/"
@@ -1588,7 +1588,7 @@ prompt = "Review this"
     #[test]
     fn validate_session_mode_api_runtime_warns() {
         let toml = r#"
-version = "0.6"
+version = "0.7"
 [runtimes.api-rt]
 type = "api"
 base_url = "http://localhost"
@@ -1738,7 +1738,7 @@ blocking = true
     #[test]
     fn parse_full_config() {
         let toml = r#"
-version = "0.6"
+version = "0.7"
 
 [defaults]
 timeout_seconds = 300
@@ -1999,7 +1999,7 @@ response_format = "invalid"
     #[test]
     fn llm_validator_no_runtime_has_empty_runtimes() {
         let toml = r#"
-version = "0.6"
+version = "0.7"
 [gates.gate]
 [[gates.gate.validators]]
 name = "check"
@@ -2064,7 +2064,7 @@ run_if = "a.status == pass"
     #[test]
     fn undefined_non_default_runtime() {
         let toml = r#"
-version = "0.6"
+version = "0.7"
 [gates.test]
 [[gates.test.validators]]
 name = "check"
@@ -2127,7 +2127,7 @@ provider = "nonexistent"
     #[test]
     fn api_key_env_validation() {
         let toml = r#"
-version = "0.6"
+version = "0.7"
 [runtimes.myruntime]
 type = "api"
 base_url = "https://api.example.com"
@@ -2154,7 +2154,7 @@ command = "echo ok"
     #[test]
     fn multiple_simultaneous_validation_errors() {
         let toml = r#"
-version = "0.6"
+version = "0.7"
 [gates.test]
 [[gates.test.validators]]
 name = "a"
@@ -2686,7 +2686,7 @@ validators = []
     fn validate_session_mode_all_api_runtimes_errors() {
         // SPEC-CF-VC-025: session mode with ALL api runtimes → error
         let toml = r#"
-version = "0.6"
+version = "0.7"
 [runtimes.rt1]
 type = "api"
 base_url = "http://localhost:8001"
@@ -2717,7 +2717,7 @@ runtime = ["rt1", "rt2"]
     fn api_runtime_double_trailing_slash_only_one_stripped() {
         // SPEC-CF-PC-028: only a single trailing slash is stripped
         let toml = r#"
-version = "0.6"
+version = "0.7"
 [runtimes.default]
 type = "api"
 base_url = "https://api.example.com//"

@@ -11,9 +11,7 @@
 //! | `baton add` | [`add`] | Add a validator to baton.toml |
 //! | `baton list` | [`list`] | List gates and validators |
 //! | `baton history` | [`history`] | Query invocation history |
-//! | `baton validate-config` | [`validate_config`] | Validate baton.toml |
-//! | `baton check-provider` | [`check_provider`] | Check provider connectivity |
-//! | `baton check-runtime` | [`check_runtime`] | Check runtime health |
+//! | `baton doctor` | [`doctor`] | Comprehensive health check |
 //! | `baton clean` | [`clean`] | Remove temporary files |
 //! | `baton update` | [`update`] | Self-update baton |
 //! | `baton uninstall` | [`uninstall`] | Uninstall baton |
@@ -21,15 +19,13 @@
 
 pub mod add;
 pub mod check;
-pub mod check_provider;
-pub mod check_runtime;
 pub mod clean;
+pub mod doctor;
 pub mod history;
 pub mod init;
 pub mod list;
 pub mod uninstall;
 pub mod update;
-pub mod validate_config;
 pub mod version;
 
 use std::path::{Path, PathBuf};

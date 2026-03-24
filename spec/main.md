@@ -13,7 +13,7 @@ CLI entry point and per-command handlers for baton. `main.rs` owns the CLI gramm
 | Type | Purpose |
 |---|---|
 | `Cli` | clap `#[derive(Parser)]` struct; holds a single `Commands` subcommand |
-| `Commands` | clap `#[derive(Subcommand)]` enum with 12 variants: Add, Check, Init, List, History, ValidateConfig, CheckProvider, CheckRuntime, Clean, Version, Update, Uninstall |
+| `Commands` | clap `#[derive(Subcommand)]` enum with 10 variants: Add, Check, Doctor, Init, List, History, Clean, Version, Update, Uninstall |
 
 ## Shared helpers in `commands/mod.rs`
 
@@ -21,7 +21,7 @@ CLI entry point and per-command handlers for baton. `main.rs` owns the CLI gramm
 |---|---|
 | `load_config` | All `cmd_*` functions that need baton.toml |
 | `ValidatorTypeStr` trait | `cmd_check` (dry-run), `cmd_list` |
-| `detect_install_method` | `cmd_update` |
+| `detect_install_method` | `cmd_update`, `cmd_doctor` |
 
 ## Per-command modules
 
@@ -32,9 +32,7 @@ CLI entry point and per-command handlers for baton. `main.rs` owns the CLI gramm
 | `commands/init.rs` | `cmd_init` | Project scaffold; embedded config/prompt templates |
 | `commands/list.rs` | `cmd_list` | Gate and validator listing |
 | `commands/history.rs` | `cmd_history` | SQLite history query and display |
-| `commands/validate_config.rs` | `cmd_validate_config` | Config validation with error/warning reporting |
-| `commands/check_provider.rs` | `cmd_check_provider` | API runtime connectivity check |
-| `commands/check_runtime.rs` | `cmd_check_runtime` | Agent runtime health check |
+| `commands/doctor.rs` | `cmd_doctor` | Comprehensive health check (installation, config, structure, prompts, env, runtimes) |
 | `commands/clean.rs` | `cmd_clean` | Stale temp file removal |
 | `commands/version.rs` | `cmd_version` | Version and config location display |
 | `commands/update.rs` | `cmd_update` | GitHub release download and atomic binary replace |
@@ -85,7 +83,7 @@ SPEC-MN-LC-005: returns-config-and-path
 Parses `Cli` via clap and dispatches to the appropriate `cmd_*` handler. The handler's `i32` return becomes the process exit code via `process::exit()`.
 
 SPEC-MN-MN-001: dispatch-all-subcommands
-  All 11 `Commands` variants are matched exhaustively and routed to their corresponding handler function. No variant is silently ignored.
+  All 10 `Commands` variants are matched exhaustively and routed to their corresponding handler function. No variant is silently ignored.
   test: IMPLICIT via per-subcommand cli tests
 
 SPEC-MN-MN-002: exit-code-passthrough
@@ -408,134 +406,100 @@ SPEC-MN-HY-009: default-limit-is-20
 
 ---
 
-## cmd_validate_config
+## cmd_doctor
 
-Validates baton.toml and reports any errors or warnings.
+Runs a comprehensive health check across installation, config, project structure, prompt templates, environment variables, and runtimes. All output goes to stderr. Exit code is 0 if all checks pass or warn, 1 if any fail.
 
-SPEC-MN-VC-001: parse-error-exits-1
-  If `load_config` fails (TOML parse error, file not found, etc.), prints "Error: {e}" and returns exit code 1.
+### Sections
+
+1. Installation
+2. Configuration
+3. Project Structure
+4. Prompt Templates
+5. Environment
+6. Runtimes
+
+Output is grouped by section with numbered headers (`[1/6] Installation`, etc.). Each check within a section gets a status prefix: `[ok]`, `[warn]`, `[fail]`, or `[skip]`. A summary line is printed at the end.
+
+SPEC-MN-DR-001: installation-always-runs
+  Section 1 (Installation) runs unconditionally, even if config cannot be loaded.
+  Reports baton version from `env!("CARGO_PKG_VERSION")` and install method from
+  `detect_install_method()`. Always `[ok]`.
   test: UNTESTED
 
-SPEC-MN-VC-002: no-issues-exits-0
-  When validation produces no errors and no warnings, prints "Config OK: {path}" to stderr and returns exit code 0.
-  test: cli::validate_config_with_explicit_config
-
-SPEC-MN-VC-003: warnings-printed-to-stderr
-  Each warning is printed as "Warning: {w}" to stderr.
+SPEC-MN-DR-002: config-discovery-reported
+  Section 2 attempts to load config via `load_config()`. If successful, reports
+  the file path with `[ok]`. If discovery/parse fails, reports the error with `[fail]`.
   test: UNTESTED
 
-SPEC-MN-VC-004: errors-printed-to-stderr
-  Each error is printed as "Error: {e}" to stderr.
-  test: cli::validate_config_errors_printed_to_stderr
-
-SPEC-MN-VC-005: errors-exit-1-warnings-exit-0
-  If `validation.has_errors()` is true, returns exit code 1. If only warnings are present (no errors), returns exit code 0.
-  test: cli::validate_config_warnings_exit_0
-
----
-
-## check_single_provider
-
-Tests connectivity to a single LLM provider. Uses `ProviderClient` from the provider module for all HTTP interactions.
-
-SPEC-MN-SP-001: missing-api-key-returns-false
-  If ProviderClient::new returns ApiKeyNotSet, prints the env var error and returns false.
+SPEC-MN-DR-003: config-validation-reported
+  When config loads successfully, `validate_config()` is called. Errors are reported
+  as `[fail]`, warnings as `[warn]`, and clean validation as `[ok]`.
   test: UNTESTED
 
-SPEC-MN-SP-002: empty-api-key-env-skips-key-check
-  Handled by ProviderClient::new — empty api_key_env means no auth.
+SPEC-MN-DR-004: sections-skip-without-config
+  If config loading fails in section 2, sections 3-6 each show a single
+  `[skip]` "Requires valid configuration" line.
   test: UNTESTED
 
-SPEC-MN-SP-003: models-endpoint-auth-failure
-  If list_models returns AuthFailed, prints "Authentication failed" and returns false.
+SPEC-MN-DR-005: project-structure-checks-directories
+  Section 3 checks that `prompts_dir`, `log_dir`, and `tmp_dir` exist as directories.
+  Missing directories are reported as `[fail]`.
   test: UNTESTED
 
-SPEC-MN-SP-004: models-endpoint-timeout
-  If list_models returns Timeout, prints "connection timed out" and returns false.
+SPEC-MN-DR-006: history-db-writable-check
+  Section 3 checks `history_db`. If the file exists, `[ok]`. If the file is missing
+  but the parent directory exists and is writable, `[warn]` "will be created on first run".
+  If the parent directory is missing or not writable, `[fail]`.
   test: UNTESTED
 
-SPEC-MN-SP-005: model-found-in-list
-  If list_models succeeds and the default model is in the list, prints "OK" and returns true.
+SPEC-MN-DR-007: prompt-templates-resolved
+  Section 4 iterates all LLM validators' prompt fields. File references are resolved
+  via `prompt::resolve_prompt_value()`. Successful resolution is `[ok]`. Resolution
+  failure is `[fail]` with the error message. Duplicate prompt references are checked once.
   test: UNTESTED
 
-SPEC-MN-SP-006: model-not-found-in-list
-  If list_models succeeds but the model is absent, prints "WARN" with available models. Returns true.
+SPEC-MN-DR-008: no-prompt-refs-shows-ok
+  When no LLM validators reference prompt files, section 4 shows
+  `[ok]` "No prompt file references to check".
   test: UNTESTED
 
-SPEC-MN-SP-007: fallback-test-completion
-  If list_models returns a non-auth/non-connectivity error, falls through to test_completion.
+SPEC-MN-DR-009: env-vars-for-runtimes-checked
+  Section 5 checks `api_key_env` for each runtime. Set and non-empty is `[ok]`.
+  Unset or empty is `[fail]` with the runtime name and env var name.
+  Runtimes with no `api_key_env` are skipped silently.
   test: UNTESTED
 
----
+SPEC-MN-DR-010: runtime-health-all-types
+  Section 6 calls `health_check()` on every runtime in `config.runtimes` (all types,
+  not just api). Reachable is `[ok]` with type and version if available. Unreachable
+  or error is `[fail]`.
+  test: UNTESTED (requires mock server or real runtime)
 
-## cmd_check_provider
-
-Checks connectivity for one or all configured LLM providers.
-
-SPEC-MN-CP-001: no-providers-exits-1
-  If `config.providers` is empty, prints "No providers configured in baton.toml." and returns exit code 1.
+SPEC-MN-DR-011: offline-skips-runtimes
+  When `--offline` is set, section 6 shows `[skip]` for each runtime with
+  "Skipped (--offline)" as the reason.
   test: UNTESTED
 
-SPEC-MN-CP-002: all-flag-checks-every-provider
-  `--all` iterates over every provider in the config.
+SPEC-MN-DR-012: exit-0-no-fails
+  Returns exit code 0 when all checks are `[ok]`, `[warn]`, or `[skip]`.
   test: UNTESTED
 
-SPEC-MN-CP-003: named-provider-not-found-exits-1
-  If the named provider is not in the config, prints "Error: Provider '{name}' not found. Available providers: ..." and returns exit code 1.
+SPEC-MN-DR-013: exit-1-any-fail
+  Returns exit code 1 when at least one check is `[fail]`.
   test: UNTESTED
 
-SPEC-MN-CP-004: default-checks-first-provider
-  When neither `--all` nor a name is specified, checks only the first provider (by BTreeMap iteration order).
+SPEC-MN-DR-014: summary-line-printed
+  Final line shows "Summary: N ok, N warn, N fail" on stderr.
   test: UNTESTED
 
-SPEC-MN-CP-005: any-failure-exits-1
-  If any checked provider fails, returns exit code 1. All providers are still checked (no short-circuit).
+SPEC-MN-DR-015: all-output-to-stderr
+  All doctor output goes to stderr. Nothing is written to stdout.
   test: UNTESTED
 
-SPEC-MN-CP-006: all-pass-exits-0
-  If all checked providers pass, returns exit code 0.
-  test: UNTESTED
-
----
-
-## cmd_check_runtime
-
-Checks health for one or all configured agent runtimes.
-
-SPEC-MN-CR-001: no-runtimes-exits-1
-  If `config.runtimes` is empty, prints "No runtimes configured in baton.toml." and returns exit code 1.
-  test: UNTESTED
-
-SPEC-MN-CR-002: all-flag-checks-every-runtime
-  `--all` iterates over every runtime in the config.
-  test: UNTESTED
-
-SPEC-MN-CR-003: named-runtime-not-found-exits-1
-  If the named runtime is not in the config, prints "Error: Runtime '{name}' not found. Available runtimes: ..." and returns exit code 1.
-  test: UNTESTED
-
-SPEC-MN-CR-004: default-checks-first-runtime
-  When neither `--all` nor a name is specified, checks only the first runtime.
-  test: UNTESTED
-
-SPEC-MN-CR-005: adapter-creation-failure-continues
-  If `create_adapter` fails for a runtime, prints the error, marks it as failed, and continues to the next runtime.
-  test: UNTESTED
-
-SPEC-MN-CR-006: health-check-reachable
-  If `health_check` returns `Ok` with `reachable: true`, prints "OK" with version info (if available).
-  test: UNTESTED
-
-SPEC-MN-CR-007: health-check-unreachable
-  If `health_check` returns `Ok` with `reachable: false`, prints "ERROR" with the message.
-  test: UNTESTED
-
-SPEC-MN-CR-008: health-check-error
-  If `health_check` returns `Err`, prints "ERROR: health check failed" with the error.
-  test: UNTESTED
-
-SPEC-MN-CR-009: any-failure-exits-1
-  If any runtime check fails, returns exit code 1.
+SPEC-MN-DR-016: no-env-vars-shows-ok
+  When no runtimes have `api_key_env` configured, section 5 shows
+  `[ok]` "No environment variables to check".
   test: UNTESTED
 
 ---

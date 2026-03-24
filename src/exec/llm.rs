@@ -1638,7 +1638,7 @@ mod tests {
         );
 
         let config = BatonConfig {
-            version: "0.6".into(),
+            version: "0.7".into(),
             defaults: crate::config::Defaults {
                 timeout_seconds: 300,
                 blocking: true,
@@ -1711,7 +1711,7 @@ mod tests {
         );
 
         let config = BatonConfig {
-            version: "0.6".into(),
+            version: "0.7".into(),
             defaults: crate::config::Defaults {
                 timeout_seconds: 300,
                 blocking: true,

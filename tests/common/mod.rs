@@ -193,10 +193,10 @@ pub fn parse_verdict(stdout: &str) -> serde_json::Value {
     serde_json::from_str(stdout).expect("Failed to parse JSON verdict")
 }
 
-/// Creates a v0.6 config with top-level validators and gate refs (the format `baton add` targets).
+/// Creates a v0.7 config with top-level validators and gate refs (the format `baton add` targets).
 pub fn v06_config_with_validators(validators_toml: &str, gates_toml: &str) -> String {
     format!(
-        r#"version = "0.6"
+        r#"version = "0.7"
 
 [defaults]
 timeout_seconds = 300
@@ -209,7 +209,7 @@ blocking = true
     )
 }
 
-/// A minimal v0.6 config with one script validator and one gate.
+/// A minimal v0.7 config with one script validator and one gate.
 pub fn v06_base_config() -> String {
     v06_config_with_validators(
         r#"[validators.existing]

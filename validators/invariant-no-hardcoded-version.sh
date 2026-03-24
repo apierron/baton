@@ -31,7 +31,7 @@ for file in $(all_rs_files); do
       if echo "$match" | grep -q 'env!'; then
         continue
       fi
-      # Whitelist: config.rs version format checks ("0.4", "0.5", "0.6") are config schema versions
+      # Whitelist: config.rs version format checks ("0.4", "0.5", "0.6", "0.7") are config schema versions
       if [[ "$(basename "$file")" == "config.rs" ]] && echo "$match" | grep -qE '"0\.[0-9]+"'; then
         continue
       fi

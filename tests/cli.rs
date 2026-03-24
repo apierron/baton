@@ -946,26 +946,155 @@ fn version_shows_config_found_when_config_exists() {
     assert!(stdout.contains("(found)"));
 }
 
-// ─── Validate-Config Command ─────────────────────────────
+// ─── Doctor Command (replaces validate-config, check-provider, check-runtime) ───
 
 #[test]
-fn validate_config_valid_exits_0() {
-    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
-    let dir = setup_project(&toml, "hello");
+fn doctor_nonexistent_config_exits_nonzero() {
+    let dir = TempDir::new().unwrap();
+    fs::create_dir(dir.path().join(".git")).unwrap();
 
-    baton()
-        .arg("validate-config")
+    let output = baton()
+        .args(["doctor", "--offline", "--config", "nonexistent.toml"])
         .current_dir(dir.path())
-        .assert()
-        .success()
-        .stderr(predicate::str::contains("Config OK"));
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
 }
 
 #[test]
-fn validate_config_invalid_exits_1() {
+fn doctor_valid_config_exits_0() {
+    // SPEC-MN-DR-012: exit-0-no-fails
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+    fs::create_dir_all(dir.path().join("prompts")).unwrap();
+
+    baton()
+        .args(["doctor", "--offline"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+}
+
+#[test]
+fn doctor_all_output_to_stderr() {
+    // SPEC-MN-DR-015: all output to stderr, nothing on stdout
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+    fs::create_dir_all(dir.path().join("prompts")).unwrap();
+
+    let output = baton()
+        .args(["doctor", "--offline"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.stdout.is_empty(), "stdout should be empty");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("[ok]"),
+        "stderr should contain check output"
+    );
+}
+
+#[test]
+fn doctor_summary_line() {
+    // SPEC-MN-DR-014: summary line printed
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+    fs::create_dir_all(dir.path().join("prompts")).unwrap();
+
+    let output = baton()
+        .args(["doctor", "--offline"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Summary:"),
+        "Should print summary line: {stderr}"
+    );
+}
+
+#[test]
+fn doctor_installation_always_runs() {
+    // SPEC-MN-DR-001: installation section runs even without config
     let dir = TempDir::new().unwrap();
-    // Config with a validator missing a command field
-    let bad_toml = r#"version = "0.4"
+    fs::create_dir(dir.path().join(".git")).unwrap();
+
+    let output = baton()
+        .args(["doctor", "--offline"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Installation"),
+        "Should show installation section: {stderr}"
+    );
+    assert!(
+        stderr.contains("baton"),
+        "Should show baton version: {stderr}"
+    );
+}
+
+#[test]
+fn doctor_no_config_skips_remaining() {
+    // SPEC-MN-DR-004: sections 3-6 skip without config
+    let dir = TempDir::new().unwrap();
+    fs::create_dir(dir.path().join(".git")).unwrap();
+
+    let output = baton()
+        .args(["doctor", "--offline"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("[skip]"),
+        "Should show skip for sections without config: {stderr}"
+    );
+    assert!(
+        stderr.contains("Requires valid configuration"),
+        "Skip message should explain why: {stderr}"
+    );
+}
+
+#[test]
+fn doctor_missing_prompts_dir() {
+    // SPEC-MN-DR-005: missing directory reported as fail
+    let dir = TempDir::new().unwrap();
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    fs::write(dir.path().join("baton.toml"), toml).unwrap();
+    fs::create_dir_all(dir.path().join(".baton/tmp")).unwrap();
+    fs::create_dir_all(dir.path().join(".baton/logs")).unwrap();
+    // Deliberately NOT creating prompts/
+
+    let output = baton()
+        .args(["doctor", "--offline"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        !output.status.success(),
+        "Should fail with missing prompts_dir"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("[fail]") && stderr.contains("prompts_dir"),
+        "Should report missing prompts_dir: {stderr}"
+    );
+}
+
+#[test]
+fn doctor_offline_skips_runtimes() {
+    // SPEC-MN-DR-011: --offline skips runtime checks
+    let dir = TempDir::new().unwrap();
+    let toml = r#"version = "0.7"
 
 [defaults]
 timeout_seconds = 30
@@ -975,36 +1104,120 @@ log_dir = "./.baton/logs"
 history_db = "./.baton/history.db"
 tmp_dir = "./.baton/tmp"
 
+[runtimes.default]
+type = "api"
+base_url = "http://localhost:1"
+default_model = "test-model"
+
 [gates.review]
+
 [[gates.review.validators]]
 name = "lint"
 type = "script"
+command = "echo PASS"
 "#;
-    fs::write(dir.path().join("baton.toml"), bad_toml).unwrap();
+    fs::write(dir.path().join("baton.toml"), toml).unwrap();
+    fs::create_dir_all(dir.path().join(".baton/tmp")).unwrap();
+    fs::create_dir_all(dir.path().join(".baton/logs")).unwrap();
+    fs::create_dir_all(dir.path().join("prompts")).unwrap();
 
     let output = baton()
-        .arg("validate-config")
+        .args(["doctor", "--offline"])
         .current_dir(dir.path())
         .output()
         .unwrap();
 
-    assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("Error"));
+    assert!(
+        stderr.contains("Skipped (--offline)"),
+        "Should skip runtimes with --offline: {stderr}"
+    );
 }
 
 #[test]
-fn validate_config_nonexistent_file_exits_nonzero() {
+fn doctor_missing_env_var() {
+    // SPEC-MN-DR-009: missing api_key_env reported as fail
     let dir = TempDir::new().unwrap();
-    fs::create_dir(dir.path().join(".git")).unwrap();
+    let toml = r#"version = "0.7"
+
+[defaults]
+timeout_seconds = 30
+blocking = true
+prompts_dir = "./prompts"
+log_dir = "./.baton/logs"
+history_db = "./.baton/history.db"
+tmp_dir = "./.baton/tmp"
+
+[runtimes.default]
+type = "api"
+base_url = "http://localhost:1"
+api_key_env = "BATON_DOCTOR_TEST_NONEXISTENT_KEY"
+default_model = "test-model"
+
+[gates.review]
+
+[[gates.review.validators]]
+name = "lint"
+type = "script"
+command = "echo PASS"
+"#;
+    fs::write(dir.path().join("baton.toml"), toml).unwrap();
+    fs::create_dir_all(dir.path().join(".baton/tmp")).unwrap();
+    fs::create_dir_all(dir.path().join(".baton/logs")).unwrap();
+    fs::create_dir_all(dir.path().join("prompts")).unwrap();
 
     let output = baton()
-        .args(["validate-config", "--config", "nonexistent.toml"])
+        .args(["doctor", "--offline"])
         .current_dir(dir.path())
         .output()
         .unwrap();
 
-    assert!(!output.status.success());
+    assert!(!output.status.success(), "Should fail with missing env var");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("BATON_DOCTOR_TEST_NONEXISTENT_KEY") && stderr.contains("not set"),
+        "Should report missing env var: {stderr}"
+    );
+}
+
+#[test]
+fn doctor_no_env_vars_shows_ok() {
+    // SPEC-MN-DR-016: no env vars to check shows ok
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+    fs::create_dir_all(dir.path().join("prompts")).unwrap();
+
+    let output = baton()
+        .args(["doctor", "--offline"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No environment variables to check"),
+        "Should show no env vars message: {stderr}"
+    );
+}
+
+#[test]
+fn doctor_script_only_no_prompt_refs() {
+    // SPEC-MN-DR-008: no LLM validators shows ok for prompts
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+    fs::create_dir_all(dir.path().join("prompts")).unwrap();
+
+    let output = baton()
+        .args(["doctor", "--offline"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("No prompt file references to check"),
+        "Should show no prompt refs message: {stderr}"
+    );
 }
 
 // ─── List Command ────────────────────────────────────────
@@ -1223,26 +1436,6 @@ fn list_with_explicit_config() {
     assert!(stdout.contains("review"));
 }
 
-// ─── Validate-Config with explicit --config ──────────────
-
-#[test]
-fn validate_config_with_explicit_config() {
-    let dir = TempDir::new().unwrap();
-    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
-    fs::write(dir.path().join("custom.toml"), &toml).unwrap();
-
-    baton()
-        .args([
-            "validate-config",
-            "--config",
-            dir.path().join("custom.toml").to_str().unwrap(),
-        ])
-        .current_dir(dir.path())
-        .assert()
-        .success()
-        .stderr(predicate::str::contains("Config OK"));
-}
-
 // ─── History with --limit ────────────────────────────────
 
 #[test]
@@ -1292,9 +1485,9 @@ fn init_creates_valid_parseable_config() {
         .assert()
         .success();
 
-    // The generated config should pass validate-config
+    // The generated config should pass doctor
     baton()
-        .arg("validate-config")
+        .args(["doctor", "--offline"])
         .current_dir(dir.path())
         .assert()
         .success();
@@ -1611,7 +1804,7 @@ fn init_flags_override_interactive() {
 /// SPEC-MN-IN-026: base-only config (no code validators) is valid TOML
 #[test]
 fn init_base_only_config_valid() {
-    let base_config = r#"version = "0.6"
+    let base_config = r#"version = "0.7"
 
 [defaults]
 timeout_seconds = 300
@@ -1623,133 +1816,10 @@ tmp_dir = "./.baton/tmp"
 "#;
 
     let parsed: toml::Value = toml::from_str(base_config).unwrap();
-    assert_eq!(parsed["version"].as_str().unwrap(), "0.6");
+    assert_eq!(parsed["version"].as_str().unwrap(), "0.7");
     assert!(parsed.get("defaults").is_some());
     assert!(parsed.get("validators").is_none());
     assert!(parsed.get("gates").is_none());
-}
-
-// ─── cmd_validate_config gaps ────────────────────────────
-
-#[test]
-fn validate_config_parse_error_exits_1() {
-    let dir = TempDir::new().unwrap();
-    fs::write(dir.path().join("bad.toml"), "this is not valid toml {{{}}}").unwrap();
-
-    baton()
-        .args(["validate-config", "--config", "bad.toml"])
-        .current_dir(dir.path())
-        .assert()
-        .code(predicate::ne(0));
-}
-
-#[test]
-fn validate_config_warnings_printed() {
-    let dir = TempDir::new().unwrap();
-    // Config with a validator referencing a non-existent provider triggers a warning
-    let toml = r#"version = "0.4"
-
-[defaults]
-timeout_seconds = 30
-blocking = true
-prompts_dir = "./prompts"
-log_dir = "./.baton/logs"
-history_db = "./.baton/history.db"
-tmp_dir = "./.baton/tmp"
-
-[gates.review]
-
-[[gates.review.validators]]
-name = "llm-check"
-type = "llm"
-prompt = "Review this"
-provider = "nonexistent"
-model = "test"
-"#;
-    fs::write(dir.path().join("baton.toml"), toml).unwrap();
-
-    let output = baton()
-        .args(["validate-config"])
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Warning")
-            || stderr.contains("warning")
-            || stderr.contains("Error")
-            || stderr.contains("error"),
-        "Should show warning or error for undefined provider: {stderr}"
-    );
-}
-
-#[test]
-fn validate_config_errors_printed_to_stderr() {
-    // SPEC-MN-VC-004: errors printed to stderr
-    let dir = TempDir::new().unwrap();
-    let toml = r#"
-version = "0.6"
-[gates.test]
-[[gates.test.validators]]
-name = "check"
-type = "llm"
-mode = "session"
-prompt = "Review this"
-"#;
-    fs::write(dir.path().join("baton.toml"), toml).unwrap();
-
-    let output = baton()
-        .args(["validate-config"])
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-
-    assert!(!output.status.success(), "Should exit non-zero for errors");
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Error") || stderr.contains("error"),
-        "Errors should appear on stderr: {stderr}"
-    );
-}
-
-#[test]
-fn validate_config_warnings_exit_0() {
-    // SPEC-MN-VC-005: warnings-only exits 0
-    let dir = TempDir::new().unwrap();
-    let toml = r#"
-version = "0.6"
-[runtimes.default]
-type = "api"
-base_url = "http://localhost"
-
-[gates.test]
-[[gates.test.validators]]
-name = "check"
-type = "llm"
-prompt = "Review this"
-runtime = "default"
-response_format = "freeform"
-blocking = true
-"#;
-    fs::write(dir.path().join("baton.toml"), toml).unwrap();
-
-    let output = baton()
-        .args(["validate-config"])
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-
-    assert!(
-        output.status.success(),
-        "Warnings-only should exit 0, got: {}",
-        output.status.code().unwrap_or(-1)
-    );
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("Warning") || stderr.contains("warning"),
-        "Should show warnings on stderr: {stderr}"
-    );
 }
 
 // ─── cmd_version gaps ────────────────────────────────────
@@ -1805,121 +1875,6 @@ fn clean_dry_run_does_not_delete() {
 
     // File should still exist after dry-run
     assert!(tmp_file.exists(), "dry-run should not delete files");
-}
-
-// ─── cmd_check_provider gaps ─────────────────────────────
-
-#[test]
-fn check_provider_missing_api_key_env() {
-    let dir = TempDir::new().unwrap();
-    let toml = r#"version = "0.6"
-
-[defaults]
-timeout_seconds = 30
-blocking = true
-prompts_dir = "./prompts"
-log_dir = "./.baton/logs"
-history_db = "./.baton/history.db"
-tmp_dir = "./.baton/tmp"
-
-[runtimes.default]
-type = "api"
-base_url = "http://localhost:1"
-api_key_env = "BATON_CLI_TEST_NONEXISTENT_KEY"
-default_model = "test-model"
-
-[gates.review]
-
-[[gates.review.validators]]
-name = "lint"
-type = "script"
-command = "echo PASS"
-"#;
-    fs::write(dir.path().join("baton.toml"), toml).unwrap();
-    fs::create_dir_all(dir.path().join(".baton/tmp")).unwrap();
-    fs::create_dir_all(dir.path().join(".baton/logs")).unwrap();
-
-    let output = baton()
-        .args(["check-provider"])
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("BATON_CLI_TEST_NONEXISTENT_KEY") || stderr.contains("not set"),
-        "Should mention missing env var: {stderr}"
-    );
-    assert!(!output.status.success());
-}
-
-// ─── cmd_check_runtime gaps ──────────────────────────────
-
-#[test]
-fn check_runtime_no_runtimes_exits_1() {
-    let dir = TempDir::new().unwrap();
-    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
-    fs::write(dir.path().join("baton.toml"), toml).unwrap();
-    fs::create_dir_all(dir.path().join(".baton/tmp")).unwrap();
-    fs::create_dir_all(dir.path().join(".baton/logs")).unwrap();
-
-    let output = baton()
-        .args(["check-runtime"])
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-
-    assert!(
-        !output.status.success(),
-        "check-runtime with no runtimes should fail"
-    );
-}
-
-#[test]
-fn check_runtime_named_not_found() {
-    let dir = TempDir::new().unwrap();
-    let toml = r#"version = "0.4"
-
-[defaults]
-timeout_seconds = 30
-blocking = true
-prompts_dir = "./prompts"
-log_dir = "./.baton/logs"
-history_db = "./.baton/history.db"
-tmp_dir = "./.baton/tmp"
-
-[runtimes.alpha]
-type = "openhands"
-base_url = "http://localhost:1"
-timeout_seconds = 600
-max_iterations = 30
-
-[gates.review]
-
-[[gates.review.validators]]
-name = "lint"
-type = "script"
-command = "echo PASS"
-"#;
-    fs::write(dir.path().join("baton.toml"), toml).unwrap();
-    fs::create_dir_all(dir.path().join(".baton/tmp")).unwrap();
-    fs::create_dir_all(dir.path().join(".baton/logs")).unwrap();
-
-    let output = baton()
-        .args(["check-runtime", "beta"])
-        .current_dir(dir.path())
-        .output()
-        .unwrap();
-
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !output.status.success(),
-        "Should fail when named runtime not found"
-    );
-    assert!(
-        stderr.contains("beta") || stderr.contains("not found"),
-        "Should mention the missing runtime: {stderr}"
-    );
 }
 
 // ─── File input: positional args ─────────────────────────
@@ -2686,7 +2641,7 @@ fn add_no_tty_no_flags_exits_1() {
 #[test]
 fn add_preserves_existing_config_structure() {
     let config = r#"# Project config
-version = "0.6"
+version = "0.7"
 
 [defaults]
 timeout_seconds = 300
@@ -2764,10 +2719,11 @@ fn add_success_message_on_stderr() {
     assert!(stderr.contains("lint"));
 }
 
-/// SPEC-MN-AD-051: modified config passes validate-config
+/// SPEC-MN-AD-051: modified config passes doctor
 #[test]
-fn add_result_passes_validate_config() {
+fn add_result_passes_doctor() {
     let dir = setup_project(&v06_base_config(), "hello");
+    fs::create_dir_all(dir.path().join("prompts")).unwrap();
 
     // Add a validator
     baton()
@@ -2787,9 +2743,9 @@ fn add_result_passes_validate_config() {
         .assert()
         .success();
 
-    // Run validate-config on the result
+    // Run doctor on the result
     baton()
-        .args(["validate-config"])
+        .args(["doctor", "--offline"])
         .current_dir(dir.path())
         .assert()
         .success();

@@ -47,8 +47,8 @@ SPEC-CF-PC-001: toml-syntax-error-propagated
   When the input string is not valid TOML, parse_config returns an error propagated from the TOML parser via the `?` operator. The error message is from the toml crate, not wrapped in baton-specific text.
   test: config::tests::malformed_toml_returns_error
 
-SPEC-CF-PC-002: version-must-be-0-4-or-0-5-or-0-6
-  The `version` field must be exactly "0.4", "0.5", or "0.6". Any other value, including "0.3", "1.0", or an empty string, returns ConfigError containing the rejected version string.
+SPEC-CF-PC-002: version-must-be-0-4-or-0-5-or-0-6-or-0-7
+  The `version` field must be exactly "0.4", "0.5", "0.6", or "0.7". Any other value, including "0.3", "1.0", or an empty string, returns ConfigError containing the rejected version string.
   test: config::tests::parse_wrong_version
 
 SPEC-CF-PC-003: gates-must-not-be-empty
@@ -93,7 +93,7 @@ SPEC-CF-PC-017: explicit-defaults-override-builtins
 
 ### parse_config: provider parsing
 
-Providers are removed in v0.6. Provider configuration is replaced by the unified runtime interface — runtimes with type="api" now carry api_key_env, base_url, and default_model directly. The SPEC-CF-PC-020..022 assertions from earlier versions no longer apply.
+Providers are removed in v0.7. Provider configuration is replaced by the unified runtime interface — runtimes with type="api" now carry api_key_env, base_url, and default_model directly. The SPEC-CF-PC-020..022 assertions from earlier versions no longer apply.
 
 ### parse_config: runtime parsing
 

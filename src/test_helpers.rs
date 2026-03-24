@@ -243,7 +243,7 @@ pub fn config_for_gate(g: GateConfig) -> BatonConfig {
     let mut gates = BTreeMap::new();
     gates.insert(g.name.clone(), g);
     BatonConfig {
-        version: "0.6".into(),
+        version: "0.7".into(),
         defaults: Defaults {
             timeout_seconds: 300,
             blocking: true,
@@ -287,7 +287,7 @@ pub fn config_with_provider(api_base: &str) -> BatonConfig {
     );
 
     BatonConfig {
-        version: "0.6".into(),
+        version: "0.7".into(),
         defaults: Defaults {
             timeout_seconds: 300,
             blocking: true,

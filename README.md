@@ -110,7 +110,7 @@ This creates a `baton.toml` config, a `.baton/` directory for history and logs, 
 Edit `baton.toml`:
 
 ```toml
-version = "0.6"
+version = "0.7"
 
 [validators.lint]
 type = "script"
@@ -177,9 +177,7 @@ baton init             Scaffold a new baton project
 baton add              Add a validator to baton.toml (interactive or via flags)
 baton list             List gates and validators in a config
 baton history          Query invocation history from the SQLite database
-baton validate-config  Check a baton.toml for errors and warnings
-baton check-provider   Check API runtime connectivity and model availability
-baton check-runtime    Check runtime connectivity and health
+baton doctor           Run comprehensive health checks on installation and project
 baton clean            Remove temporary files from .baton/tmp/
 baton update           Update baton to the latest version
 baton uninstall        Uninstall baton from this system

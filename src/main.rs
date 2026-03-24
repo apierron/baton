@@ -142,11 +142,15 @@ enum Commands {
         config: Option<PathBuf>,
     },
 
-    /// Validate baton.toml configuration
-    ValidateConfig {
+    /// Run comprehensive health checks on your baton installation and project
+    Doctor {
         /// Path to baton.toml
         #[arg(long)]
         config: Option<PathBuf>,
+
+        /// Skip checks that require network access (runtime health checks)
+        #[arg(long)]
+        offline: bool,
     },
 
     /// Remove stale temporary files
@@ -154,34 +158,6 @@ enum Commands {
         /// Show what would be cleaned without deleting
         #[arg(long)]
         dry_run: bool,
-
-        /// Path to baton.toml
-        #[arg(long)]
-        config: Option<PathBuf>,
-    },
-
-    /// Check provider connectivity and model availability
-    CheckProvider {
-        /// Provider name (omit to check the first configured provider)
-        name: Option<String>,
-
-        /// Check all configured providers
-        #[arg(long)]
-        all: bool,
-
-        /// Path to baton.toml
-        #[arg(long)]
-        config: Option<PathBuf>,
-    },
-
-    /// Check runtime connectivity and health
-    CheckRuntime {
-        /// Runtime name (omit to check the first configured runtime)
-        name: Option<String>,
-
-        /// Check all configured runtimes
-        #[arg(long)]
-        all: bool,
 
         /// Path to baton.toml
         #[arg(long)]
@@ -342,14 +318,8 @@ fn main() {
             invocation.as_deref(),
             limit,
         ),
-        Commands::ValidateConfig { config } => {
-            commands::validate_config::cmd_validate_config(config.as_ref())
-        }
-        Commands::CheckProvider { name, all, config } => {
-            commands::check_provider::cmd_check_provider(config.as_ref(), name.as_deref(), all)
-        }
-        Commands::CheckRuntime { name, all, config } => {
-            commands::check_runtime::cmd_check_runtime(config.as_ref(), name.as_deref(), all)
+        Commands::Doctor { config, offline } => {
+            commands::doctor::cmd_doctor(config.as_ref(), offline)
         }
         Commands::Clean { dry_run, config } => commands::clean::cmd_clean(config.as_ref(), dry_run),
         Commands::Version { config } => commands::version::cmd_version(config.as_ref()),
