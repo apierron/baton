@@ -173,7 +173,9 @@ pub fn cmd_check(
     if all_verdicts.len() == 1 {
         let verdict = &all_verdicts[0];
         match format {
-            "json" => { let _ = writeln!(stdout, "{}", verdict.to_json()); }
+            "json" => {
+                let _ = writeln!(stdout, "{}", verdict.to_json());
+            }
             "human" => eprintln!("{}", verdict.to_human()),
             "summary" => eprintln!("{}", verdict.to_summary()),
             other => {
@@ -184,10 +186,14 @@ pub fn cmd_check(
     } else {
         for verdict in &all_verdicts {
             match format {
-                "json" => { let _ = writeln!(stdout, "{}", verdict.to_json()); }
+                "json" => {
+                    let _ = writeln!(stdout, "{}", verdict.to_json());
+                }
                 "human" => eprintln!("{}", verdict.to_human()),
                 "summary" => eprintln!("{}", verdict.to_summary()),
-                _ => { let _ = writeln!(stdout, "{}", verdict.to_json()); }
+                _ => {
+                    let _ = writeln!(stdout, "{}", verdict.to_json());
+                }
             }
         }
     }
