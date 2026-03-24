@@ -667,6 +667,7 @@ fn insert_validator(doc: &mut DocumentMut, def: &ValidatorDef) {
         doc.insert("validators", Item::Table(Table::new()));
     }
 
+    // baton-allow: unwrap — [validators] table just ensured to exist above
     let validators = doc["validators"].as_table_mut().unwrap();
 
     let mut table = Table::new();
@@ -732,6 +733,7 @@ fn insert_gate_ref(doc: &mut DocumentMut, assignment: &GateAssignment, validator
     if doc.get("gates").is_none() {
         doc.insert("gates", Item::Table(Table::new()));
     }
+    // baton-allow: unwrap — [gates] table just ensured to exist above
     let gates = doc["gates"].as_table_mut().unwrap();
 
     if assignment.create_new {

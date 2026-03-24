@@ -72,7 +72,7 @@ pub struct RawConfig {
 }
 
 /// Raw source entry from `[sources.<name>]`.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RawSource {
     #[serde(default)]
     pub root: Option<String>,
@@ -87,7 +87,7 @@ pub struct RawSource {
 }
 
 /// Raw top-level validator definition from `[validators.<name>]`.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RawValidatorDef {
     #[serde(rename = "type")]
     pub validator_type: String,
@@ -140,7 +140,7 @@ pub struct RawValidatorDef {
 }
 
 /// Raw gate reference: `{ ref = "name", blocking = true, ... }`.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RawGateRef {
     #[serde(rename = "ref")]
     pub validator_ref: String,
@@ -153,7 +153,7 @@ pub struct RawGateRef {
 }
 
 /// A gate entry: either a reference to a top-level validator or an inline definition.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum RawGateEntry {
     Ref(RawGateRef),
@@ -197,7 +197,7 @@ fn default_tmp_dir() -> String {
 }
 
 /// Raw runtime entry from `[runtimes.<name>]`.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RawRuntime {
     #[serde(rename = "type")]
     pub runtime_type: String,
@@ -235,7 +235,7 @@ pub struct RawGate {
 }
 
 /// Raw context slot declaration on a gate.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RawContextSlot {
     #[serde(default)]
     pub description: Option<String>,
@@ -244,7 +244,7 @@ pub struct RawContextSlot {
 }
 
 /// Raw validator entry from `[[gates.<name>.validators]]`.
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct RawValidator {
     pub name: String,
     #[serde(rename = "type")]

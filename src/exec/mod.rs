@@ -99,6 +99,22 @@ pub fn execute_validator(
 /// let verdict = run_gate(gate, &config, vec![], &RunOptions::new()).unwrap();
 /// println!("Gate result: {:?}", verdict.status);
 /// ```
+/// Check if a validator matches any entry in a filter list.
+/// Entries starting with `@` match against the validator's tags;
+/// all other entries match against the validator name.
+fn matches_filter(filter: &[String], name: &str, tags: &[String]) -> bool {
+    for entry in filter {
+        if let Some(tag) = entry.strip_prefix('@') {
+            if tags.iter().any(|t| t == tag) {
+                return true;
+            }
+        } else if entry == name {
+            return true;
+        }
+    }
+    false
+}
+
 pub fn run_gate(
     gate: &GateConfig,
     config: &BatonConfig,
@@ -122,7 +138,7 @@ pub fn run_gate(
     for validator in &gate.validators {
         // Apply filters
         if let Some(ref only) = options.only {
-            if !only.contains(&validator.name) {
+            if !matches_filter(only, &validator.name, &validator.tags) {
                 results.insert(
                     validator.name.clone(),
                     ValidatorResult {
@@ -137,7 +153,7 @@ pub fn run_gate(
             }
         }
         if let Some(ref skip) = options.skip {
-            if skip.contains(&validator.name) {
+            if matches_filter(skip, &validator.name, &validator.tags) {
                 results.insert(
                     validator.name.clone(),
                     ValidatorResult {

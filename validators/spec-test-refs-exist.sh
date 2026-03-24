@@ -40,6 +40,19 @@ resolve_source_file() {
     return
   fi
 
+  # commands submodules: add::tests::fn → src/commands/add.rs
+  if [[ "$ref" == add::tests::* ]]; then
+    echo "src/commands/add.rs"
+    return
+  fi
+
+  # exec submodules: exec::tests::fn → search all src/exec/*.rs
+  # Return a sentinel; caller will search the directory.
+  if [[ "$ref" == exec::tests::* ]]; then
+    echo "src/exec/*.rs"
+    return
+  fi
+
   # Standard: module::tests::fn → src/module.rs
   local module
   module=$(echo "$ref" | sed 's/::tests::.*//')
@@ -72,8 +85,10 @@ for spec_file in spec/*.md; do
     # Extract test reference, trimming whitespace
     ref=$(echo "$line" | sed 's/.*test: *//' | sed 's/ *$//')
 
-    # Skip non-code references (comments, descriptions)
+    # Skip non-code references (comments, descriptions, placeholders)
     [[ "$ref" == IMPLICIT* ]] && continue
+    [[ "$ref" == TODO* ]] && continue
+    [[ "$ref" == MANUAL* ]] && continue
     [[ "$ref" == *"("* ]] && ref=$(echo "$ref" | sed 's/ *(.*//')
     [[ -z "$ref" ]] && continue
 
@@ -81,6 +96,22 @@ for spec_file in spec/*.md; do
 
     source_file=$(resolve_source_file "$ref")
     fn_name=$(extract_fn_name "$ref")
+
+    # Handle glob patterns (e.g. src/exec/*.rs) — search all matching files
+    if [[ "$source_file" == *'*'* ]]; then
+      found=false
+      for f in $source_file; do
+        if [[ -f "$f" ]] && grep -q "fn ${fn_name}" "$f"; then
+          found=true
+          break
+        fi
+      done
+      if [[ "$found" != true ]]; then
+        echo "VIOLATION: $spec_file: test ref '$ref' — function '$fn_name' not found in $source_file"
+        VIOLATIONS=$((VIOLATIONS + 1))
+      fi
+      continue
+    fi
 
     if [[ ! -f "$source_file" ]]; then
       echo "VIOLATION: $spec_file: test ref '$ref' — source file '$source_file' not found"

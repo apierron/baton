@@ -1,5 +1,6 @@
 //! Query and display invocation history from the SQLite database.
 
+use std::io::Write;
 use std::path::PathBuf;
 
 use crate::history;
@@ -44,17 +45,19 @@ pub fn cmd_history(
     };
 
     if results.is_empty() {
-        println!("No verdicts found.");
+        let _ = writeln!(std::io::stdout(), "No verdicts found.");
         return 0;
     }
 
+    let mut stdout = std::io::stdout().lock();
     for r in &results {
         let failed_info = r
             .failed_at
             .as_ref()
             .map(|f| format!(" (failed at: {f})"))
             .unwrap_or_default();
-        println!(
+        let _ = writeln!(
+            stdout,
             "{} {} {} {}ms{}",
             r.timestamp, r.gate, r.status, r.duration_ms, failed_info
         );

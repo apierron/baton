@@ -99,8 +99,10 @@ pub fn init_db(db_path: &Path) -> Result<Connection> {
 /// Store a verdict in the history database.
 pub fn store_verdict(conn: &Connection, verdict: &Verdict) -> Result<String> {
     let verdict_id = uuid::Uuid::new_v4().to_string();
-    let warnings_json = serde_json::to_string(&verdict.warnings).unwrap();
-    let suppressed_json = serde_json::to_string(&verdict.suppressed).unwrap();
+    let warnings_json = serde_json::to_string(&verdict.warnings)
+        .map_err(|e| BatonError::DatabaseError(format!("Failed to serialize warnings: {e}")))?;
+    let suppressed_json = serde_json::to_string(&verdict.suppressed)
+        .map_err(|e| BatonError::DatabaseError(format!("Failed to serialize suppressed: {e}")))?;
     let verdict_json = verdict.to_json();
 
     conn.execute(

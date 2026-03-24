@@ -48,6 +48,7 @@ impl InputFile {
         if self.content.is_none() {
             self.content = Some(std::fs::read_to_string(&self.path)?);
         }
+        // baton-allow: unwrap — just set to Some above; None is unreachable
         Ok(self.content.as_ref().unwrap())
     }
 
@@ -59,6 +60,7 @@ impl InputFile {
             hasher.update(content.as_bytes());
             self.hash = Some(hex::encode(hasher.finalize()));
         }
+        // baton-allow: unwrap — just set to Some above; None is unreachable
         Ok(self.hash.as_ref().unwrap())
     }
 }

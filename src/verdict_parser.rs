@@ -22,6 +22,7 @@ fn starts_with_keyword(text: &str, keyword: &str) -> bool {
     if text.len() == keyword.len() {
         return true;
     }
+    // baton-allow: unwrap — slice is non-empty: text.len() > keyword.len() checked above
     let next_char = text[keyword.len()..].chars().next().unwrap();
     !next_char.is_alphanumeric()
 }
@@ -39,6 +40,7 @@ fn rfind_keyword(text: &str, keyword: &str) -> Option<usize> {
 
         // Check preceding character
         if pos > 0 {
+            // baton-allow: unwrap — pos > 0 checked on the line above
             let prev = text_upper[..pos].chars().next_back().unwrap();
             if prev.is_alphanumeric() {
                 search_end = pos;
@@ -49,6 +51,7 @@ fn rfind_keyword(text: &str, keyword: &str) -> Option<usize> {
         // Check following character
         let end_pos = pos + keyword_upper.len();
         if end_pos < text_upper.len() {
+            // baton-allow: unwrap — end_pos < text_upper.len() checked on the line above
             let next = text_upper[end_pos..].chars().next().unwrap();
             if next.is_alphanumeric() {
                 search_end = pos;
@@ -109,6 +112,7 @@ pub fn parse_verdict(text: &str) -> ParsedVerdict {
         let mut evidence = first_line[4..].trim().to_string();
         if evidence.is_empty() {
             // Get rest of text after first line
+            // baton-allow: unwrap — first_line was extracted from trimmed, so find always succeeds
             let rest = trimmed[trimmed.find(&first_line).unwrap() + first_line.len()..]
                 .trim()
                 .to_string();
@@ -127,6 +131,7 @@ pub fn parse_verdict(text: &str) -> ParsedVerdict {
     if starts_with_keyword(&first_upper, "FAIL") {
         let mut evidence = first_line[4..].trim().to_string();
         if evidence.is_empty() {
+            // baton-allow: unwrap — first_line was extracted from trimmed, so find always succeeds
             let rest = trimmed[trimmed.find(&first_line).unwrap() + first_line.len()..]
                 .trim()
                 .to_string();

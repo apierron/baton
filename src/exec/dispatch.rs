@@ -142,6 +142,7 @@ pub fn plan_dispatch(
 
                 for (slot_name, slot) in &keyed_slots {
                     let pattern = slot.match_pattern.as_deref().unwrap_or("*");
+                    // baton-allow: unwrap — keyed_slots only contains items where slot.key.is_some()
                     let key_expr = slot.key.as_deref().unwrap();
 
                     for file in pool {

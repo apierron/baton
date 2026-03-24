@@ -11,21 +11,27 @@ VIOLATIONS=0
 for file in $(all_rs_files); do
   [[ -f "$file" ]] || continue
 
-  code=$(prod_code "$file")
+  # Strip #[cfg(test)] block but preserve comments (needed for allow mechanism)
+  code=$(sed '/#\[cfg(test)\]/,$d' "$file")
 
   # Check for .unwrap() — allow if preceded by // baton-allow: unwrap
   while IFS= read -r line_num_and_content; do
     line_num=$(echo "$line_num_and_content" | cut -d: -f1)
     content=$(echo "$line_num_and_content" | cut -d: -f2-)
 
+    # Skip lines that are purely comments
+    if echo "$content" | grep -qE '^\s*(//|/\*|\*)'; then
+      continue
+    fi
+
     # Check if this line has the allow comment
     if echo "$content" | grep -q 'baton-allow: unwrap'; then
       continue
     fi
 
-    # Check if the preceding line in the original file has the allow comment
+    # Check if the preceding line has the allow comment
     if [[ "$line_num" -gt 1 ]]; then
-      prev_line=$(sed -n "$((line_num - 1))p" "$file")
+      prev_line=$(echo "$code" | sed -n "$((line_num - 1))p")
       if echo "$prev_line" | grep -q 'baton-allow: unwrap'; then
         continue
       fi

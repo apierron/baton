@@ -3,6 +3,7 @@
 //! Loads config, builds the input file pool, filters gates by `--only`/`--skip`,
 //! executes each gate, logs verdicts to the history database, and formats output.
 
+use std::io::Write;
 use std::path::PathBuf;
 
 use crate::exec::{self, run_gate};
@@ -168,24 +169,25 @@ pub fn cmd_check(
     }
 
     // Output
+    let mut stdout = std::io::stdout().lock();
     if all_verdicts.len() == 1 {
         let verdict = &all_verdicts[0];
         match format {
-            "json" => println!("{}", verdict.to_json()),
+            "json" => { let _ = writeln!(stdout, "{}", verdict.to_json()); }
             "human" => eprintln!("{}", verdict.to_human()),
             "summary" => eprintln!("{}", verdict.to_summary()),
             other => {
                 eprintln!("Unknown format: {other}. Using json.");
-                println!("{}", verdict.to_json());
+                let _ = writeln!(stdout, "{}", verdict.to_json());
             }
         }
     } else {
         for verdict in &all_verdicts {
             match format {
-                "json" => println!("{}", verdict.to_json()),
+                "json" => { let _ = writeln!(stdout, "{}", verdict.to_json()); }
                 "human" => eprintln!("{}", verdict.to_human()),
                 "summary" => eprintln!("{}", verdict.to_summary()),
-                _ => println!("{}", verdict.to_json()),
+                _ => { let _ = writeln!(stdout, "{}", verdict.to_json()); }
             }
         }
     }
@@ -200,14 +202,29 @@ fn compute_skip_reason(
     skip: &Option<Vec<String>>,
 ) -> Option<&'static str> {
     if let Some(ref o) = only {
-        if !o.contains(&v.name) {
+        if !filter_matches(o, &v.name, &v.tags) {
             return Some("--only");
         }
     }
     if let Some(ref s) = skip {
-        if s.contains(&v.name) {
+        if filter_matches(s, &v.name, &v.tags) {
             return Some("--skip");
         }
     }
     None
+}
+
+/// Check if a validator matches any entry in a filter list.
+/// Entries starting with `@` match against the validator's tags.
+fn filter_matches(filter: &[String], name: &str, tags: &[String]) -> bool {
+    for entry in filter {
+        if let Some(tag) = entry.strip_prefix('@') {
+            if tags.iter().any(|t| t == tag) {
+                return true;
+            }
+        } else if entry == name {
+            return true;
+        }
+    }
+    false
 }
