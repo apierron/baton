@@ -499,7 +499,8 @@ impl ConfigValidation {
 pub fn parse_config(toml_str: &str, config_dir: &Path) -> Result<BatonConfig> {
     let raw: RawConfig = toml::from_str(toml_str)?;
 
-    if raw.version != "0.4" && raw.version != "0.5" && raw.version != "0.6" && raw.version != "0.7" {
+    if raw.version != "0.4" && raw.version != "0.5" && raw.version != "0.6" && raw.version != "0.7"
+    {
         return Err(BatonError::ConfigError(format!(
             "Unsupported version '{}'. Expected '0.4', '0.5', '0.6', or '0.7'.",
             raw.version
