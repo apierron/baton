@@ -53,6 +53,13 @@ pub fn cmd_check(
         }
     };
 
+    if input_pool.is_empty() && !dry_run {
+        eprintln!(
+            "Note: No input files provided. \
+             Validators that don't require file input will still run."
+        );
+    }
+
     // Determine which gates to run
     let mut gate_names: Vec<String> = config.gates.keys().cloned().collect();
 

@@ -113,7 +113,8 @@ SPEC-CF-PC-027: api-type-runtime-base-url-env-vars-resolved
 
 SPEC-CF-PC-028: api-type-runtime-trailing-slash-stripped
   For runtimes with type="api", after env var resolution, if `base_url` ends with '/', the trailing slash is removed. Only a single trailing slash is stripped (the code calls `pop()` once). This normalizes URLs so downstream code can append paths without double-slash issues.
-  test: config::tests::api_runtime_trailing_slash_stripped, config::tests::api_runtime_double_trailing_slash_only_one_stripped
+  test: config::tests::api_runtime_trailing_slash_stripped
+  test: config::tests::api_runtime_double_trailing_slash_only_one_stripped
 
 ### parse_config: gate and validator parsing
 

@@ -275,7 +275,8 @@ SPEC-MN-IN-008: success-exits-0
 
 SPEC-MN-IN-009: profile-selects-config
   When `--profile {rust,python,generic}` is provided, the starter `baton.toml` uses the named profile's config template appended to the base template. When omitted, defaults to `generic`.
-  test: cli::init_profile_rust, cli::init_profile_python
+  test: cli::init_profile_rust
+  test: cli::init_profile_python
 
 SPEC-MN-IN-010: starter-uses-separate-blocks
   All generated `baton.toml` files use the separate validator block style: `[validators.X]` defined top-level, gates reference via `{ ref = "X" }`. No generated config uses the inline/nested style.

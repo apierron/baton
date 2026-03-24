@@ -220,6 +220,14 @@ pub fn run_gate(
         }
     }
 
+    // Warn if every validator was skipped
+    if results.values().all(|r| r.status == Status::Skip) && !results.is_empty() {
+        warnings_list.push(format!(
+            "All validators in gate '{}' were skipped — nothing was checked",
+            gate.name
+        ));
+    }
+
     // Compute final status
     let result_list: Vec<ValidatorResult> = results.values().cloned().collect();
     let final_status = if options.run_all {

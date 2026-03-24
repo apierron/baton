@@ -256,7 +256,8 @@ Unified LLM validator execution with runtime fallback. Resolves prompt and place
 
 SPEC-EX-LV-001: no-config-errors
   If config is None, returns Status::Error "[baton] LLM validator requires config with runtime settings".
-  test: exec::tests::llm_completion_no_config, exec::tests::llm_session_no_config
+  test: exec::tests::llm_completion_no_config
+  test: exec::tests::llm_session_no_config
 
 SPEC-EX-LV-002: empty-runtimes-errors
   If the validator's runtimes list is empty, returns Status::Error.
@@ -303,7 +304,8 @@ SPEC-EX-LV-022: health-check-failure-tries-next
 
 SPEC-EX-LV-023: query-mode-calls-post-completion
   In query mode, builds a CompletionRequest from the resolved prompt, model, temperature, max_tokens, and system_prompt, then calls adapter.post_completion().
-  test: exec::tests::llm_completion_pass_verdict, exec::tests::llm_completion_with_system_prompt
+  test: exec::tests::llm_completion_pass_verdict
+  test: exec::tests::llm_completion_with_system_prompt
 
 SPEC-EX-LV-024: query-mode-not-supported-tries-next
   If post_completion returns RuntimeError "not supported", the next runtime is tried.
@@ -311,7 +313,10 @@ SPEC-EX-LV-024: query-mode-not-supported-tries-next
 
 SPEC-EX-LV-025: query-mode-parses-result
   On successful completion, parses the result using verdict or freeform response format, same as the old execute_llm_completion.
-  test: exec::tests::llm_completion_pass_verdict, exec::tests::llm_completion_fail_verdict, exec::tests::llm_completion_warn_verdict, exec::tests::llm_completion_freeform_returns_warn
+  test: exec::tests::llm_completion_pass_verdict
+  test: exec::tests::llm_completion_fail_verdict
+  test: exec::tests::llm_completion_warn_verdict
+  test: exec::tests::llm_completion_freeform_returns_warn
 
 SPEC-EX-LV-026: session-mode-skips-api-runtime
   In session mode, if the runtime type is "api", skip it and try next.
@@ -331,7 +336,8 @@ SPEC-EX-LV-029: model-resolution-chain
 
 SPEC-EX-LV-030: cost-propagated
   Cost from CompletionResult or SessionResult is propagated to ValidatorResult.
-  test: exec::tests::llm_completion_cost_tracking, exec::tests::session_cost_propagated
+  test: exec::tests::llm_completion_cost_tracking
+  test: exec::tests::session_cost_propagated
 
 ---
 
@@ -373,7 +379,9 @@ SPEC-EX-DS-008: teardown-always-called-on-success
 
 SPEC-EX-DS-009: non-completed-session-returns-error
   If the session ends with Failed, TimedOut, or Cancelled status, Status::Error is returned with an appropriate message. Cost is preserved even on failure.
-  test: exec::tests::session_failed_status, session_timed_out_status, session_cancelled_status
+  test: exec::tests::session_failed_status
+  test: exec::tests::session_timed_out_status
+  test: exec::tests::session_cancelled_status
 
 SPEC-EX-DS-010: empty-output-errors
   If a completed session has empty output (whitespace-only), returns Status::Error "no PASS/FAIL/WARN verdict".
@@ -381,7 +389,9 @@ SPEC-EX-DS-010: empty-output-errors
 
 SPEC-EX-DS-011: output-parsed-as-verdict
   Completed session output is parsed via parse_verdict(). Status and evidence become the result.
-  test: exec::tests::session_completes_pass, session_completes_fail, session_completes_warn
+  test: exec::tests::session_completes_pass
+  test: exec::tests::session_completes_fail
+  test: exec::tests::session_completes_warn
 
 SPEC-EX-DS-012: unparseable-output-errors
   If output cannot be parsed as a verdict, Status::Error with "Could not parse verdict" is returned.
@@ -389,7 +399,8 @@ SPEC-EX-DS-012: unparseable-output-errors
 
 SPEC-EX-DS-013: cost-propagated-from-session
   Cost from SessionResult is propagated to ValidatorResult, on both success and failure paths.
-  test: exec::tests::session_cost_propagated, session_cost_on_failure
+  test: exec::tests::session_cost_propagated
+  test: exec::tests::session_cost_on_failure
 
 SPEC-EX-DS-014: validator-name-propagated
   The name parameter is used as the ValidatorResult.name.
@@ -484,7 +495,8 @@ SPEC-EX-RG-024: failed-at-set-in-run-all-mode
 
 SPEC-EX-RG-025: suppression-in-run-all-mode
   In run_all mode, suppression affects compute_final_status. Suppressing Error with a Fail present produces VerdictStatus::Fail. Suppressing all produces VerdictStatus::Pass.
-  test: exec::tests::gate_suppress_errors_with_all_mode, gate_suppress_all_in_all_mode
+  test: exec::tests::gate_suppress_errors_with_all_mode
+  test: exec::tests::gate_suppress_all_in_all_mode
 
 SPEC-EX-RG-026: llm-validator-in-gate
   LLM validators work within run_gate, using the config's runtimes for execution. The LLM validator receives its prompt input from the `Invocation`'s input files, not from a single artifact + context.
