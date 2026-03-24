@@ -2723,7 +2723,14 @@ fn add_result_passes_validate_config() {
 
     let output = baton()
         .args([
-            "add", "--type", "script", "--name", "new-v", "--command", "echo ok", "-y",
+            "add",
+            "--type",
+            "script",
+            "--name",
+            "new-v",
+            "--command",
+            "echo ok",
+            "-y",
         ])
         .current_dir(dir.path())
         .output()
