@@ -1,43 +1,50 @@
-# module: main
+# module: main + commands
 
-CLI entry point for baton. Provides subcommand dispatch, argument parsing, config loading, and the glue between library modules (`config`, `exec`, `history`, `runtime`, `types`). All functions in this module are private except `main()`. Behavior is tested via integration tests in `tests/cli.rs` that invoke the compiled binary.
+CLI entry point and per-command handlers for baton. `main.rs` owns the CLI grammar and dispatch; each subcommand's logic lives in its own file under `src/commands/`. All `cmd_*` functions and helpers are private to their respective modules. Behavior is tested via integration tests in `tests/cli.rs` that invoke the compiled binary.
 
 ## Public entry point
 
 | Function | Purpose |
 |---|---|
-| `main` | Parses CLI via clap, dispatches to `cmd_*` handler, calls `process::exit` with the handler's return code |
+| `main` | Parses CLI via clap, dispatches to `cmd_*` handler in `commands/`, calls `process::exit` with the handler's return code |
 
-## Internal types
+## Types in `main.rs`
 
 | Type | Purpose |
 |---|---|
 | `Cli` | clap `#[derive(Parser)]` struct; holds a single `Commands` subcommand |
-| `Commands` | clap `#[derive(Subcommand)]` enum with 11 variants: Check, Init, List, History, ValidateConfig, CheckProvider, CheckRuntime, Clean, Version, Update, Uninstall |
-| `ValidatorTypeStr` | Helper trait on `ValidatorConfig` for display strings in `cmd_list` dry-run output |
+| `Commands` | clap `#[derive(Subcommand)]` enum with 12 variants: Add, Check, Init, List, History, ValidateConfig, CheckProvider, CheckRuntime, Clean, Version, Update, Uninstall |
 
-## Internal functions
+## Shared helpers in `commands/mod.rs`
 
-| Function | Called by |
+| Item | Used by |
 |---|---|
 | `load_config` | All `cmd_*` functions that need baton.toml |
-| `cmd_check` | `main` |
-| `cmd_init` | `main` |
-| `cmd_list` | `main` |
-| `cmd_history` | `main` |
-| `cmd_validate_config` | `main` |
-| `check_single_provider` | `cmd_check_provider` |
-| `cmd_check_provider` | `main` |
-| `cmd_check_runtime` | `main` |
-| `cmd_clean` | `main` |
-| `cmd_version` | `main` |
-| `detect_install_method` | `cmd_update`, `cmd_uninstall` (path inspection) |
-| `cmd_update` | `main` |
-| `cmd_uninstall` | `main` |
+| `ValidatorTypeStr` trait | `cmd_check` (dry-run), `cmd_list` |
+| `detect_install_method` | `cmd_update` |
+
+## Per-command modules
+
+| File | Function | Notes |
+|---|---|---|
+| `commands/add.rs` | `cmd_add` | Interactive/flag/import modes; full TOML editing |
+| `commands/check.rs` | `cmd_check` | Gate execution, history logging, output formatting |
+| `commands/init.rs` | `cmd_init` | Project scaffold; embedded config/prompt templates |
+| `commands/list.rs` | `cmd_list` | Gate and validator listing |
+| `commands/history.rs` | `cmd_history` | SQLite history query and display |
+| `commands/validate_config.rs` | `cmd_validate_config` | Config validation with error/warning reporting |
+| `commands/check_provider.rs` | `cmd_check_provider` | API runtime connectivity check |
+| `commands/check_runtime.rs` | `cmd_check_runtime` | Agent runtime health check |
+| `commands/clean.rs` | `cmd_clean` | Stale temp file removal |
+| `commands/version.rs` | `cmd_version` | Version and config location display |
+| `commands/update.rs` | `cmd_update` | GitHub release download and atomic binary replace |
+| `commands/uninstall.rs` | `cmd_uninstall` | Binary removal across install locations |
 
 ## Design notes
 
-main.rs is a thin orchestration layer. It owns no domain logic — all validation, execution, and storage happen in library modules. The module's responsibilities are: (1) define the CLI grammar via clap derive macros, (2) translate CLI arguments into library calls, (3) handle I/O (stdin, stderr messaging, exit codes), and (4) provide user-facing commands for installation management (update, uninstall, clean).
+`main.rs` is a thin orchestration layer (~270 lines): CLI grammar definitions and a dispatch `match`. All domain logic lives in library modules (`baton::exec`, `baton::config`, etc.) or in the per-command modules under `src/commands/`. The `commands/` directory is binary-only and does not appear in `lib.rs`.
+
+The module's responsibilities: (1) define the CLI grammar via clap derive macros, (2) translate CLI arguments into `commands/*` calls, (3) call `process::exit` with the returned exit code.
 
 Exit code conventions: 0 = success or passing verdict, 1 = user-recoverable error or failing verdict, 2 = infrastructure/config error. These are wired through each `cmd_*` function's `-> i32` return, and `main()` passes the value to `process::exit()`.
 

@@ -1,4 +1,4 @@
-//! Interactive and non-interactive addition of validators to baton.toml.
+//! Add a validator to baton.toml (interactive, flag-driven, or `--from` import).
 //!
 //! Three modes:
 //! - Interactive wizard (default): walks the user through creating a validator
@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 
 use toml_edit::{value, Array, DocumentMut, InlineTable, Item, Table};
 
-use crate::config::{discover_config, parse_config, validate_config, BatonConfig};
-use crate::error::{BatonError, Result};
+use baton::config::{discover_config, parse_config, validate_config, BatonConfig};
+use baton::error::{BatonError, Result};
 
 // ─── Data types ──────────────────────────────────────────
 
@@ -34,6 +34,7 @@ pub struct ValidatorDef {
     pub warn_exit_codes: Vec<i32>,
     pub working_dir: Option<String>,
     pub tags: Vec<String>,
+    #[allow(dead_code)] // reserved for future env var support
     pub env: BTreeMap<String, String>,
 }
 

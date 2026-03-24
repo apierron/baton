@@ -16,8 +16,10 @@
 //! - [`provider`] — HTTP client for OpenAI-compatible LLM provider APIs
 //! - [`runtime`] — Runtime adapter abstraction for agent-based validators
 //! - [`error`] — Error types
+//!
+//! CLI command handlers live in the binary's `commands/` module and are not
+//! part of the public library API.
 
-pub mod add;
 pub mod config;
 pub mod error;
 pub mod exec;

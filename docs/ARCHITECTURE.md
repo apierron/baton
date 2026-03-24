@@ -9,6 +9,10 @@ Modules follow a strict dependency direction. Lower layers must not import from 
           │  main.rs  │  CLI entry point (clap)
           └─────┬─────┘
                 │ uses
+          ┌─────▼──────┐
+          │ commands/* │  Per-command handlers (binary-only)
+          └─────┬──────┘
+                │ uses
     ┌───────┬───┼───────┬──────────┐
     │       │   │       │          │
     ▼       ▼   ▼       ▼          ▼
@@ -25,6 +29,7 @@ placeholder prompt
     ▼
   error
 
+Note: commands/* lives in the binary only (src/commands/), not in lib.rs.
 Note: exec includes the dispatch planner (file collection, input matching, invocation planning) as part of its execution pipeline.
 Note: exec no longer depends on provider directly; runtime (via its API adapter) handles provider interaction.
 ```
@@ -33,7 +38,8 @@ Note: exec no longer depends on provider directly; runtime (via its API adapter)
 
 | Layer | May import from |
 | ----- | --------------- |
-| `main.rs` | `config`, `exec`, `history`, `runtime`, `provider`, `types` |
+| `main.rs` | `commands/*` |
+| `commands/*` | `config`, `exec`, `history`, `runtime`, `provider`, `types` |
 | `exec` | `config`, `types`, `placeholder`, `runtime`, `error` |
 | `config` | `types`, `placeholder`, `error` |
 | `history` | `types`, `error` |

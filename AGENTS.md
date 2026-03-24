@@ -34,7 +34,8 @@ This ordering keeps the spec, tests, and code in sync. The spec drives everythin
 **Module dependency layers** (top → bottom, never import upward):
 
 ```text
-main.rs → exec, config, history, runtime, provider, types
+main.rs → commands/*
+commands/* → exec, config, history, runtime, provider, types
 exec → config, types, placeholder, runtime, error
 runtime → types, error, provider
 provider → types
