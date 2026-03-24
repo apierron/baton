@@ -574,6 +574,29 @@ fn explicit_config_path() {
         .success();
 }
 
+/// SPEC-MN-LC-002: explicit --config path is used directly
+#[test]
+fn validate_config_with_explicit_config() {
+    let dir = TempDir::new().unwrap();
+    let config_path = dir.path().join("custom-baton.toml");
+    fs::write(&config_path, v06_base_config()).unwrap();
+    fs::write(dir.path().join("artifact.txt"), "hello").unwrap();
+    fs::create_dir_all(dir.path().join(".baton/tmp")).unwrap();
+    fs::create_dir_all(dir.path().join(".baton/logs")).unwrap();
+
+    baton()
+        .args([
+            "check",
+            "--config",
+            config_path.to_str().unwrap(),
+            "--dry-run",
+            "--no-log",
+        ])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+}
+
 // ─── Multiple Gates ──────────────────────────────────────
 
 #[test]
@@ -2691,6 +2714,32 @@ validators = [
     assert!(after.contains("echo existing"));
     // New validator added
     assert!(after.contains("[validators.new-check]"));
+}
+
+/// SPEC-MN-AD-051: validates-before-writing — added config passes validate_config
+#[test]
+fn add_result_passes_validate_config() {
+    let dir = setup_project(&v06_base_config(), "hello");
+
+    let output = baton()
+        .args([
+            "add", "--type", "script", "--name", "new-v", "--command", "echo ok", "-y",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "add failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Verify the resulting config is valid by running check --dry-run
+    baton()
+        .args(["check", "--dry-run", "--no-log"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
 }
 
 /// SPEC-MN-AD-060: success message on stderr

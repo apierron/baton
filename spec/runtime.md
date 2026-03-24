@@ -343,31 +343,31 @@ The function accepts multiple synonyms for each state because OpenHands has used
 
 SPEC-RT-MS-001: running-variants
   The strings `"running"`, `"pending"`, and `"started"` (case-insensitive) map to `SessionStatus::Running`.
-  test: runtime::openhands::tests::map_status_running
+  test: runtime::session_common::tests::map_status_running
 
 SPEC-RT-MS-002: completed-variants
   The strings `"completed"`, `"finished"`, and `"done"` (case-insensitive) map to `SessionStatus::Completed`.
-  test: runtime::openhands::tests::map_status_completed
+  test: runtime::session_common::tests::map_status_completed
 
 SPEC-RT-MS-003: failed-variants
   The strings `"failed"` and `"error"` (case-insensitive) map to `SessionStatus::Failed`.
-  test: runtime::openhands::tests::map_status_failed
+  test: runtime::session_common::tests::map_status_failed
 
 SPEC-RT-MS-004: timed-out-variants
   The strings `"timed_out"` and `"timeout"` (case-insensitive) map to `SessionStatus::TimedOut`.
-  test: runtime::openhands::tests::map_status_timed_out
+  test: runtime::session_common::tests::map_status_timed_out
 
 SPEC-RT-MS-005: cancelled-variants
   The strings `"cancelled"`, `"canceled"`, and `"stopped"` (case-insensitive) map to `SessionStatus::Cancelled`. Both British and American spellings are accepted.
-  test: runtime::openhands::tests::map_status_cancelled
+  test: runtime::session_common::tests::map_status_cancelled
 
 SPEC-RT-MS-006: unknown-defaults-to-failed
   Any string not matching a known variant maps to `SessionStatus::Failed`. This is a conservative default: an unknown status is treated as a failure rather than silently succeeding.
-  test: runtime::openhands::tests::map_status_unknown_defaults_to_failed
+  test: runtime::session_common::tests::map_status_unknown_defaults_to_failed
 
 SPEC-RT-MS-007: case-insensitive-matching
   Status matching uses `.to_lowercase()` before comparison. `"RUNNING"`, `"Running"`, and `"running"` all map to `SessionStatus::Running`.
-  test: runtime::openhands::tests::map_status_case_insensitive
+  test: runtime::session_common::tests::map_status_case_insensitive
 
 ---
 
@@ -379,19 +379,19 @@ The function uses a two-tier absence check: first, is the `"metrics"` key presen
 
 SPEC-RT-EC-001: full-metrics-extracted
   When the response body contains a `"metrics"` object with `"input_tokens"` (i64), `"output_tokens"` (i64), `"model"` (string), and `"cost"` (f64), all four are extracted into the returned `Cost` struct.
-  test: runtime::openhands::tests::extract_cost_with_metrics
+  test: runtime::session_common::tests::extract_cost_with_metrics
 
 SPEC-RT-EC-002: no-metrics-key-returns-none
   When the response body has no `"metrics"` key, returns `None`.
-  test: runtime::openhands::tests::extract_cost_no_metrics
+  test: runtime::session_common::tests::extract_cost_no_metrics
 
 SPEC-RT-EC-003: empty-metrics-returns-none
   When the `"metrics"` object exists but contains neither `"input_tokens"` nor `"output_tokens"`, returns `None`. A metrics object with only `"model"` or `"cost"` but no token counts is not considered meaningful cost data.
-  test: runtime::openhands::tests::extract_cost_empty_metrics
+  test: runtime::session_common::tests::extract_cost_empty_metrics
 
 SPEC-RT-EC-004: partial-metrics-returns-some
   When the `"metrics"` object contains at least one of `"input_tokens"` or `"output_tokens"`, returns `Some(Cost)` with the present fields populated and absent fields as `None`.
-  test: runtime::openhands::tests::extract_cost_partial_metrics
+  test: runtime::session_common::tests::extract_cost_partial_metrics
 
 SPEC-RT-EC-005: cost-field-mapped-to-estimated-usd
   The OpenHands `"cost"` field (f64) in metrics maps to `Cost::estimated_usd`. This naming difference reflects that OpenHands reports actual cost while baton treats it as an estimate.
@@ -413,8 +413,8 @@ Constructs the HTTP client adapter for the OpenCode runtime. Follows the same pa
 
 SPEC-RT-OC-001: api-key-env-resolved-from-environment
   When `api_key_env` is `Some(name)` and `name` is non-empty, the constructor reads the environment variable named by `name`. If the variable is set, its value is stored as the API key. If the variable is not set, returns `Err(ConfigError)` with a message containing the variable name and "is not set".
-  test: runtime::opencode::tests::new_valid_env_var_is_resolved
-  test: runtime::opencode::tests::new_missing_env_var_returns_config_error
+  test: runtime::session_common::tests::new_valid_env_var_is_resolved
+  test: runtime::session_common::tests::new_missing_env_var_returns_config_error
 
 SPEC-RT-OC-002: api-key-env-none-means-no-auth
   When `api_key_env` is `None`, no API key is resolved. The adapter operates without authentication. Auth headers will be empty.
@@ -422,11 +422,11 @@ SPEC-RT-OC-002: api-key-env-none-means-no-auth
 
 SPEC-RT-OC-003: api-key-env-empty-string-means-no-auth
   When `api_key_env` is `Some("")` (empty string), it is treated the same as `None`. No API key is resolved.
-  test: runtime::opencode::tests::new_empty_env_var_name_treated_as_none
+  test: runtime::session_common::tests::new_empty_env_var_name_treated_as_none
 
 SPEC-RT-OC-004: trailing-slash-stripped-from-base-url
   If `base_url` ends with `/`, the trailing slash is removed before storing. This prevents double-slashes in constructed URLs.
-  test: runtime::opencode::tests::new_strips_trailing_slash
+  test: runtime::session_common::tests::new_strips_trailing_slash
 
 SPEC-RT-OC-005: client-timeout-is-session-timeout-plus-buffer
   The reqwest client is built with a timeout of `timeout_seconds + 30` seconds. This ensures the HTTP client outlives the server-side session timeout.
@@ -444,11 +444,11 @@ Private helper that constructs HTTP headers for authentication. Same behavior as
 
 SPEC-RT-OC-AH-001: bearer-token-added-when-api-key-present
   When `self.api_key` is `Some(key)`, the returned `HeaderMap` contains an `Authorization` header with value `"Bearer {key}"`.
-  test: runtime::opencode::tests::adapter_with_api_key_has_auth_header
+  test: runtime::session_common::tests::adapter_with_api_key_has_auth_header
 
 SPEC-RT-OC-AH-002: empty-headers-when-no-api-key
   When `self.api_key` is `None`, the returned `HeaderMap` is empty.
-  test: runtime::opencode::tests::adapter_without_api_key_has_no_auth_in_debug
+  test: runtime::session_common::tests::adapter_without_api_key_has_no_auth_in_debug
 
 ---
 
@@ -458,19 +458,19 @@ Probes the OpenCode runtime server's health endpoint. Same endpoint pattern and 
 
 SPEC-RT-OC-HC-001: success-returns-reachable-with-version
   On a successful (2xx) response from `GET /api/health`, returns `Ok(HealthResult)` with `reachable=true` and `version` extracted from JSON body.
-  test: runtime::opencode::tests::http_health_check_success
+  test: runtime::session_common::tests::http_health_check_success
 
 SPEC-RT-OC-HC-002: http-error-returns-not-reachable
   On a non-2xx HTTP response, returns `Ok(HealthResult)` with `reachable=false` and `message=Some("HTTP {status}")`.
-  test: runtime::opencode::tests::http_health_check_http_error
+  test: runtime::session_common::tests::http_health_check_http_error
 
 SPEC-RT-OC-HC-003: connection-error-returns-validation-error
   If the HTTP request fails at the network level, returns `Err(ValidationError)` with "Cannot reach runtime at" and the base URL.
-  test: runtime::opencode::tests::http_health_check_connection_refused
+  test: runtime::session_common::tests::http_health_check_connection_refused
 
 SPEC-RT-OC-HC-004: malformed-json-treated-as-empty
   If the 2xx response body is not valid JSON, `version` will be `None`. No error is raised.
-  test: runtime::opencode::tests::http_health_check_malformed_json
+  test: runtime::session_common::tests::http_health_check_malformed_json
 
 ---
 
@@ -484,31 +484,31 @@ SPEC-RT-OC-CS-001: workspace-id-is-uuid
 
 SPEC-RT-OC-CS-002: files-uploaded-via-multipart
   For each entry in `config.files`, the file is uploaded via `POST /api/workspaces/{workspace_id}/files` as a multipart form.
-  test: runtime::opencode::tests::http_create_session_success_with_files
+  test: runtime::session_common::tests::http_create_session_success_with_files
 
 SPEC-RT-OC-CS-003: file-upload-http-error-returns-validation-error
   If a file upload returns a non-2xx status, returns `Err(ValidationError)` with the file name and HTTP status.
-  test: runtime::opencode::tests::http_create_session_file_upload_http_error
+  test: runtime::session_common::tests::http_create_session_file_upload_http_error
 
 SPEC-RT-OC-CS-004: session-creation-posts-json-body
   After files are uploaded, `POST /api/sessions` is called with workspace_id, task, model, sandbox, max_iterations, and timeout.
-  test: runtime::opencode::tests::http_create_session_body_contents
+  test: runtime::session_common::tests::http_create_session_body_contents
 
 SPEC-RT-OC-CS-005: session-creation-http-error-includes-body
   If session creation POST returns non-2xx, returns `Err(ValidationError)` with HTTP status and response body.
-  test: runtime::opencode::tests::http_create_session_http_error
+  test: runtime::session_common::tests::http_create_session_http_error
 
 SPEC-RT-OC-CS-006: missing-session-id-returns-validation-error
   If the response is valid JSON but missing `"session_id"`, returns `Err(ValidationError)`.
-  test: runtime::opencode::tests::http_create_session_missing_session_id
+  test: runtime::session_common::tests::http_create_session_missing_session_id
 
 SPEC-RT-OC-CS-007: successful-creation-returns-handle
   On success, returns `Ok(SessionHandle)` with `id` from `"session_id"` and `workspace_id` from the generated UUID.
-  test: runtime::opencode::tests::http_create_session_success_no_files
+  test: runtime::session_common::tests::http_create_session_success_no_files
 
 SPEC-RT-OC-CS-008: unparseable-json-response-returns-validation-error
   If the 2xx response body is not valid JSON, returns `Err(ValidationError)`.
-  test: runtime::opencode::tests::http_create_session_unparseable_json
+  test: runtime::session_common::tests::http_create_session_unparseable_json
 
 ---
 
@@ -518,19 +518,19 @@ Polls the current lifecycle state of a running OpenCode session.
 
 SPEC-RT-OC-PS-001: polls-via-get-request
   Sends `GET /api/sessions/{session_id}/status` with auth headers. Maps status via `map_opencode_status`.
-  test: runtime::opencode::tests::http_poll_status_running
+  test: runtime::session_common::tests::http_poll_status_running
 
 SPEC-RT-OC-PS-002: http-error-returns-validation-error
   If the response is non-2xx, returns `Err(ValidationError)`.
-  test: runtime::opencode::tests::http_poll_status_http_error
+  test: runtime::session_common::tests::http_poll_status_http_error
 
 SPEC-RT-OC-PS-003: missing-status-field-defaults-to-unknown
   If the response JSON has no `"status"` field, defaults to `"unknown"` which maps to `SessionStatus::Failed`.
-  test: runtime::opencode::tests::http_poll_status_missing_status_field
+  test: runtime::session_common::tests::http_poll_status_missing_status_field
 
 SPEC-RT-OC-PS-004: unparseable-json-returns-validation-error
   If the 2xx response body is not valid JSON, returns `Err(ValidationError)`.
-  test: runtime::opencode::tests::http_poll_status_unparseable_json
+  test: runtime::session_common::tests::http_poll_status_unparseable_json
 
 ---
 
@@ -540,15 +540,15 @@ Collects the final output from a completed OpenCode session.
 
 SPEC-RT-OC-CR-001: collects-via-get-request
   Sends `GET /api/sessions/{session_id}/result` with auth headers.
-  test: runtime::opencode::tests::http_collect_result_success
+  test: runtime::session_common::tests::http_collect_result_success
 
 SPEC-RT-OC-CR-002: extracts-final-message-as-output
   The `output` field is populated from `"final_message"`. If absent, defaults to empty string.
-  test: runtime::opencode::tests::http_collect_result_missing_fields
+  test: runtime::session_common::tests::http_collect_result_missing_fields
 
 SPEC-RT-OC-CR-003: extracts-full-log-as-raw-log
   The `raw_log` field is populated from `"full_log"`. If absent, defaults to empty string.
-  test: runtime::opencode::tests::http_collect_result_missing_fields
+  test: runtime::session_common::tests::http_collect_result_missing_fields
 
 SPEC-RT-OC-CR-004: cost-extracted-via-extract-cost-from-opencode
   The `cost` field is populated by `extract_cost_from_opencode`.
@@ -556,11 +556,11 @@ SPEC-RT-OC-CR-004: cost-extracted-via-extract-cost-from-opencode
 
 SPEC-RT-OC-CR-005: http-error-returns-validation-error
   If the response is non-2xx, returns `Err(ValidationError)`.
-  test: runtime::opencode::tests::http_collect_result_http_error
+  test: runtime::session_common::tests::http_collect_result_http_error
 
 SPEC-RT-OC-CR-006: unparseable-json-returns-validation-error
   If the 2xx response body is not valid JSON, returns `Err(ValidationError)`.
-  test: runtime::opencode::tests::http_collect_result_unparseable_json
+  test: runtime::session_common::tests::http_collect_result_unparseable_json
 
 ---
 
@@ -570,11 +570,11 @@ Cancels a running OpenCode session. Idempotent.
 
 SPEC-RT-OC-CN-001: sends-delete-to-session-endpoint
   Sends `DELETE /api/sessions/{session_id}` with auth headers.
-  test: runtime::opencode::tests::http_cancel_sends_delete
+  test: runtime::session_common::tests::http_cancel_sends_delete
 
 SPEC-RT-OC-CN-002: always-returns-ok
   Regardless of whether the DELETE succeeds or fails, always returns `Ok(())`.
-  test: runtime::opencode::tests::http_cancel_ignores_errors
+  test: runtime::session_common::tests::http_cancel_ignores_errors
 
 ---
 
@@ -584,11 +584,11 @@ Cleans up OpenCode workspace resources. Idempotent.
 
 SPEC-RT-OC-TD-001: sends-delete-to-workspace-endpoint
   Sends `DELETE /api/workspaces/{workspace_id}` with auth headers.
-  test: runtime::opencode::tests::http_teardown_sends_delete
+  test: runtime::session_common::tests::http_teardown_sends_delete
 
 SPEC-RT-OC-TD-002: always-returns-ok
   Regardless of whether the DELETE succeeds or fails, always returns `Ok(())`.
-  test: runtime::opencode::tests::http_teardown_ignores_errors
+  test: runtime::session_common::tests::http_teardown_ignores_errors
 
 ---
 
@@ -598,31 +598,31 @@ Maps OpenCode-specific status strings to baton's canonical `SessionStatus` enum.
 
 SPEC-RT-OC-MS-001: running-variants
   `"running"`, `"pending"`, `"started"` (case-insensitive) map to `SessionStatus::Running`.
-  test: runtime::opencode::tests::map_status_running
+  test: runtime::session_common::tests::map_status_running
 
 SPEC-RT-OC-MS-002: completed-variants
   `"completed"`, `"finished"`, `"done"` (case-insensitive) map to `SessionStatus::Completed`.
-  test: runtime::opencode::tests::map_status_completed
+  test: runtime::session_common::tests::map_status_completed
 
 SPEC-RT-OC-MS-003: failed-variants
   `"failed"` and `"error"` (case-insensitive) map to `SessionStatus::Failed`.
-  test: runtime::opencode::tests::map_status_failed
+  test: runtime::session_common::tests::map_status_failed
 
 SPEC-RT-OC-MS-004: timed-out-variants
   `"timed_out"` and `"timeout"` (case-insensitive) map to `SessionStatus::TimedOut`.
-  test: runtime::opencode::tests::map_status_timed_out
+  test: runtime::session_common::tests::map_status_timed_out
 
 SPEC-RT-OC-MS-005: cancelled-variants
   `"cancelled"`, `"canceled"`, `"stopped"` (case-insensitive) map to `SessionStatus::Cancelled`.
-  test: runtime::opencode::tests::map_status_cancelled
+  test: runtime::session_common::tests::map_status_cancelled
 
 SPEC-RT-OC-MS-006: unknown-defaults-to-failed
   Any unrecognized string maps to `SessionStatus::Failed`.
-  test: runtime::opencode::tests::map_status_unknown_defaults_to_failed
+  test: runtime::session_common::tests::map_status_unknown_defaults_to_failed
 
 SPEC-RT-OC-MS-007: case-insensitive-matching
   Status matching uses `.to_lowercase()` before comparison.
-  test: runtime::opencode::tests::map_status_case_insensitive
+  test: runtime::session_common::tests::map_status_case_insensitive
 
 ---
 
@@ -632,19 +632,19 @@ Extracts cost metadata from the OpenCode result response body. Same logic as `ex
 
 SPEC-RT-OC-EC-001: full-metrics-extracted
   When the response body contains a `"metrics"` object with `"input_tokens"`, `"output_tokens"`, `"model"`, and `"cost"`, all four are extracted into the `Cost` struct.
-  test: runtime::opencode::tests::extract_cost_with_metrics
+  test: runtime::session_common::tests::extract_cost_with_metrics
 
 SPEC-RT-OC-EC-002: no-metrics-key-returns-none
   When the response body has no `"metrics"` key, returns `None`.
-  test: runtime::opencode::tests::extract_cost_no_metrics
+  test: runtime::session_common::tests::extract_cost_no_metrics
 
 SPEC-RT-OC-EC-003: empty-metrics-returns-none
   When `"metrics"` exists but contains no token counts, returns `None`.
-  test: runtime::opencode::tests::extract_cost_empty_metrics
+  test: runtime::session_common::tests::extract_cost_empty_metrics
 
 SPEC-RT-OC-EC-004: partial-metrics-returns-some
   When at least one of `"input_tokens"` or `"output_tokens"` is present, returns `Some(Cost)`.
-  test: runtime::opencode::tests::extract_cost_partial_metrics
+  test: runtime::session_common::tests::extract_cost_partial_metrics
 
 SPEC-RT-OC-EC-005: cost-field-mapped-to-estimated-usd
   The `"cost"` field (f64) in metrics maps to `Cost::estimated_usd`.
@@ -792,7 +792,7 @@ SPEC-RT-CC-CS-003: file-read-error-returns-validation-error
 
 SPEC-RT-CC-CS-004: subprocess-spawned-with-print-mode
   Spawns `{claude_path} -p "{task}" --output-format json` with the workspace directory as the current working directory. If `default_model` is set, adds `--model {model}`. If `max_turns > 0`, adds `--max-turns {max_turns}`.
-  test: runtime::claude_code::tests::create_session_spawns_subprocess
+  test: UNTESTED (subprocess args verified indirectly via poll_status and collect_result tests)
 
 SPEC-RT-CC-CS-005: api-key-passed-via-env
   If an API key was resolved during construction, it is passed to the subprocess via the `ANTHROPIC_API_KEY` environment variable.

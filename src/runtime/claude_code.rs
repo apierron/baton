@@ -776,6 +776,32 @@ mod tests {
     }
 
     #[test]
+    fn create_session_creates_workspace() {
+        let adapter = ClaudeCodeAdapter::new("sleep".into(), None, None, 600, 0).unwrap();
+
+        let config = SessionConfig {
+            task: "10".into(),
+            files: std::collections::BTreeMap::new(),
+            model: "test".into(),
+            sandbox: false,
+            max_iterations: 10,
+            timeout_seconds: 30,
+            env: std::collections::BTreeMap::new(),
+        };
+
+        let handle = adapter.create_session(config).unwrap();
+
+        // Workspace directory should exist
+        let workspace = std::path::Path::new(&handle.workspace_id);
+        assert!(workspace.exists(), "Workspace dir should be created");
+        assert!(workspace.is_dir(), "Workspace should be a directory");
+
+        // Clean up
+        let _ = adapter.cancel(&handle);
+        let _ = adapter.teardown(&handle);
+    }
+
+    #[test]
     fn create_session_copies_files() {
         // Use 'sleep' as a stand-in so the process stays alive briefly
         let adapter = ClaudeCodeAdapter::new("sleep".into(), None, None, 600, 0).unwrap();
@@ -896,6 +922,30 @@ mod tests {
         let status = adapter.poll_status(&handle).unwrap();
         assert_eq!(status, SessionStatus::Failed);
 
+        let _ = adapter.teardown(&handle);
+    }
+
+    #[test]
+    fn poll_status_running() {
+        // 'sleep 60' stays alive long enough to poll as Running
+        let adapter = ClaudeCodeAdapter::new("sleep".into(), None, None, 600, 0).unwrap();
+
+        let config = SessionConfig {
+            task: "60".into(),
+            files: std::collections::BTreeMap::new(),
+            model: "test".into(),
+            sandbox: false,
+            max_iterations: 10,
+            timeout_seconds: 30,
+            env: std::collections::BTreeMap::new(),
+        };
+
+        let handle = adapter.create_session(config).unwrap();
+        let status = adapter.poll_status(&handle).unwrap();
+        assert_eq!(status, SessionStatus::Running);
+
+        // Clean up
+        let _ = adapter.cancel(&handle);
         let _ = adapter.teardown(&handle);
     }
 

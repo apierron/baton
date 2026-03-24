@@ -429,6 +429,28 @@ mod tests {
     }
 
     #[test]
+    fn gate_tags_filter() {
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("a", "exit 0")
+                    .tags(vec!["x"])
+                    .build(),
+                ValidatorBuilder::script("b", "exit 0").build(),
+            ],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut opts = RunOptions::new();
+        opts.tags = Some(vec!["x".into()]);
+
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
+        let a_result = verdict.history.iter().find(|r| r.name == "a").unwrap();
+        assert_eq!(a_result.status, Status::Pass);
+        let b_result = verdict.history.iter().find(|r| r.name == "b").unwrap();
+        assert_eq!(b_result.status, Status::Skip);
+    }
+
+    #[test]
     fn gate_suppress_errors() {
         let gate = th::gate(
             "test",
