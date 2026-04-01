@@ -317,9 +317,8 @@ fn explicit_missing_config_exits_2() {
 // ─── Nonexistent Gate ─────────────────────────────────────
 
 #[test]
-fn nonexistent_gate_runs_all_gates() {
-    // --only with a name that doesn't match any gate runs all gates
-    // (gate-level filtering only kicks in when the name matches a gate)
+fn only_nonexistent_name_runs_no_gates() {
+    // --only with a name that doesn't match any gate or validator runs no gates
     let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
     let dir = setup_project(&toml, "hello");
 
@@ -329,14 +328,12 @@ fn nonexistent_gate_runs_all_gates() {
         .output()
         .unwrap();
 
-    // "nope" doesn't match any gate name, so all gates run.
-    // But inside each gate, --only filters validators: "nope" doesn't match "lint",
-    // so "lint" is skipped. Gate passes with all validators skipped.
+    // "nope" doesn't match any gate or validator name, so no gates run (exit 0)
     assert!(output.status.success());
-    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
-    assert_eq!(verdict["status"], "pass");
-    let history = verdict["history"].as_array().unwrap();
-    assert_eq!(history[0]["status"], "skip");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("No gates to run"));
+    // No JSON output on stdout
+    assert!(output.stdout.is_empty());
 }
 
 // ─── Output Formats ──────────────────────────────────────
@@ -2086,6 +2083,282 @@ fn suppress_errors_treats_error_as_pass() {
         output.status.success(),
         "Should pass when suppressing errors"
     );
+}
+
+// ─── @tag and dot-path selectors ─────────────────────────
+
+#[test]
+fn only_tag_runs_matching_validators() {
+    // --only @fast within a single gate runs only tagged validators
+    let validators = format!(
+        "{}{}",
+        script_validator_with_tags("review", "lint", "echo PASS", &["fast"]),
+        script_validator_with_tags("review", "format", "echo PASS", &["slow"]),
+    );
+    let toml = minimal_toml("review", &validators);
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log", "--only", "@fast"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    let history = verdict["history"].as_array().unwrap();
+    let lint = history.iter().find(|v| v["name"] == "lint").unwrap();
+    assert_eq!(lint["status"], "pass");
+    let format = history.iter().find(|v| v["name"] == "format").unwrap();
+    assert_eq!(format["status"], "skip");
+}
+
+#[test]
+fn skip_tag_skips_matching_validators() {
+    // --skip @fast within a single gate skips tagged validators
+    let validators = format!(
+        "{}{}",
+        script_validator_with_tags("review", "lint", "echo PASS", &["fast"]),
+        script_validator_with_tags("review", "format", "echo PASS", &["slow"]),
+    );
+    let toml = minimal_toml("review", &validators);
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log", "--skip", "@fast"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    let history = verdict["history"].as_array().unwrap();
+    let lint = history.iter().find(|v| v["name"] == "lint").unwrap();
+    assert_eq!(lint["status"], "skip");
+    let format = history.iter().find(|v| v["name"] == "format").unwrap();
+    assert_eq!(format["status"], "pass");
+}
+
+#[test]
+fn only_tag_filters_gates_in_multi_gate() {
+    // --only @fast selects only gates containing validators with that tag
+    let toml = multi_gate_toml(&[
+        (
+            "fast_gate",
+            &script_validator_with_tags("fast_gate", "lint", "echo PASS", &["fast"]),
+        ),
+        (
+            "slow_gate",
+            &script_validator_with_tags("slow_gate", "analyze", "echo PASS", &["slow"]),
+        ),
+    ]);
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log", "--only", "@fast"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    // Only one verdict (fast_gate) should be output
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let verdict = parse_verdict(&stdout);
+    assert_eq!(verdict["gate"], "fast_gate");
+}
+
+#[test]
+fn skip_tag_filters_gates_in_multi_gate() {
+    // --skip @slow skips validators with tag @slow but doesn't exclude the gate
+    let toml = multi_gate_toml(&[(
+        "gate_a",
+        &format!(
+            "{}{}",
+            script_validator_with_tags("gate_a", "lint", "echo PASS", &["fast"]),
+            script_validator_with_tags("gate_a", "analyze", "echo PASS", &["slow"]),
+        ),
+    )]);
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log", "--skip", "@slow"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    let history = verdict["history"].as_array().unwrap();
+    let lint = history.iter().find(|v| v["name"] == "lint").unwrap();
+    assert_eq!(lint["status"], "pass");
+    let analyze = history.iter().find(|v| v["name"] == "analyze").unwrap();
+    assert_eq!(analyze["status"], "skip");
+}
+
+#[test]
+fn only_and_skip_combined_with_tags() {
+    // --only @fast --skip lint: select tagged validators, then exclude by name
+    let validators = format!(
+        "{}{}{}",
+        script_validator_with_tags("review", "lint", "echo PASS", &["fast"]),
+        script_validator_with_tags("review", "format", "echo PASS", &["fast"]),
+        script_validator_with_tags("review", "analyze", "echo PASS", &["slow"]),
+    );
+    let toml = minimal_toml("review", &validators);
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log", "--only", "@fast", "--skip", "lint"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    let history = verdict["history"].as_array().unwrap();
+    let lint = history.iter().find(|v| v["name"] == "lint").unwrap();
+    assert_eq!(lint["status"], "skip");
+    let format = history.iter().find(|v| v["name"] == "format").unwrap();
+    assert_eq!(format["status"], "pass");
+    let analyze = history.iter().find(|v| v["name"] == "analyze").unwrap();
+    assert_eq!(analyze["status"], "skip");
+}
+
+#[test]
+fn only_tag_no_match_runs_no_gates() {
+    // --only @nonexistent — no gates run, exit 0
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log", "--only", "@nonexistent"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("No gates to run"));
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn dry_run_shows_tag_filter_reasons() {
+    // dry-run + --only @fast shows skip reasons for non-matching validators
+    let validators = format!(
+        "{}{}",
+        script_validator_with_tags("review", "lint", "echo PASS", &["fast"]),
+        script_validator_with_tags("review", "format", "echo PASS", &["slow"]),
+    );
+    let toml = minimal_toml("review", &validators);
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--dry-run", "--only", "@fast"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("lint"), "should show lint");
+    assert!(
+        stderr.contains("format") && stderr.contains("--only"),
+        "should show format skipped by --only"
+    );
+}
+
+#[test]
+fn dot_path_only_selects_gate_and_validator() {
+    // --only review.lint selects only that specific validator in the gate
+    let validators = format!(
+        "{}{}",
+        script_validator_for("review", "lint", "echo PASS"),
+        script_validator_for("review", "format", "echo PASS"),
+    );
+    let toml = minimal_toml("review", &validators);
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log", "--only", "review.lint"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    let history = verdict["history"].as_array().unwrap();
+    let lint = history.iter().find(|v| v["name"] == "lint").unwrap();
+    assert_eq!(lint["status"], "pass");
+    let format = history.iter().find(|v| v["name"] == "format").unwrap();
+    assert_eq!(format["status"], "skip");
+}
+
+#[test]
+fn dot_path_skip_excludes_specific_validator() {
+    // --skip review.lint skips only that specific validator
+    let validators = format!(
+        "{}{}",
+        script_validator_for("review", "lint", "echo PASS"),
+        script_validator_for("review", "format", "echo PASS"),
+    );
+    let toml = minimal_toml("review", &validators);
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log", "--skip", "review.lint"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    let history = verdict["history"].as_array().unwrap();
+    let lint = history.iter().find(|v| v["name"] == "lint").unwrap();
+    assert_eq!(lint["status"], "skip");
+    let format = history.iter().find(|v| v["name"] == "format").unwrap();
+    assert_eq!(format["status"], "pass");
+}
+
+#[test]
+fn mixed_name_and_tag_selectors() {
+    // --only "review @fast" matches gate by name AND validators by tag
+    let toml = multi_gate_toml(&[
+        (
+            "review",
+            &script_validator_for("review", "lint", "echo PASS"),
+        ),
+        (
+            "tagged",
+            &script_validator_with_tags("tagged", "fuzz", "echo PASS", &["fast"]),
+        ),
+        (
+            "other",
+            &script_validator_for("other", "check", "echo PASS"),
+        ),
+    ]);
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log", "--only", "review @fast"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    // Should produce 2 verdicts (review + tagged), not 3
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let verdicts: Vec<serde_json::Value> = serde_json::Deserializer::from_str(&stdout)
+        .into_iter::<serde_json::Value>()
+        .map(|r| r.unwrap())
+        .collect();
+    assert_eq!(verdicts.len(), 2, "Expected 2 verdicts, got: {stdout}");
+    let gates: Vec<&str> = verdicts
+        .iter()
+        .map(|v| v["gate"].as_str().unwrap())
+        .collect();
+    assert!(gates.contains(&"review"));
+    assert!(gates.contains(&"tagged"));
 }
 
 // ─── baton add ──────────────────────────────────────────────

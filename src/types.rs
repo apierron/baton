@@ -277,7 +277,7 @@ pub struct RunOptions {
     pub run_all: bool,
     pub only: Option<Vec<String>>,
     pub skip: Option<Vec<String>>,
-    pub tags: Option<Vec<String>>,
+
     pub timeout: Option<u64>,
     pub log: bool,
     pub suppressed_statuses: Vec<Status>,
@@ -857,7 +857,7 @@ mod tests {
         assert!(!opts.run_all);
         assert!(opts.only.is_none());
         assert!(opts.skip.is_none());
-        assert!(opts.tags.is_none());
+
         assert!(opts.timeout.is_none());
         assert!(opts.suppressed_statuses.is_empty());
     }

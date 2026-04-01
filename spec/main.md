@@ -127,16 +127,26 @@ SPEC-MN-CK-050: positional-args-are-input-files
   test: TODO
 
 SPEC-MN-CK-051: only-accepts-selectors
-  `--only` accepts gate names, `gate.validator` dot paths, and `@tag` selectors.
-  test: TODO
+  `--only` accepts gate names, validator names, `gate.validator` dot paths, and `@tag` selectors.
+  At gate level: includes gates matching by name, containing a matching validator name,
+  containing a matching dot-path prefix, or containing a validator with the tag.
+  At validator level: includes validators matching by name, dot-path, or tag.
+  test: cli::only_tag_runs_matching_validators
+  test: cli::only_tag_filters_gates_in_multi_gate
+  test: cli::dot_path_only_selects_gate_and_validator
+  test: cli::mixed_name_and_tag_selectors
 
 SPEC-MN-CK-052: skip-accepts-selectors
-  `--skip` accepts the same selector syntax as `--only`.
-  test: TODO
+  `--skip` accepts the same selector syntax as `--only`. At gate level, only gate
+  names exclude the entire gate. Tags and validator names pass through to the
+  validator-level filter.
+  test: cli::skip_tag_skips_matching_validators
+  test: cli::skip_tag_filters_gates_in_multi_gate
+  test: cli::dot_path_skip_excludes_specific_validator
 
 SPEC-MN-CK-053: skip-applied-after-only
   `--skip` removes from whatever set `--only` selected.
-  test: TODO
+  test: cli::only_and_skip_combined_with_tags
 
 SPEC-MN-CK-054: diff-flag-adds-git-changed-files
   `--diff <refspec>` adds changed files to the input pool.
@@ -169,8 +179,10 @@ SPEC-MN-CK-063: all-flag-removed
   test: TODO
 
 SPEC-MN-CK-064: tags-flag-removed
-  `--tags` is removed. Use `--only @tag` / `--skip @tag`.
-  test: TODO
+  `--tags` is removed. Use `--only @tag` / `--skip @tag`. The `RunOptions.tags`
+  field has been removed. Tag filtering is handled via `@tag` selectors in
+  `--only`/`--skip`.
+  test: IMPLICIT (compile-time: RunOptions no longer has tags field)
 
 ### Suppression flags
 

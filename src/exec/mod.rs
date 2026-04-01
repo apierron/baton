@@ -72,8 +72,8 @@ pub fn execute_validator(
 /// Runs all validators in a gate's pipeline and returns a [`Verdict`].
 ///
 /// This is the main entry point for gate execution. Runs each validator
-/// in order, respecting `run_if` conditions, `--only`/`--skip`/`--tags`
-/// filters, and blocking semantics.
+/// in order, respecting `run_if` conditions, `--only`/`--skip` filters,
+/// and blocking semantics.
 ///
 /// # Examples
 ///
@@ -99,17 +99,125 @@ pub fn execute_validator(
 /// let verdict = run_gate(gate, &config, vec![], &RunOptions::new()).unwrap();
 /// println!("Gate result: {:?}", verdict.status);
 /// ```
-/// Check if a validator matches any entry in a filter list.
-/// Entries starting with `@` match against the validator's tags;
-/// all other entries match against the validator name.
-fn matches_filter(filter: &[String], name: &str, tags: &[String]) -> bool {
+/// Selector parsed from `--only`/`--skip` entries.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Selector {
+    /// Bare name: matches gate name or validator name.
+    Name(String),
+    /// `gate.validator` dot-path: matches gate name prefix and validator name suffix.
+    DotPath { gate: String, validator: String },
+    /// `@tag`: matches validators (or gates containing validators) with that tag.
+    Tag(String),
+}
+
+/// Parses a raw `--only`/`--skip` entry into a [`Selector`].
+pub fn parse_selector(raw: &str) -> Selector {
+    if let Some(tag) = raw.strip_prefix('@') {
+        Selector::Tag(tag.to_string())
+    } else if let Some((gate, validator)) = raw.split_once('.') {
+        Selector::DotPath {
+            gate: gate.to_string(),
+            validator: validator.to_string(),
+        }
+    } else {
+        Selector::Name(raw.to_string())
+    }
+}
+
+/// Check if a gate matches any selector in a filter list for `--only`.
+///
+/// A gate is included if any selector is:
+/// - A bare name equal to the gate name or any validator name in the gate
+/// - A dot-path whose gate prefix matches the gate name
+/// - A `@tag` where at least one validator in the gate has that tag
+pub fn gate_matches_only(
+    filter: &[String],
+    gate_name: &str,
+    validators: &[ValidatorConfig],
+) -> bool {
     for entry in filter {
-        if let Some(tag) = entry.strip_prefix('@') {
-            if tags.iter().any(|t| t == tag) {
-                return true;
+        match parse_selector(entry) {
+            Selector::Name(ref n) => {
+                if n == gate_name || validators.iter().any(|v| v.name == *n) {
+                    return true;
+                }
             }
-        } else if entry == name {
-            return true;
+            Selector::DotPath { ref gate, .. } => {
+                if gate == gate_name {
+                    return true;
+                }
+            }
+            Selector::Tag(ref tag) => {
+                if validators.iter().any(|v| v.tags.iter().any(|t| t == tag)) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Check if a gate matches any selector in a filter list for `--skip`.
+///
+/// A gate is excluded if any selector is:
+/// - A bare name equal to the gate name (NOT validator names)
+/// - A dot-path whose gate prefix matches the gate name AND all validators match
+/// - A `@tag` where ALL validators in the gate have that tag
+///
+/// Bare validator names and partial tag matches pass through to
+/// the validator-level filter instead of excluding the entire gate.
+pub fn gate_matches_skip(filter: &[String], gate_name: &str) -> bool {
+    for entry in filter {
+        match parse_selector(entry) {
+            Selector::Name(ref n) => {
+                if n == gate_name {
+                    return true;
+                }
+            }
+            Selector::DotPath { ref gate, .. } => {
+                // Don't skip the whole gate for dot-paths — let the
+                // validator-level filter handle the specific validator.
+                if gate == gate_name {
+                    // Only skip gate if dot-path matches gate alone
+                    // Actually, dot-path should pass through to validator level
+                    continue;
+                }
+            }
+            Selector::Tag(_) => {
+                // Tag-based skip passes through to validator level
+                continue;
+            }
+        }
+    }
+    false
+}
+
+/// Check if a validator matches any entry in a filter list.
+///
+/// Entries starting with `@` match against the validator's tags.
+/// Entries containing `.` are dot-paths matching `gate.validator`.
+/// All other entries match against the validator name.
+pub fn matches_filter(filter: &[String], gate_name: &str, name: &str, tags: &[String]) -> bool {
+    for entry in filter {
+        match parse_selector(entry) {
+            Selector::Name(ref n) => {
+                if n == name {
+                    return true;
+                }
+            }
+            Selector::DotPath {
+                gate: ref g,
+                validator: ref v,
+            } => {
+                if g == gate_name && v == name {
+                    return true;
+                }
+            }
+            Selector::Tag(ref tag) => {
+                if tags.iter().any(|t| t == tag) {
+                    return true;
+                }
+            }
         }
     }
     false
@@ -138,7 +246,7 @@ pub fn run_gate(
     for validator in &gate.validators {
         // Apply filters
         if let Some(ref only) = options.only {
-            if !matches_filter(only, &validator.name, &validator.tags) {
+            if !matches_filter(only, &gate.name, &validator.name, &validator.tags) {
                 results.insert(
                     validator.name.clone(),
                     ValidatorResult {
@@ -153,22 +261,7 @@ pub fn run_gate(
             }
         }
         if let Some(ref skip) = options.skip {
-            if matches_filter(skip, &validator.name, &validator.tags) {
-                results.insert(
-                    validator.name.clone(),
-                    ValidatorResult {
-                        name: validator.name.clone(),
-                        status: Status::Skip,
-                        feedback: None,
-                        duration_ms: 0,
-                        cost: None,
-                    },
-                );
-                continue;
-            }
-        }
-        if let Some(ref tags) = options.tags {
-            if !validator.tags.iter().any(|t| tags.contains(t)) {
+            if matches_filter(skip, &gate.name, &validator.name, &validator.tags) {
                 results.insert(
                     validator.name.clone(),
                     ValidatorResult {
@@ -429,7 +522,8 @@ mod tests {
     }
 
     #[test]
-    fn gate_tags_filter() {
+    fn gate_only_tag_filter() {
+        // --only @x should run validators with tag "x" and skip others
         let gate = th::gate(
             "test",
             vec![
@@ -441,13 +535,110 @@ mod tests {
         );
         let config = th::config_for_gate(gate.clone());
         let mut opts = RunOptions::new();
-        opts.tags = Some(vec!["x".into()]);
+        opts.only = Some(vec!["@x".into()]);
 
         let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
         let a_result = verdict.history.iter().find(|r| r.name == "a").unwrap();
         assert_eq!(a_result.status, Status::Pass);
         let b_result = verdict.history.iter().find(|r| r.name == "b").unwrap();
         assert_eq!(b_result.status, Status::Skip);
+    }
+
+    #[test]
+    fn gate_skip_tag_filter() {
+        // --skip @x should skip validators with tag "x" and run others
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("a", "exit 0")
+                    .tags(vec!["x"])
+                    .build(),
+                ValidatorBuilder::script("b", "exit 0").build(),
+            ],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut opts = RunOptions::new();
+        opts.skip = Some(vec!["@x".into()]);
+
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
+        let a_result = verdict.history.iter().find(|r| r.name == "a").unwrap();
+        assert_eq!(a_result.status, Status::Skip);
+        let b_result = verdict.history.iter().find(|r| r.name == "b").unwrap();
+        assert_eq!(b_result.status, Status::Pass);
+    }
+
+    #[test]
+    fn gate_only_tag_and_name_mixed() {
+        // --only "a @y" should match by name OR tag
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("a", "exit 0").build(),
+                ValidatorBuilder::script("b", "exit 0")
+                    .tags(vec!["y"])
+                    .build(),
+                ValidatorBuilder::script("c", "exit 0").build(),
+            ],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut opts = RunOptions::new();
+        opts.only = Some(vec!["a".into(), "@y".into()]);
+
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
+        let a_result = verdict.history.iter().find(|r| r.name == "a").unwrap();
+        assert_eq!(a_result.status, Status::Pass);
+        let b_result = verdict.history.iter().find(|r| r.name == "b").unwrap();
+        assert_eq!(b_result.status, Status::Pass);
+        let c_result = verdict.history.iter().find(|r| r.name == "c").unwrap();
+        assert_eq!(c_result.status, Status::Skip);
+    }
+
+    #[test]
+    fn filter_order_only_then_skip() {
+        // --only @fast --skip b: only validators with @fast tag, then skip "b"
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("a", "exit 0")
+                    .tags(vec!["fast"])
+                    .build(),
+                ValidatorBuilder::script("b", "exit 0")
+                    .tags(vec!["fast"])
+                    .build(),
+                ValidatorBuilder::script("c", "exit 0").build(),
+            ],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut opts = RunOptions::new();
+        opts.only = Some(vec!["@fast".into()]);
+        opts.skip = Some(vec!["b".into()]);
+
+        let verdict = run_gate(&gate, &config, vec![], &opts).unwrap();
+        let a_result = verdict.history.iter().find(|r| r.name == "a").unwrap();
+        assert_eq!(a_result.status, Status::Pass);
+        let b_result = verdict.history.iter().find(|r| r.name == "b").unwrap();
+        assert_eq!(b_result.status, Status::Skip);
+        let c_result = verdict.history.iter().find(|r| r.name == "c").unwrap();
+        assert_eq!(c_result.status, Status::Skip);
+    }
+
+    #[test]
+    fn matches_filter_dot_path() {
+        // dot-path "gate.validator" should match when gate matches and validator name matches
+        assert!(matches_filter(&["test.a".into()], "test", "a", &[]));
+        // Wrong gate
+        assert!(!matches_filter(&["other.a".into()], "test", "a", &[]));
+        // Wrong validator
+        assert!(!matches_filter(&["test.b".into()], "test", "a", &[]));
+        // Bare name still works
+        assert!(matches_filter(&["a".into()], "test", "a", &[]));
+        // Tag still works
+        assert!(matches_filter(
+            &["@fast".into()],
+            "test",
+            "a",
+            &["fast".into()]
+        ));
     }
 
     #[test]

@@ -64,18 +64,13 @@ pub fn cmd_check(
     let mut gate_names: Vec<String> = config.gates.keys().cloned().collect();
 
     if let Some(ref only_list) = only {
-        let config_gate_names: Vec<&str> = config.gates.keys().map(|s| s.as_str()).collect();
-        let only_gates: Vec<String> = only_list
-            .iter()
-            .filter(|s| config_gate_names.contains(&s.as_str()))
-            .cloned()
-            .collect();
-        if !only_gates.is_empty() {
-            gate_names = only_gates;
-        }
+        gate_names.retain(|g| {
+            let gate = &config.gates[g];
+            exec::gate_matches_only(only_list, g, &gate.validators)
+        });
     }
     if let Some(ref skip_list) = skip {
-        gate_names.retain(|g| !skip_list.contains(g));
+        gate_names.retain(|g| !exec::gate_matches_skip(skip_list, g));
     }
 
     if gate_names.is_empty() {
@@ -89,7 +84,7 @@ pub fn cmd_check(
             let gate = &config.gates[gate_name];
             eprintln!("Gate '{gate_name}':");
             for v in &gate.validators {
-                let skip_reason = compute_skip_reason(v, &only, &skip);
+                let skip_reason = compute_skip_reason(v, gate_name, &only, &skip);
                 match skip_reason {
                     Some(reason) => eprintln!("  \u{2014} {} (skipped by {reason})", v.name),
                     None => {
@@ -126,7 +121,7 @@ pub fn cmd_check(
         run_all: false,
         only,
         skip,
-        tags: None,
+
         timeout,
         log: !no_log,
         suppressed_statuses,
@@ -211,33 +206,19 @@ pub fn cmd_check(
 /// Compute skip reason for a validator based on `--only`/`--skip`.
 fn compute_skip_reason(
     v: &crate::config::ValidatorConfig,
+    gate_name: &str,
     only: &Option<Vec<String>>,
     skip: &Option<Vec<String>>,
 ) -> Option<&'static str> {
     if let Some(ref o) = only {
-        if !filter_matches(o, &v.name, &v.tags) {
+        if !exec::matches_filter(o, gate_name, &v.name, &v.tags) {
             return Some("--only");
         }
     }
     if let Some(ref s) = skip {
-        if filter_matches(s, &v.name, &v.tags) {
+        if exec::matches_filter(s, gate_name, &v.name, &v.tags) {
             return Some("--skip");
         }
     }
     None
-}
-
-/// Check if a validator matches any entry in a filter list.
-/// Entries starting with `@` match against the validator's tags.
-fn filter_matches(filter: &[String], name: &str, tags: &[String]) -> bool {
-    for entry in filter {
-        if let Some(tag) = entry.strip_prefix('@') {
-            if tags.iter().any(|t| t == tag) {
-                return true;
-            }
-        } else if entry == name {
-            return true;
-        }
-    }
-    false
 }

@@ -148,6 +148,19 @@ warn_exit_codes = [{codes}]
     )
 }
 
+pub fn script_validator_with_tags(gate: &str, name: &str, command: &str, tags: &[&str]) -> String {
+    let tags_str: Vec<String> = tags.iter().map(|t| format!("\"{t}\"")).collect();
+    format!(
+        r#"[[gates.{gate}.validators]]
+name = "{name}"
+type = "script"
+command = "{command}"
+tags = [{tags}]
+"#,
+        tags = tags_str.join(", ")
+    )
+}
+
 pub fn llm_validator(gate: &str, name: &str, prompt: &str, runtime: &str) -> String {
     format!(
         r#"[[gates.{gate}.validators]]

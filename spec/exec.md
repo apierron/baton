@@ -433,20 +433,20 @@ The loop maintains a map of prior results keyed by validator name. This map is p
 Key invariant: a validator can only reference results from validators that appeared earlier in the pipeline. The config validator enforces this for run_if expressions, but placeholder resolution handles missing references gracefully (empty string).
 
 SPEC-EX-RG-010: only-filter-skips-unlisted
-  When options.only is Some, validators whose name is not in the list are recorded as Status::Skip with no feedback. They do not execute. Skipped validators appear in the verdict history.
+  When options.only is Some, validators not matching any selector (by name, dot-path, or @tag) are recorded as Status::Skip with no feedback. They do not execute. Skipped validators appear in the verdict history.
   test: exec::tests::gate_only_filter
+  test: exec::tests::gate_only_tag_filter
+  test: exec::tests::gate_only_tag_and_name_mixed
+  test: exec::tests::matches_filter_dot_path
 
 SPEC-EX-RG-011: skip-filter-skips-listed
-  When options.skip is Some, validators whose name is in the list are recorded as Status::Skip. This is the inverse of --only.
+  When options.skip is Some, validators matching any selector (by name, dot-path, or @tag) are recorded as Status::Skip. This is the inverse of --only.
   test: exec::tests::gate_skip_filter
+  test: exec::tests::gate_skip_tag_filter
 
-SPEC-EX-RG-012: tags-filter-skips-untagged
-  When options.tags is Some, validators that have no tags in common with the filter set are recorded as Status::Skip. A validator with tags ["a", "b"] matches a filter of ["b", "c"]. A validator with no tags never matches a tags filter.
-  test: exec::tests::gate_tags_filter
-
-SPEC-EX-RG-013: filter-order-is-only-then-skip-then-tags
-  Filters are evaluated in order: only, skip, tags. If a validator is excluded by --only, --skip is never checked. This matters for the skip reason in dry-run output but not for execution semantics (all three produce Status::Skip).
-  test: UNTESTED (ordering specifically)
+SPEC-EX-RG-013: filter-order-is-only-then-skip
+  Filters are evaluated in order: only, then skip. If a validator is excluded by --only, --skip is never checked. This matters for the skip reason in dry-run output but not for execution semantics (both produce Status::Skip).
+  test: exec::tests::filter_order_only_then_skip
 
 SPEC-EX-RG-014: blocking-validator-stops-pipeline
   When a validator has blocking=true and its effective status (after suppression) is Fail or Error, the pipeline stops immediately. No subsequent validators execute. The verdict status reflects the blocking failure: Fail→VerdictStatus::Fail, Error→VerdictStatus::Error. The verdict's failed_at field names the blocking validator.
@@ -576,8 +576,13 @@ SPEC-EX-DP-007: no-matching-files-skips-validator
 Gate-level orchestration. After the file collector and dispatch planner have done their work, this layer iterates gates, applies `--only`/`--skip` filtering, runs validators in pipeline order, and enforces blocking and `run_if` rules. This is where stateless validators meet sequential orchestration.
 
 SPEC-EX-PL-001: gates-iterated-after-only-skip-filtering
-  Gates are filtered by `--only` / `--skip` before iteration.
-  test: TODO
+  Gates are filtered by `--only` / `--skip` before iteration. `--only` includes
+  gates matching by name, validator name, dot-path prefix, or @tag containment.
+  `--skip` excludes gates only by gate name at the gate level; validator names,
+  tags, and dot-paths pass through to the validator-level filter.
+  test: cli::only_tag_filters_gates_in_multi_gate
+  test: cli::skip_tag_filters_gates_in_multi_gate
+  test: cli::only_nonexistent_name_runs_no_gates
 
 SPEC-EX-PL-002: per-invocation-blocking
   If any invocation of a blocking validator fails, the gate stops. Not just one invocation — any.

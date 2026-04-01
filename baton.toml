@@ -14,6 +14,14 @@ tmp_dir = "./.baton/tmp"
 # api_key_env = "ANTHROPIC_API_KEY"
 # default_model = "claude-haiku"
 
+[runtimes.default]
+type = "claude-code"
+base_url = "claude"          # path to the claude binary (default: "claude", found via PATH)
+# api_key_env = "ANTHROPIC_API_KEY"  # optional — omit to inherit from parent env
+default_model = "sonnet"   # optional model override
+timeout_seconds = 300      # optional
+max_iterations =  3        # optional — maps to --max-turns
+
 # ── Existing validators ───────────────────────────────────
 
 [validators.clippy]
