@@ -222,6 +222,127 @@ blocking = true
     )
 }
 
+/// Creates a temp dir with a git repo, baton.toml, and committed files.
+/// Useful for `--diff` tests.
+pub fn setup_git_project(toml: &str, files: &[(&str, &str)]) -> TempDir {
+    use std::process::Command as StdCommand;
+    let dir = TempDir::new().unwrap();
+    fs::write(dir.path().join("baton.toml"), toml).unwrap();
+    fs::create_dir_all(dir.path().join(".baton/tmp")).unwrap();
+    fs::create_dir_all(dir.path().join(".baton/logs")).unwrap();
+    for (name, content) in files {
+        let path = dir.path().join(name);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, content).unwrap();
+    }
+    // Initialize git repo and commit
+    StdCommand::new("git")
+        .args(["init"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    StdCommand::new("git")
+        .args(["add", "-A"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    StdCommand::new("git")
+        .args([
+            "-c", "user.name=test",
+            "-c", "user.email=test@test.com",
+            "commit", "-m", "initial",
+        ])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    dir
+}
+
+pub fn human_validator(gate: &str, name: &str, prompt: &str) -> String {
+    format!(
+        r#"[[gates.{gate}.validators]]
+name = "{name}"
+type = "human"
+prompt = "{prompt}"
+"#
+    )
+}
+
+pub fn human_validator_blocking(gate: &str, name: &str, prompt: &str, blocking: bool) -> String {
+    format!(
+        r#"[[gates.{gate}.validators]]
+name = "{name}"
+type = "human"
+prompt = "{prompt}"
+blocking = {blocking}
+"#
+    )
+}
+
+pub fn script_validator_with_input(gate: &str, name: &str, command: &str, input_glob: &str) -> String {
+    format!(
+        r#"[[gates.{gate}.validators]]
+name = "{name}"
+type = "script"
+command = "{command}"
+input = "{input_glob}"
+"#
+    )
+}
+
+pub fn script_validator_with_batch_input(gate: &str, name: &str, command: &str, match_glob: &str) -> String {
+    format!(
+        r#"[[gates.{gate}.validators]]
+name = "{name}"
+type = "script"
+command = "{command}"
+input = {{ match = "{match_glob}", collect = true }}
+"#
+    )
+}
+
+pub fn script_validator_with_working_dir(gate: &str, name: &str, command: &str, dir: &str) -> String {
+    format!(
+        r#"[[gates.{gate}.validators]]
+name = "{name}"
+type = "script"
+command = "{command}"
+working_dir = "{dir}"
+"#
+    )
+}
+
+pub fn script_validator_with_env(gate: &str, name: &str, command: &str, env_pairs: &[(&str, &str)]) -> String {
+    let env_entries: Vec<String> = env_pairs
+        .iter()
+        .map(|(k, v)| format!("{k} = \"{v}\""))
+        .collect();
+    format!(
+        r#"[[gates.{gate}.validators]]
+name = "{name}"
+type = "script"
+command = "{command}"
+env = {{ {env} }}
+"#,
+        env = env_entries.join(", ")
+    )
+}
+
+pub fn llm_validator_freeform(gate: &str, name: &str, prompt: &str, runtime: &str) -> String {
+    format!(
+        r#"[[gates.{gate}.validators]]
+name = "{name}"
+type = "llm"
+prompt = "{prompt}"
+runtime = ["{runtime}"]
+model = "test-model"
+response_format = "freeform"
+"#
+    )
+}
+
 /// A minimal v0.7 config with one script validator and one gate.
 pub fn v06_base_config() -> String {
     v06_config_with_validators(

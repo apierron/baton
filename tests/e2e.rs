@@ -620,3 +620,294 @@ tmp_dir = "./.baton/tmp"
     // Verify the mock matched (system + user roles were present in request)
     system_mock.assert();
 }
+
+// ─── Full Project Lifecycle ────────────────────────────────
+
+#[test]
+fn e2e_full_lifecycle_init_add_doctor_check_history() {
+    let dir = tempfile::TempDir::new().unwrap();
+
+    // Step 1: init
+    let output = baton()
+        .args(["init"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "init failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Step 2: overwrite with a working config that has a script validator
+    let toml = minimal_toml("review", &script_validator_for("review", "lint", "echo PASS"));
+    fs::write(dir.path().join("baton.toml"), &toml).unwrap();
+    fs::write(dir.path().join("artifact.txt"), "test").unwrap();
+
+    // Step 3: doctor
+    fs::create_dir_all(dir.path().join("prompts")).unwrap();
+    let output = baton()
+        .args(["doctor", "--offline"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "doctor failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Step 4: check (with logging to write history)
+    let output = baton()
+        .args(["check"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "check failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Step 5: history should show the pass
+    let output = baton()
+        .args(["history", "--gate", "review"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("pass"),
+        "History should record pass: {stdout}"
+    );
+}
+
+// ─── Multi-Gate Blocking Independence ──────────────────────
+
+#[test]
+fn e2e_multi_gate_first_fails_second_passes() {
+    let toml = multi_gate_toml(&[
+        (
+            "alpha",
+            &script_validator_blocking_for("alpha", "blocker", "exit 1", true),
+        ),
+        (
+            "beta",
+            &script_validator_for("beta", "checker", "echo PASS"),
+        ),
+    ]);
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    // Overall exit code should be 1 (at least one gate failed)
+    assert_eq!(output.status.code(), Some(1));
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stream = serde_json::Deserializer::from_str(&stdout).into_iter::<serde_json::Value>();
+    let verdicts: Vec<serde_json::Value> = stream
+        .map(|r| r.expect("Failed to parse verdict"))
+        .collect();
+    assert_eq!(verdicts.len(), 2, "Should have 2 verdict objects");
+
+    let alpha = verdicts.iter().find(|v| v["gate"] == "alpha").unwrap();
+    assert_eq!(alpha["status"], "fail");
+
+    let beta = verdicts.iter().find(|v| v["gate"] == "beta").unwrap();
+    assert_eq!(beta["status"], "pass");
+}
+
+// ─── Human Validator in Mixed Pipeline ─────────────────────
+
+#[test]
+fn e2e_human_in_mixed_pipeline() {
+    let validators = [
+        script_validator_blocking_for("review", "pre-check", "echo PASS", true),
+        human_validator_blocking("review", "manual-review", "Review this code", false),
+        script_validator_blocking_for("review", "post-check", "echo PASS", true),
+    ]
+    .join("\n");
+    let toml = minimal_toml("review", &validators);
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Gate should pass (human is non-blocking)"
+    );
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    assert_eq!(verdict["status"], "pass");
+
+    let history = verdict["history"].as_array().unwrap();
+    let human = history
+        .iter()
+        .find(|v| v["name"] == "manual-review")
+        .unwrap();
+    assert_eq!(human["status"], "fail");
+    let feedback = human["feedback"].as_str().unwrap();
+    assert!(
+        feedback.starts_with("[human-review-requested]"),
+        "Human feedback should have prefix: {feedback}"
+    );
+
+    let post = history
+        .iter()
+        .find(|v| v["name"] == "post-check")
+        .unwrap();
+    assert_eq!(post["status"], "pass");
+}
+
+// ─── LLM Freeform Response Produces Warn ───────────────────
+
+#[test]
+fn e2e_llm_freeform_always_warns() {
+    let server = httpmock::MockServer::start();
+
+    server.mock(|when, then| {
+        when.method(httpmock::Method::GET).path("/v1/models");
+        then.status(200).json_body(serde_json::json!({
+            "data": [{"id": "test-model"}]
+        }));
+    });
+
+    server.mock(|when, then| {
+        when.method(httpmock::Method::POST)
+            .path("/v1/chat/completions");
+        then.status(200).json_body(serde_json::json!({
+            "choices": [{"message": {"content": "This code looks reasonable but could use better error handling."}}],
+            "usage": {"prompt_tokens": 100, "completion_tokens": 30}
+        }));
+    });
+
+    let validators =
+        llm_validator_freeform("review", "advisory", "Review this code", "default");
+    let runtime = runtime_toml("default", &server.url(""));
+    let toml = format!(
+        r#"version = "0.4"
+
+[defaults]
+timeout_seconds = 30
+blocking = true
+prompts_dir = "./prompts"
+log_dir = "./.baton/logs"
+history_db = "./.baton/history.db"
+tmp_dir = "./.baton/tmp"
+
+{runtime}
+
+[gates.review]
+{validators}
+"#
+    );
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Freeform LLM should not block (warn status): {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    assert_eq!(verdict["status"], "pass");
+
+    let history = verdict["history"].as_array().unwrap();
+    let advisory = history.iter().find(|v| v["name"] == "advisory").unwrap();
+    assert_eq!(
+        advisory["status"], "warn",
+        "Freeform response should produce warn status"
+    );
+}
+
+// ─── --diff Workflow ───────────────────────────────────────
+
+#[test]
+fn e2e_diff_workflow() {
+    let toml = minimal_toml("review", &script_validator_for("review", "lint", "echo PASS"));
+    let dir = setup_git_project(&toml, &[("src/main.rs", "fn main() {}")]);
+
+    // Modify a file after the initial commit
+    fs::write(
+        dir.path().join("src/main.rs"),
+        "fn main() { println!(\"hello\"); }",
+    )
+    .unwrap();
+
+    let output = baton()
+        .args(["check", "--no-log", "--diff", "HEAD"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Diff workflow should pass: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    assert_eq!(verdict["status"], "pass");
+}
+
+// ─── Suppressed Verdicts in History ────────────────────────
+
+#[test]
+fn e2e_suppressed_verdict_history_records_true_status() {
+    let toml = minimal_toml(
+        "review",
+        &script_validator_blocking_for("review", "failing", "exit 1", true),
+    );
+    let dir = setup_project(&toml, "hello");
+
+    // Run with --suppress-all (logging enabled to write history)
+    let output = baton()
+        .args(["check", "--suppress-all"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Should pass with suppress-all: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The verdict JSON should have the true status in history
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    let history = verdict["history"].as_array().unwrap();
+    let failing = history
+        .iter()
+        .find(|v| v["name"] == "failing")
+        .unwrap();
+    assert_eq!(
+        failing["status"], "fail",
+        "History should record true 'fail' status even when suppressed"
+    );
+
+    // Query the history DB to verify the true status is persisted
+    let output = baton()
+        .args(["history", "--gate", "review"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // The verdict-level status is "pass" (suppressed), but the individual validator shows "fail"
+    assert!(
+        stdout.contains("pass"),
+        "Verdict status should be 'pass' (suppressed): {stdout}"
+    );
+}

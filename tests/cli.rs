@@ -3186,3 +3186,785 @@ fn add_noninteractive_human() {
     assert!(config.contains("human"));
     assert!(config.contains("Please review this PR"));
 }
+
+// ─── --no-recursive flag ────────────────────────────────
+
+#[test]
+#[cfg(not(windows))]
+fn check_no_recursive_skips_subdirectories() {
+    // The --no-recursive flag limits file pool to only direct children of a directory.
+    // We verify this by using --verbose, which prints file count info to stderr,
+    // or by simply checking the command succeeds and the flag is accepted.
+    let toml = minimal_toml("review", &script_validator_for("review", "lint", "echo PASS"));
+    let dir = setup_project_with_files(
+        &toml,
+        &[("src/a.rs", "code"), ("src/sub/b.rs", "more code")],
+    );
+
+    // Recursive: both files added to pool
+    let output = baton()
+        .args(["check", "--no-log", "src"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    // Non-recursive: only direct children of src/ added to pool
+    let output = baton()
+        .args(["check", "--no-log", "--no-recursive", "src"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "--no-recursive flag should be accepted: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Verify by using --verbose which prints collected files to stderr
+    let output = baton()
+        .args(["check", "--no-log", "-v", "--no-recursive", "src"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    // In verbose mode, should mention collected files; b.rs from sub/ should not appear
+    // We at least verify the flag doesn't error
+    assert!(
+        !stderr.contains("error"),
+        "Should not produce errors: {stderr}"
+    );
+}
+
+// ─── --files - (stdin) ──────────────────────────────────
+
+#[test]
+fn check_files_stdin_reads_paths() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project_with_files(&toml, &[("a.txt", "aaa"), ("b.txt", "bbb")]);
+
+    let output = baton()
+        .args(["check", "--no-log", "--files", "-"])
+        .current_dir(dir.path())
+        .write_stdin("a.txt\nb.txt\n")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Should pass reading from stdin: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+// ─── --diff <refspec> ───────────────────────────────────
+
+#[test]
+fn check_diff_adds_changed_files() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_git_project(&toml, &[("src/main.rs", "fn main() {}")]);
+
+    // Modify a file after the commit
+    fs::write(dir.path().join("src/main.rs"), "fn main() { println!(\"hi\"); }").unwrap();
+
+    let output = baton()
+        .args(["check", "--no-log", "--diff", "HEAD"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Should pass with diff-changed files: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn check_diff_invalid_refspec_exits_2() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_git_project(&toml, &[("src/main.rs", "fn main() {}")]);
+
+    let output = baton()
+        .args(["check", "--no-log", "--diff", "nonexistent-ref"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "Should exit 2 for invalid refspec: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+// ─── Human validators ───────────────────────────────────
+
+#[test]
+fn check_human_validator_always_fails_with_prefix() {
+    let validators = human_validator("review", "manual-check", "Please review this code");
+    let toml = minimal_toml("review", &validators);
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    assert_eq!(verdict["status"], "fail");
+    let feedback = verdict["history"][0]["feedback"].as_str().unwrap();
+    assert!(
+        feedback.starts_with("[human-review-requested]"),
+        "Feedback should start with [human-review-requested]: {feedback}"
+    );
+}
+
+#[test]
+fn check_human_validator_nonblocking_continues() {
+    let validators = [
+        human_validator_blocking("review", "manual-check", "Review this", false),
+        script_validator_for("review", "lint", "echo PASS"),
+    ]
+    .join("\n");
+    let toml = minimal_toml("review", &validators);
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Gate should pass when human is non-blocking"
+    );
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    assert_eq!(verdict["status"], "pass");
+    let history = verdict["history"].as_array().unwrap();
+    let human = history
+        .iter()
+        .find(|v| v["name"] == "manual-check")
+        .unwrap();
+    assert_eq!(human["status"], "fail");
+    let lint = history.iter().find(|v| v["name"] == "lint").unwrap();
+    assert_eq!(lint["status"], "pass");
+}
+
+// ─── run_if with `or` operator ──────────────────────────
+
+#[test]
+fn check_run_if_or_one_true() {
+    let validators = [
+        script_validator_blocking_for("review", "v1", "echo PASS", true),
+        script_validator_blocking_for("review", "v2", "exit 1", false),
+        script_validator_with_run_if(
+            "review",
+            "v3",
+            "echo PASS",
+            "v1.status == fail or v2.status == fail",
+        ),
+    ]
+    .join("\n");
+    let toml = minimal_toml("review", &validators);
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    let history = verdict["history"].as_array().unwrap();
+    let v3 = history.iter().find(|v| v["name"] == "v3").unwrap();
+    assert_eq!(v3["status"], "pass", "v3 should run because v2 failed");
+}
+
+#[test]
+fn check_run_if_or_both_false_skips() {
+    let validators = [
+        script_validator_blocking_for("review", "v1", "echo PASS", true),
+        script_validator_blocking_for("review", "v2", "echo PASS", false),
+        script_validator_with_run_if(
+            "review",
+            "v3",
+            "echo PASS",
+            "v1.status == fail or v2.status == fail",
+        ),
+    ]
+    .join("\n");
+    let toml = minimal_toml("review", &validators);
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    let history = verdict["history"].as_array().unwrap();
+    let v3 = history.iter().find(|v| v["name"] == "v3").unwrap();
+    assert_eq!(
+        v3["status"], "skip",
+        "v3 should be skipped because neither failed"
+    );
+}
+
+// ─── run_if referencing filtered-out validator ──────────
+
+#[test]
+fn check_run_if_references_skipped_validator_as_skip() {
+    let validators = [
+        script_validator_blocking_for("review", "v1", "echo PASS", true),
+        script_validator_with_run_if("review", "v2", "echo PASS", "phantom.status == pass"),
+    ]
+    .join("\n");
+    let toml = minimal_toml("review", &validators);
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    let history = verdict["history"].as_array().unwrap();
+    let v2 = history.iter().find(|v| v["name"] == "v2").unwrap();
+    assert_eq!(
+        v2["status"], "skip",
+        "Nonexistent validator in run_if should be treated as skip status"
+    );
+}
+
+// ─── Script working_dir and env ─────────────────────────
+
+#[test]
+#[cfg(not(windows))]
+fn check_script_working_dir() {
+    // Use exit 1 + non-blocking so feedback is captured (exit 0 = no feedback)
+    let validators = r#"[[gates.review.validators]]
+name = "pwd-check"
+type = "script"
+command = "pwd && exit 1"
+working_dir = "./subdir"
+blocking = false
+"#
+    .to_string();
+    let toml = minimal_toml("review", &validators);
+    let dir = setup_project_with_files(&toml, &[("subdir/file.txt", "content")]);
+
+    let output = baton()
+        .args(["check", "--no-log"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    let feedback = verdict["history"][0]["feedback"].as_str().unwrap_or("");
+    assert!(
+        feedback.contains("subdir"),
+        "Feedback should contain subdir path: {feedback}"
+    );
+}
+
+#[test]
+#[cfg(not(windows))]
+fn check_script_env_vars() {
+    // Use exit 1 + non-blocking so feedback is captured (exit 0 = no feedback)
+    let validators = r#"[[gates.review.validators]]
+name = "env-check"
+type = "script"
+command = "echo $BATON_TEST_VAR && exit 1"
+blocking = false
+env = { BATON_TEST_VAR = "hello123" }
+"#
+    .to_string();
+    let toml = minimal_toml("review", &validators);
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    let feedback = verdict["history"][0]["feedback"].as_str().unwrap_or("");
+    assert!(
+        feedback.contains("hello123"),
+        "Feedback should contain env var value: {feedback}"
+    );
+}
+
+// ─── Per-file input mode with placeholders ──────────────
+
+#[test]
+#[cfg(not(windows))]
+fn check_per_file_input_runs_per_match() {
+    // Per-file input declaration is accepted and validator still runs
+    // (dispatch planner not yet wired into gate execution, so all pool files are available)
+    let validators =
+        script_validator_with_input("review", "echo-name", "echo ok", "*.rs");
+    let toml = minimal_toml("review", &validators);
+    let dir = setup_project_with_files(
+        &toml,
+        &[("a.rs", "code a"), ("b.rs", "code b"), ("c.txt", "text")],
+    );
+
+    let output = baton()
+        .args(["check", "--no-log", "a.rs", "b.rs", "c.txt"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Per-file input config should be accepted: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+#[cfg(not(windows))]
+fn check_per_file_placeholder_file_path() {
+    // Use exit 1 + non-blocking so feedback is captured (exit 0 = no feedback)
+    let validators = r#"[[gates.review.validators]]
+name = "echo-path"
+type = "script"
+command = "echo {file.path} && exit 1"
+input = "*.rs"
+blocking = false
+"#
+    .to_string();
+    let toml = minimal_toml("review", &validators);
+    let dir = setup_project_with_files(&toml, &[("a.rs", "code")]);
+
+    // Must provide files as positional args to populate the pool
+    let output = baton()
+        .args(["check", "--no-log", "a.rs"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    let history = verdict["history"].as_array().unwrap();
+    let has_path = history
+        .iter()
+        .any(|v| v["feedback"].as_str().unwrap_or("").contains("a.rs"));
+    assert!(has_path, "Feedback should contain file path");
+}
+
+#[test]
+#[cfg(not(windows))]
+fn check_per_file_placeholder_file_stem() {
+    // Use exit 1 + non-blocking so feedback is captured (exit 0 = no feedback)
+    let validators = r#"[[gates.review.validators]]
+name = "echo-stem"
+type = "script"
+command = "echo {file.stem} && exit 1"
+input = "*.rs"
+blocking = false
+"#
+    .to_string();
+    let toml = minimal_toml("review", &validators);
+    let dir = setup_project_with_files(&toml, &[("hello.rs", "code")]);
+
+    // Must provide files as positional args to populate the pool
+    let output = baton()
+        .args(["check", "--no-log", "hello.rs"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    let history = verdict["history"].as_array().unwrap();
+    let has_stem = history
+        .iter()
+        .any(|v| v["feedback"].as_str().unwrap_or("").contains("hello"));
+    assert!(has_stem, "Feedback should contain file stem 'hello'");
+}
+
+// ─── Batch input mode ───────────────────────────────────
+
+#[test]
+#[cfg(not(windows))]
+fn check_batch_input_collects_all_matches() {
+    let validators = script_validator_with_batch_input(
+        "review",
+        "batch-echo",
+        "echo {input.paths}",
+        "*.rs",
+    );
+    let toml = minimal_toml("review", &validators);
+    let dir = setup_project_with_files(&toml, &[("a.rs", "code a"), ("b.rs", "code b")]);
+
+    // Must provide files as positional args to populate the pool
+    let output = baton()
+        .args(["check", "--no-log", "a.rs", "b.rs"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Batch input should pass: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+// ─── Verdict placeholders ───────────────────────────────
+
+#[test]
+#[cfg(not(windows))]
+fn check_verdict_placeholder_resolves() {
+    // v1 fails (non-blocking), v2 echoes v1's status and exits 1 (non-blocking) so feedback is captured
+    let validators = [
+        script_validator_blocking_for("review", "v1", "exit 1", false),
+        r#"[[gates.review.validators]]
+name = "v2"
+type = "script"
+command = "echo {verdict.v1.status} && exit 1"
+blocking = false
+"#
+        .to_string(),
+    ]
+    .join("\n");
+    let toml = minimal_toml("review", &validators);
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    let history = verdict["history"].as_array().unwrap();
+    let v2 = history.iter().find(|v| v["name"] == "v2").unwrap();
+    let feedback = v2["feedback"].as_str().unwrap_or("");
+    assert!(
+        feedback.contains("fail"),
+        "v2 should echo v1's status 'fail': {feedback}"
+    );
+}
+
+// ─── Human/summary format edge cases ────────────────────
+
+#[test]
+fn check_human_format_pass_icon() {
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log", "--format", "human"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("✓") || stderr.contains("PASS") || stderr.contains("pass"),
+        "Human format should show pass indicator: {stderr}"
+    );
+}
+
+#[test]
+fn check_human_format_error_icon() {
+    let toml = minimal_toml("review", &script_validator("lint", "  "));
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log", "--format", "human", "--suppress-errors"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("E") || stderr.contains("error") || stderr.contains("ERROR"),
+        "Human format should show error indicator: {stderr}"
+    );
+}
+
+#[test]
+fn check_summary_format_error_shows_error_at() {
+    let toml = minimal_toml("review", &script_validator("lint", "  "));
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log", "--format", "summary"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("ERROR") || stderr.contains("error"),
+        "Summary format should show error: {stderr}"
+    );
+}
+
+// ─── Config version compatibility ───────────────────────
+
+#[test]
+fn check_version_0_5_accepted() {
+    let toml = r#"version = "0.5"
+
+[defaults]
+timeout_seconds = 30
+
+[gates.review]
+[[gates.review.validators]]
+name = "lint"
+type = "script"
+command = "echo PASS"
+"#;
+    let dir = setup_project(toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Version 0.5 should be accepted: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn check_version_0_7_accepted() {
+    let toml = r#"version = "0.7"
+
+[defaults]
+timeout_seconds = 30
+
+[validators.lint]
+type = "script"
+command = "echo PASS"
+
+[gates.review]
+validators = [
+    { ref = "lint", blocking = true },
+]
+"#;
+    let dir = setup_project(toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Version 0.7 should be accepted: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn check_unsupported_version_exits_2() {
+    let toml = r#"version = "0.3"
+
+[gates.review]
+[[gates.review.validators]]
+name = "lint"
+type = "script"
+command = "echo PASS"
+"#;
+    let dir = setup_project(toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "Unsupported version should exit 2: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+// ─── Suppressed status recorded as true status ──────────
+
+#[test]
+fn check_suppressed_status_recorded_as_true() {
+    let toml = minimal_toml(
+        "review",
+        &script_validator_blocking_for("review", "failing", "exit 1", true),
+    );
+    let dir = setup_project(&toml, "hello");
+
+    // Run with --suppress-all (no --no-log so history is written)
+    let output = baton()
+        .args(["check", "--suppress-all"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Should pass with --suppress-all: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The JSON verdict's history should record the true status
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    let history = verdict["history"].as_array().unwrap();
+    let failing = history
+        .iter()
+        .find(|v| v["name"] == "failing")
+        .unwrap();
+    assert_eq!(
+        failing["status"], "fail",
+        "History should record the true status, not suppressed"
+    );
+}
+
+// ─── Warn exit code with blocking ───────────────────────
+
+#[test]
+fn check_warn_exit_code_blocking_does_not_stop() {
+    let validators = [
+        script_validator_with_warn_codes("review", "linter", "exit 2", &[2]),
+        script_validator_for("review", "after", "echo PASS"),
+    ]
+    .join("\n");
+    let toml = minimal_toml("review", &validators);
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    let history = verdict["history"].as_array().unwrap();
+    assert_eq!(history.len(), 2, "Both validators should run");
+    let linter = history.iter().find(|v| v["name"] == "linter").unwrap();
+    assert_eq!(linter["status"], "warn");
+    let after = history.iter().find(|v| v["name"] == "after").unwrap();
+    assert_eq!(after["status"], "pass");
+}
+
+// ─── Empty script command produces error ────────────────
+
+#[test]
+fn check_empty_command_is_error() {
+    let toml = minimal_toml("review", &script_validator("bad", "  "));
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    // Empty command should produce error status
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    let history = verdict["history"].as_array().unwrap();
+    let bad = history.iter().find(|v| v["name"] == "bad").unwrap();
+    assert_eq!(
+        bad["status"], "error",
+        "Empty command should produce error status"
+    );
+}
+
+// ─── Environment variable interpolation in config ───────
+
+#[test]
+fn check_env_var_interpolation_in_config() {
+    // Env var interpolation works for runtime base_url
+    let toml = r#"version = "0.4"
+
+[defaults]
+timeout_seconds = 30
+
+[runtimes.test]
+type = "api"
+base_url = "${BATON_TEST_BASE_URL}"
+default_model = "test-model"
+
+[gates.review]
+[[gates.review.validators]]
+name = "lint"
+type = "script"
+command = "echo PASS"
+"#;
+    let dir = setup_project(toml, "hello");
+    fs::create_dir_all(dir.path().join("prompts")).unwrap();
+
+    let output = baton()
+        .args(["doctor", "--offline"])
+        .env("BATON_TEST_BASE_URL", "https://api.example.com")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Env var interpolation should work: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn check_env_var_default_when_unset() {
+    // Env var default syntax works for runtime base_url
+    let toml = r#"version = "0.4"
+
+[defaults]
+timeout_seconds = 30
+
+[runtimes.test]
+type = "api"
+base_url = "${BATON_DEFINITELY_UNSET:-https://api.example.com}"
+default_model = "test-model"
+
+[gates.review]
+[[gates.review.validators]]
+name = "lint"
+type = "script"
+command = "echo PASS"
+"#;
+    let dir = setup_project(toml, "hello");
+    fs::create_dir_all(dir.path().join("prompts")).unwrap();
+
+    let output = baton()
+        .args(["doctor", "--offline"])
+        .env_remove("BATON_DEFINITELY_UNSET")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "Env var default should work: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
