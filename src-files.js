@@ -1,0 +1,2 @@
+createSrcSidebar('[["baton",["",[["commands",[],["add.rs","check.rs","clean.rs","doctor.rs","history.rs","init.rs","list.rs","mod.rs","uninstall.rs","update.rs","version.rs"]],["exec",[],["dispatch.rs","file_pool.rs","human.rs","llm.rs","mod.rs","run_if.rs","script.rs","status.rs"]],["runtime",[],["api.rs","claude_code.rs","mod.rs","opencode.rs","openhands.rs","session_common.rs"]]],["config.rs","error.rs","history.rs","lib.rs","placeholder.rs","prompt.rs","provider.rs","types.rs","verdict_parser.rs"]]]]');
+//{"start":19,"fragment_lengths":[489]}

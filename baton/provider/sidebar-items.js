@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["ProviderError"],"fn":["extract_cost"],"struct":["CompletionResponse","ProviderClient"]};

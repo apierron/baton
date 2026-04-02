@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["SessionStatus"],"fn":["create_adapter"],"mod":["api","claude_code","opencode","openhands"],"struct":["CompletionRequest","CompletionResult","HealthResult","SessionConfig","SessionHandle","SessionResult"],"trait":["RuntimeAdapter"]};

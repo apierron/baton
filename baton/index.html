@@ -1,0 +1,199 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Baton 🪄"><title>baton - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../static.files/rustdoc-77263533.css"><meta name="rustdoc-vars" data-root-path="../" data-static-root-path="../static.files/" data-current-crate="baton" data-themes="" data-resource-suffix="" data-rustdoc-version="1.94.1 (e408947bf 2026-03-25)" data-channel="1.94.1" data-search-js="search-9e2438ea.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-c38705f0.js" ><script src="../static.files/storage-e2aeef58.js"></script><script defer src="../crates.js"></script><script defer src="../static.files/main-7bab91a1.js"></script><noscript><link rel="stylesheet" href="../static.files/noscript-ffcac47a.css"></noscript><link rel="alternate icon" type="image/png" href="../static.files/favicon-32x32-eab170b8.png"><link rel="icon" type="image/svg+xml" href="../static.files/favicon-044be391.svg"><style>
+  :root, :root.light {
+    --main-background-color: #f8f9fa;
+    --src-sidebar-background-color: #1a1a2e;
+  }
+  :root.rust {
+    --main-background-color: #f8f9fa;
+  }
+</style>
+
+</head><body class="rustdoc mod crate"><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Crate baton</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><h2><a href="../baton/index.html">baton</a><span class="version">0.7.2</span></h2></div><div class="sidebar-elems"><ul class="block"><li><a id="all-types" href="all.html">All Items</a></li></ul><section id="rustdoc-toc"><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#baton-" title="Baton 🪄">Baton 🪄</a><ul><li><a href="#a-tool-to-predictably-validate-sloppy-work" title="A tool to predictably validate sloppy work">A tool to predictably validate sloppy work</a></li><li><a href="#design-principles" title="Design Principles">Design Principles</a></li><li><a href="#installation" title="Installation">Installation</a></li><li><a href="#quick-start" title="Quick Start">Quick Start</a></li><li><a href="#cli-reference" title="CLI Reference">CLI Reference</a></li><li><a href="#validator-types" title="Validator Types">Validator Types</a></li><li><a href="#configuration" title="Configuration">Configuration</a></li><li><a href="#prompt-templates" title="Prompt Templates">Prompt Templates</a></li><li><a href="#invocation-history" title="Invocation History">Invocation History</a></li><li><a href="#testing" title="Testing">Testing</a></li><li><a href="#contributing" title="Contributing">Contributing</a></li><li><a href="#license" title="License">License</a></li></ul></li></ul><h3><a href="#modules">Crate Items</a></h3><ul class="block"><li><a href="#modules" title="Modules">Modules</a></li></ul></section><div id="rustdoc-modnav"></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content"><div class="main-heading"><h1>Crate <span>baton</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../src/baton/lib.rs.html#1-17">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><h2 id="baton-"><a class="doc-anchor" href="#baton-">§</a>Baton 🪄</h2>
+<p><a href="https://github.com/apierron/baton/actions/workflows/ci.yml"><img src="https://github.com/apierron/baton/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
+<a href="https://codecov.io/gh/apierron/baton"><img src="https://codecov.io/gh/apierron/baton/branch/master/graph/badge.svg" alt="codecov" /></a></p>
+<h3 id="a-tool-to-predictably-validate-sloppy-work"><a class="doc-anchor" href="#a-tool-to-predictably-validate-sloppy-work">§</a>A tool to predictably validate sloppy work</h3>
+<p>Baton runs a sequence of user-defined checks to validate input. These validators are scripts, LLM queries, or human approvals. Baton works through your requirements in order and returns a structured verdict: <strong>pass</strong> or <strong>fail</strong>.</p>
+<p>Running your validation step explicitly makes sure no one forgets to check their work. It can also help maintain guidelines or guardrails that aren’t always apparent.</p>
+<p>Like in a relay race, you’re only done after you <em><strong>pass the baton</strong></em>.</p>
+<h3 id="design-principles"><a class="doc-anchor" href="#design-principles">§</a>Design Principles</h3>
+<ul>
+<li><strong>User-defined.</strong> You describe what “valid” means for your domain. It all runs through a single config file, baton.toml.</li>
+<li><strong>Input-driven.</strong> Baton collects input files from CLI args, git diffs, or source declarations, then dispatches them to validators based on pattern matching.</li>
+<li><strong>Observable.</strong> Every step produces structured output. Invocation history is queryable and persisted locally in SQLite.</li>
+</ul>
+<h3 id="installation"><a class="doc-anchor" href="#installation">§</a>Installation</h3><h4 id="one-liner-preferred-method"><a class="doc-anchor" href="#one-liner-preferred-method">§</a>One-liner (preferred method)</h4><div class="example-wrap"><pre class="language-bash"><code>curl -fsSL https://raw.githubusercontent.com/apierron/baton/master/install.sh | bash</code></pre></div>
+<p>This installs to <code>~/.local/bin</code> by default. Set <code>BATON_INSTALL_DIR</code> to customize.</p>
+<details>
+<summary> Other installation methods (Homebrew, Cargo, binaries) </summary>
+<h4 id="homebrew-macos-and-linux"><a class="doc-anchor" href="#homebrew-macos-and-linux">§</a>Homebrew (macOS and Linux)</h4><div class="example-wrap"><pre class="language-bash"><code>brew install apierron/tap/baton</code></pre></div><h4 id="cargo"><a class="doc-anchor" href="#cargo">§</a>Cargo</h4><div class="example-wrap"><pre class="language-bash"><code>cargo install --git https://github.com/apierron/baton.git</code></pre></div><h4 id="prebuilt-binaries"><a class="doc-anchor" href="#prebuilt-binaries">§</a>Prebuilt binaries</h4>
+<p>Download builds directly from <a href="https://github.com/apierron/baton/releases">GitHub Releases</a>. Builds are available for:</p>
+<div><table><thead><tr><th>Target</th><th>Format</th></tr></thead><tbody>
+<tr><td><code>x86_64-unknown-linux-gnu</code></td><td><code>.tar.gz</code></td></tr>
+<tr><td><code>aarch64-unknown-linux-gnu</code></td><td><code>.tar.gz</code></td></tr>
+<tr><td><code>x86_64-apple-darwin</code></td><td><code>.tar.gz</code></td></tr>
+<tr><td><code>aarch64-apple-darwin</code></td><td><code>.tar.gz</code></td></tr>
+<tr><td><code>x86_64-pc-windows-msvc</code></td><td><code>.zip</code></td></tr>
+<tr><td><code>aarch64-pc-windows-msvc</code></td><td><code>.zip</code></td></tr>
+</tbody></table>
+</div></details>
+<h4 id="uninstall"><a class="doc-anchor" href="#uninstall">§</a>Uninstall</h4><div class="example-wrap"><pre class="language-bash"><code>baton uninstall</code></pre></div><details>
+<summary> Details </summary>
+<p>The <code>uninstall</code> command will remove the installation it is called from. Run with <code>--all</code> to look for all baton installations (Cargo, Homebrew, etc.), not just the one in path. Use <code>-y</code> to skip confirmation if you like to live dangerously.</p>
+<p>Alternatively, you can use the uninstall script:</p>
+<div class="example-wrap"><pre class="language-bash"><code>curl -fsSL https://raw.githubusercontent.com/apierron/baton/master/uninstall.sh | bash</code></pre></div></details>
+<h4 id="updating"><a class="doc-anchor" href="#updating">§</a>Updating</h4><div class="example-wrap"><pre class="language-bash"><code>baton update</code></pre></div><details>
+<summary> Details </summary>
+<p>To migrate to a specific version, use the <code>--version</code> flag:</p>
+<div class="example-wrap"><pre class="language-bash"><code>baton update --version &quot;0.4.2&quot;</code></pre></div>
+<p>Note that if you used a package manager (Homebrew or Cargo) in a previous step, you should use their tooling instead.</p>
+</details>
+<h3 id="quick-start"><a class="doc-anchor" href="#quick-start">§</a>Quick Start</h3><h4 id="1-initialize-a-project"><a class="doc-anchor" href="#1-initialize-a-project">§</a>1. Initialize a project</h4><div class="example-wrap"><pre class="language-bash"><code>baton init</code></pre></div>
+<p>This creates a <code>baton.toml</code> config, a <code>.baton/</code> directory for history and logs, and a <code>prompts/</code> directory with starter prompt templates. Run with <code>--minimal</code> to initialize without example prompts.</p>
+<h4 id="2-define-validators-and-gates"><a class="doc-anchor" href="#2-define-validators-and-gates">§</a>2. Define validators and gates</h4>
+<p>Edit <code>baton.toml</code>:</p>
+<div class="example-wrap"><pre class="language-toml"><code>version = &quot;0.7&quot;
+
+[validators.lint]
+type = &quot;script&quot;
+command = &quot;ruff check {file.path}&quot;
+input = &quot;*.py&quot;
+
+[validators.tests]
+type = &quot;script&quot;
+command = &quot;pytest --tb=short&quot;
+
+[gates.code-review]
+description = &quot;Validates code changes&quot;
+validators = [
+  { ref = &quot;lint&quot; },
+  { ref = &quot;tests&quot;, blocking = true },
+]</code></pre></div><h4 id="3-run-validators"><a class="doc-anchor" href="#3-run-validators">§</a>3. Run validators</h4><div class="example-wrap"><pre class="language-bash"><code>baton check ./output.py</code></pre></div>
+<p>Use <code>--diff</code> to validate changed files:</p>
+<div class="example-wrap"><pre class="language-bash"><code>baton check --diff HEAD~1</code></pre></div>
+<p>Or pipe a file list:</p>
+<div class="example-wrap"><pre class="language-bash"><code>git diff --name-only HEAD~1 | baton check --files -</code></pre></div><h4 id="4-view-results"><a class="doc-anchor" href="#4-view-results">§</a>4. View results</h4>
+<p>The result is printed as JSON by default:</p>
+<div class="example-wrap"><pre class="language-json"><code>{
+  &quot;gate_results&quot;: [
+    {
+      &quot;gate&quot;: &quot;code-review&quot;,
+      &quot;status&quot;: &quot;pass&quot;,
+      &quot;duration_ms&quot;: 1234,
+      &quot;validator_results&quot;: [
+        { &quot;name&quot;: &quot;lint&quot;, &quot;status&quot;: &quot;pass&quot;, &quot;duration_ms&quot;: 450 },
+        { &quot;name&quot;: &quot;tests&quot;, &quot;status&quot;: &quot;pass&quot;, &quot;duration_ms&quot;: 784 }
+      ]
+    }
+  ]
+}</code></pre></div>
+<p>Use <code>--format human</code> for a readable summary or <code>--format summary</code> for a one-line result.</p>
+<h3 id="cli-reference"><a class="doc-anchor" href="#cli-reference">§</a>CLI Reference</h3><div class="example-wrap"><pre class="language-text"><code>baton check            Run validators against input files
+baton init             Scaffold a new baton project
+baton add              Add a validator to baton.toml (interactive or via flags)
+baton list             List gates and validators in a config
+baton history          Query invocation history from the SQLite database
+baton doctor           Run comprehensive health checks on installation and project
+baton clean            Remove temporary files from .baton/tmp/
+baton update           Update baton to the latest version
+baton uninstall        Uninstall baton from this system
+baton version          Print version information</code></pre></div><h4 id="key-flags-for-baton-check"><a class="doc-anchor" href="#key-flags-for-baton-check">§</a>Key flags for <code>baton check</code></h4><div><table><thead><tr><th>Flag</th><th>Description</th></tr></thead><tbody>
+<tr><td><code>&lt;files...&gt;</code></td><td>Positional args: input files/directories (dirs walked recursively)</td></tr>
+<tr><td><code>--diff &lt;refspec&gt;</code></td><td>Add git-changed files to the input pool</td></tr>
+<tr><td><code>--files &lt;path|-&gt;</code></td><td>Read newline-separated file paths from a file or stdin</td></tr>
+<tr><td><code>--only &lt;selector&gt;</code></td><td>Run only matching gates/validators (<code>gate</code>, <code>gate.validator</code>, <code>@tag</code>)</td></tr>
+<tr><td><code>--skip &lt;selector&gt;</code></td><td>Skip matching gates/validators (same syntax as <code>--only</code>)</td></tr>
+<tr><td><code>--config &lt;path&gt;</code></td><td>Path to <code>baton.toml</code> (default: auto-discover)</td></tr>
+<tr><td><code>--format &lt;json|human|summary&gt;</code></td><td>Output format</td></tr>
+<tr><td><code>--dry-run</code></td><td>Print invocation plan and exit</td></tr>
+<tr><td><code>--timeout &lt;seconds&gt;</code></td><td>Override default timeout for all validators</td></tr>
+<tr><td><code>--no-log</code></td><td>Don’t write to history database</td></tr>
+<tr><td><code>--no-recursive</code></td><td>Disable recursive directory walking for positional args</td></tr>
+<tr><td><code>--verbose</code></td><td>Print each validator’s result as it completes</td></tr>
+<tr><td><code>--suppress-warnings</code></td><td>Treat warn statuses as pass</td></tr>
+<tr><td><code>--suppress-errors</code></td><td>Treat error statuses as pass</td></tr>
+<tr><td><code>--suppress-all</code></td><td>Suppress warnings, errors, and failures</td></tr>
+</tbody></table>
+</div><h3 id="validator-types"><a class="doc-anchor" href="#validator-types">§</a>Validator Types</h3><h4 id="script"><a class="doc-anchor" href="#script">§</a>Script</h4>
+<p>Runs a shell command. Exit code 0 = pass, nonzero = fail. An optional <code>warn_exit_codes</code> list maps specific exit codes to <code>warn</code>. Stdout/stderr is captured as feedback.</p>
+<div class="example-wrap"><pre class="language-toml"><code>[validators.lint]
+type = &quot;script&quot;
+command = &quot;ruff check {file.path}&quot;
+input = &quot;*.py&quot;
+warn_exit_codes = [2]</code></pre></div><h4 id="llm"><a class="doc-anchor" href="#llm">§</a>LLM</h4>
+<p>Invokes a language model for validation in one of two modes:</p>
+<ul>
+<li><strong>query</strong> (default) — Sends input files and a prompt template to a model via a runtime. The response is parsed for a structured verdict keyword (PASS/FAIL/WARN).</li>
+<li><strong>session</strong> — Launches a multi-turn agent session via a runtime adapter. The agent can use tools, read files, and produce a verdict grounded in observation.</li>
+</ul>
+<div class="example-wrap"><pre class="language-toml"><code>[validators.spec-check]
+type = &quot;llm&quot;
+mode = &quot;query&quot;
+prompt = &quot;spec-compliance&quot;
+runtime = &quot;default&quot;
+model = &quot;claude-haiku&quot;
+input = { code = &quot;*.py&quot;, spec = { path = &quot;spec.md&quot; } }</code></pre></div><h4 id="human"><a class="doc-anchor" href="#human">§</a>Human</h4>
+<p>Halts the pipeline and reports a failure with a human-review prompt as feedback. Baton does not block waiting for input — it fails with a clear signal that human review was requested.</p>
+<div class="example-wrap"><pre class="language-toml"><code>[validators.human-review]
+type = &quot;human&quot;
+prompt = &quot;Review this code for correctness&quot;</code></pre></div><h3 id="configuration"><a class="doc-anchor" href="#configuration">§</a>Configuration</h3>
+<p>Baton uses TOML for configuration. One file can define multiple named gates, shared defaults, and runtime settings.</p>
+<p>Config discovery walks upward from the current directory looking for <code>baton.toml</code>, stopping at <code>.git</code> boundaries.</p>
+<p>Environment variables can be interpolated in any string value:</p>
+<div class="example-wrap"><pre class="language-toml"><code>api_base = &quot;${CUSTOM_API_BASE:-https://api.anthropic.com}&quot;
+api_key_env = &quot;ANTHROPIC_API_KEY&quot;</code></pre></div><h3 id="prompt-templates"><a class="doc-anchor" href="#prompt-templates">§</a>Prompt Templates</h3>
+<p>Prompt templates use a <code>+++</code>-delimited TOML frontmatter format:</p>
+<div class="example-wrap"><pre class="language-text"><code>+++
+name = &quot;spec-compliance&quot;
+description = &quot;Check code against a specification&quot;
+expects = &quot;verdict&quot;
++++
+
+Review the following code against the provided specification.
+
+**Code:**
+{input.code.content}
+
+**Specification:**
+{input.spec.content}
+
+Respond with PASS if the code meets the specification, or FAIL with an explanation.</code></pre></div>
+<p>Available placeholders:</p>
+<ul>
+<li>Per-file: <code>{file}</code> (content), <code>{file.path}</code>, <code>{file.dir}</code>, <code>{file.name}</code>, <code>{file.stem}</code>, <code>{file.ext}</code>, <code>{file.content}</code> (alias for <code>{file}</code>)</li>
+<li>Batch: <code>{input}</code>, <code>{input.paths}</code></li>
+<li>Named: <code>{input.&lt;name&gt;}</code>, <code>{input.&lt;name&gt;.path}</code>, <code>{input.&lt;name&gt;.paths}</code>, <code>{input.&lt;name&gt;.name}</code>, <code>{input.&lt;name&gt;.content}</code></li>
+<li>Verdict: <code>{verdict.&lt;name&gt;.status}</code>, <code>{verdict.&lt;name&gt;.feedback}</code></li>
+</ul>
+<p>Three starter templates are included with <code>baton init</code>: spec-compliance, adversarial-review, and doc-completeness.</p>
+<h3 id="invocation-history"><a class="doc-anchor" href="#invocation-history">§</a>Invocation History</h3>
+<p>Baton persists every invocation to a local SQLite database (<code>.baton/history.db</code>). Query it:</p>
+<div class="example-wrap"><pre class="language-bash"><code># Last 10 invocations
+baton history --limit 10
+
+# Filter by file
+baton history --file src/main.rs
+
+# Filter by content hash
+baton history --hash sha256:abc123
+
+# Detail for a specific invocation
+baton history --invocation &lt;id&gt;</code></pre></div><h3 id="testing"><a class="doc-anchor" href="#testing">§</a>Testing</h3><div class="example-wrap"><pre class="language-bash"><code>cargo test</code></pre></div><div class="example-wrap"><pre class="language-bash"><code>cargo clippy --all-targets -- -D warnings</code></pre></div>
+<p>Coverage is tracked automatically via <a href="https://codecov.io/gh/apierron/baton">Codecov</a>.</p>
+<h3 id="contributing"><a class="doc-anchor" href="#contributing">§</a>Contributing</h3>
+<p>Contributions are welcome! Areas where help is especially appreciated:</p>
+<ul>
+<li><strong>Unimplemented features</strong> - Anything from the list above</li>
+<li><strong>Additional runtime adapters</strong> — Beyond OpenHands (e.g., Claude Code, Codex, etc.)</li>
+<li><strong>Additional validator types or prompt templates</strong> — Community-shared validators are always helpful</li>
+<li><strong>Bugs</strong> - Squash them all</li>
+</ul>
+<p>To get started:</p>
+<ol>
+<li>Fork the repository</li>
+<li>Create a feature branch</li>
+<li>Run <code>cargo test</code> and <code>cargo clippy --all-targets -- -D warnings</code> before submitting</li>
+<li>Open a pull request</li>
+</ol>
+<h3 id="license"><a class="doc-anchor" href="#license">§</a>License</h3>
+<p>MIT</p>
+</div></details><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><dl class="item-table"><dt><a class="mod" href="commands/index.html" title="mod baton::commands">commands</a></dt><dd>CLI command handlers for the <code>baton</code> binary.</dd><dt><a class="mod" href="config/index.html" title="mod baton::config">config</a></dt><dd>Configuration parsing and validation for baton.toml files.</dd><dt><a class="mod" href="error/index.html" title="mod baton::error">error</a></dt><dd>Error types for the baton crate.</dd><dt><a class="mod" href="exec/index.html" title="mod baton::exec">exec</a></dt><dd>Gate execution engine.</dd><dt><a class="mod" href="history/index.html" title="mod baton::history">history</a></dt><dd>SQLite-based verdict history storage.</dd><dt><a class="mod" href="placeholder/index.html" title="mod baton::placeholder">placeholder</a></dt><dd>Template placeholder resolution.</dd><dt><a class="mod" href="prompt/index.html" title="mod baton::prompt">prompt</a></dt><dd>Prompt template parsing and resolution.</dd><dt><a class="mod" href="provider/index.html" title="mod baton::provider">provider</a></dt><dd>HTTP client for OpenAI-compatible LLM provider APIs.</dd><dt><a class="mod" href="runtime/index.html" title="mod baton::runtime">runtime</a></dt><dd>Runtime adapter abstraction for validators.</dd><dt><a class="mod" href="types/index.html" title="mod baton::types">types</a></dt><dd>Core data types for baton: input files, invocations, verdicts, and run options.</dd><dt><a class="mod" href="verdict_parser/index.html" title="mod baton::verdict_parser">verdict_<wbr>parser</a></dt><dd>Verdict parsing from LLM/agent text output.</dd></dl></section></div></main></body></html>

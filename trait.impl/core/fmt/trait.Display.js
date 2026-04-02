@@ -1,0 +1,9 @@
+(function() {
+    const implementors = Object.fromEntries([["baton",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.94.1/core/fmt/trait.Display.html\" title=\"trait core::fmt::Display\">Display</a> for <a class=\"enum\" href=\"baton/error/enum.BatonError.html\" title=\"enum baton::error::BatonError\">BatonError</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.94.1/core/fmt/trait.Display.html\" title=\"trait core::fmt::Display\">Display</a> for <a class=\"enum\" href=\"baton/prompt/enum.TemplateExpects.html\" title=\"enum baton::prompt::TemplateExpects\">TemplateExpects</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.94.1/core/fmt/trait.Display.html\" title=\"trait core::fmt::Display\">Display</a> for <a class=\"enum\" href=\"baton/provider/enum.ProviderError.html\" title=\"enum baton::provider::ProviderError\">ProviderError</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.94.1/core/fmt/trait.Display.html\" title=\"trait core::fmt::Display\">Display</a> for <a class=\"enum\" href=\"baton/types/enum.Status.html\" title=\"enum baton::types::Status\">Status</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.94.1/core/fmt/trait.Display.html\" title=\"trait core::fmt::Display\">Display</a> for <a class=\"enum\" href=\"baton/types/enum.VerdictStatus.html\" title=\"enum baton::types::VerdictStatus\">VerdictStatus</a>",0]]]]);
+    if (window.register_implementors) {
+        window.register_implementors(implementors);
+    } else {
+        window.pending_implementors = implementors;
+    }
+})()
+//{"start":59,"fragment_lengths":[1370]}

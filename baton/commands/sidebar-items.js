@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["add","check","clean","doctor","history","init","list","uninstall","update","version"]};
