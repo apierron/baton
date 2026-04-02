@@ -188,6 +188,51 @@ SPEC-CF-PC-048: empty-validator-name-rejected
   An empty string for a validator name fails the `[A-Za-z0-9_-]+` check because the check requires `!raw_v.name.is_empty()`. The error message still says "invalid characters" even though the real problem is emptiness.
   test: config::tests::empty_validator_name
 
+### parse_config: env var resolution in validators
+
+Environment variable references (`${VAR}`) in validator string fields are resolved at parse time via `resolve_env_vars`. This applies to both top-level validators and inline validators. If resolution fails, parse_config returns ConfigError naming the validator and the failing field.
+
+SPEC-CF-PC-060: validator-command-env-vars-resolved
+  The `command` field in script validators is resolved through `resolve_env_vars` at parse time. If the referenced env var is unset (and has no default), parse_config returns ConfigError containing the validator name.
+  test: config::tests::env_var_resolved_in_command
+  test: config::tests::env_var_unset_in_command_errors
+
+SPEC-CF-PC-061: validator-working-dir-env-vars-resolved
+  The `working_dir` field is resolved through `resolve_env_vars` at parse time.
+  test: config::tests::env_var_resolved_in_working_dir
+
+SPEC-CF-PC-062: validator-env-values-env-vars-resolved
+  Each value in the `env` map is resolved through `resolve_env_vars` at parse time. Keys are not resolved.
+  test: config::tests::env_var_resolved_in_env_values
+
+SPEC-CF-PC-063: validator-prompt-env-vars-resolved
+  The `prompt` field in LLM/human validators is resolved through `resolve_env_vars` at parse time.
+  test: config::tests::env_var_resolved_in_prompt
+
+SPEC-CF-PC-064: validator-system-prompt-env-vars-resolved
+  The `system_prompt` field is resolved through `resolve_env_vars` at parse time.
+  test: config::tests::env_var_resolved_in_system_prompt
+
+### parse_config: env var resolution in defaults
+
+SPEC-CF-PC-065: defaults-paths-env-vars-resolved
+  The `prompts_dir`, `log_dir`, `history_db`, and `tmp_dir` fields in `[defaults]` are resolved through `resolve_env_vars` before being joined with `config_dir`.
+  test: config::tests::env_var_resolved_in_defaults_paths
+
+### parse_config: env var resolution in sources
+
+SPEC-CF-PC-066: source-root-env-vars-resolved
+  The `root` field in directory sources is resolved through `resolve_env_vars` at parse time.
+  test: config::tests::env_var_resolved_in_source_root
+
+SPEC-CF-PC-067: source-path-env-vars-resolved
+  The `path` field in file sources is resolved through `resolve_env_vars` at parse time.
+  test: config::tests::env_var_resolved_in_source_path
+
+SPEC-CF-PC-068: source-files-env-vars-resolved
+  Each entry in the `files` list is resolved through `resolve_env_vars` at parse time.
+  test: config::tests::env_var_resolved_in_source_files
+
 ---
 
 ## validate_config

@@ -3195,7 +3195,10 @@ fn check_no_recursive_skips_subdirectories() {
     // The --no-recursive flag limits file pool to only direct children of a directory.
     // We verify this by using --verbose, which prints file count info to stderr,
     // or by simply checking the command succeeds and the flag is accepted.
-    let toml = minimal_toml("review", &script_validator_for("review", "lint", "echo PASS"));
+    let toml = minimal_toml(
+        "review",
+        &script_validator_for("review", "lint", "echo PASS"),
+    );
     let dir = setup_project_with_files(
         &toml,
         &[("src/a.rs", "code"), ("src/sub/b.rs", "more code")],
@@ -3266,7 +3269,11 @@ fn check_diff_adds_changed_files() {
     let dir = setup_git_project(&toml, &[("src/main.rs", "fn main() {}")]);
 
     // Modify a file after the commit
-    fs::write(dir.path().join("src/main.rs"), "fn main() { println!(\"hi\"); }").unwrap();
+    fs::write(
+        dir.path().join("src/main.rs"),
+        "fn main() { println!(\"hi\"); }",
+    )
+    .unwrap();
 
     let output = baton()
         .args(["check", "--no-log", "--diff", "HEAD"])
@@ -3516,8 +3523,7 @@ env = { BATON_TEST_VAR = "hello123" }
 fn check_per_file_input_runs_per_match() {
     // Per-file input declaration is accepted and validator still runs
     // (dispatch planner not yet wired into gate execution, so all pool files are available)
-    let validators =
-        script_validator_with_input("review", "echo-name", "echo ok", "*.rs");
+    let validators = script_validator_with_input("review", "echo-name", "echo ok", "*.rs");
     let toml = minimal_toml("review", &validators);
     let dir = setup_project_with_files(
         &toml,
@@ -3604,12 +3610,8 @@ blocking = false
 #[test]
 #[cfg(not(windows))]
 fn check_batch_input_collects_all_matches() {
-    let validators = script_validator_with_batch_input(
-        "review",
-        "batch-echo",
-        "echo {input.paths}",
-        "*.rs",
-    );
+    let validators =
+        script_validator_with_batch_input("review", "batch-echo", "echo {input.paths}", "*.rs");
     let toml = minimal_toml("review", &validators);
     let dir = setup_project_with_files(&toml, &[("a.rs", "code a"), ("b.rs", "code b")]);
 
@@ -3691,7 +3693,13 @@ fn check_human_format_error_icon() {
     let dir = setup_project(&toml, "hello");
 
     let output = baton()
-        .args(["check", "--no-log", "--format", "human", "--suppress-errors"])
+        .args([
+            "check",
+            "--no-log",
+            "--format",
+            "human",
+            "--suppress-errors",
+        ])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -3834,10 +3842,7 @@ fn check_suppressed_status_recorded_as_true() {
     // The JSON verdict's history should record the true status
     let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
     let history = verdict["history"].as_array().unwrap();
-    let failing = history
-        .iter()
-        .find(|v| v["name"] == "failing")
-        .unwrap();
+    let failing = history.iter().find(|v| v["name"] == "failing").unwrap();
     assert_eq!(
         failing["status"], "fail",
         "History should record the true status, not suppressed"

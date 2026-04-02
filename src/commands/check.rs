@@ -146,7 +146,7 @@ pub fn cmd_check(
             worst_exit = exit;
         }
 
-        // Store in history
+        // Store verdict in history (v1 schema)
         if options.log {
             let db_path = &config.defaults.history_db;
             if let Err(e) = std::fs::create_dir_all(
@@ -168,6 +168,38 @@ pub fn cmd_check(
         }
 
         all_verdicts.push(verdict);
+    }
+
+    // Store invocation in v2 history schema
+    if options.log && !all_verdicts.is_empty() {
+        let invocation_result = InvocationResult {
+            id: String::new(), // store_invocation generates its own UUID
+            gate_results: all_verdicts
+                .iter()
+                .map(|v| GateResult {
+                    gate_name: v.gate.clone(),
+                    status: match v.status {
+                        VerdictStatus::Pass => Status::Pass,
+                        VerdictStatus::Fail => Status::Fail,
+                        VerdictStatus::Error => Status::Error,
+                    },
+                    validator_results: v.history.clone(),
+                    duration: std::time::Duration::from_millis(v.duration_ms as u64),
+                })
+                .collect(),
+            duration: std::time::Duration::from_millis(
+                all_verdicts.iter().map(|v| v.duration_ms as u64).sum(),
+            ),
+        };
+        let db_path = &config.defaults.history_db;
+        match history::init_db(db_path) {
+            Ok(conn) => {
+                if let Err(e) = history::store_invocation(&conn, &invocation_result) {
+                    eprintln!("Warning: could not store invocation: {e}");
+                }
+            }
+            Err(e) => eprintln!("Warning: could not open history database: {e}"),
+        }
     }
 
     // Output

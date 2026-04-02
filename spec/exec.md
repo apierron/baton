@@ -506,6 +506,27 @@ SPEC-EX-RG-027: llm-fail-blocks-gate
   A blocking LLM validator that returns FAIL stops the pipeline, same as a script validator.
   test: exec::tests::llm_completion_fail_blocks_gate
 
+### run_gate: dispatch integration
+
+run_gate uses plan_dispatch() to route files from the input pool to each validator according to its input declaration. Validators with InputDecl::None receive an empty inputs map. PerFile validators produce one invocation per matching file. Batch validators produce one invocation with all matching files. When multiple invocations are generated, results are aggregated.
+
+SPEC-EX-RG-030: dispatch-called-per-validator
+  For each validator in the pipeline (after filtering), run_gate calls plan_dispatch with the validator and the full input pool. The dispatch result determines how many times execute_validator is called.
+  test: exec::tests::dispatch_per_file_in_gate
+  test: exec::tests::dispatch_batch_in_gate
+
+SPEC-EX-RG-031: no-input-validator-receives-empty-map
+  Validators with InputDecl::None receive an empty inputs BTreeMap. They do not receive files under a "file" key.
+  test: exec::tests::dispatch_none_input_empty_map
+
+SPEC-EX-RG-032: dispatch-skip-on-no-matches
+  When plan_dispatch returns zero invocations (no files match), the validator is recorded as Status::Skip. Dispatch warnings are added to the verdict warnings list.
+  test: exec::tests::dispatch_no_match_skips
+
+SPEC-EX-RG-033: aggregate-multiple-invocations
+  When plan_dispatch produces N>1 invocations, each is executed independently. The results are aggregated: status is the worst among all results (Error > Fail > Warn > Pass > Skip), feedback is concatenated with separator, durations are summed, costs are summed.
+  test: exec::tests::dispatch_per_file_aggregates_results
+
 ---
 
 ## File collector

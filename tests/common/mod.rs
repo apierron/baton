@@ -250,9 +250,13 @@ pub fn setup_git_project(toml: &str, files: &[(&str, &str)]) -> TempDir {
         .unwrap();
     StdCommand::new("git")
         .args([
-            "-c", "user.name=test",
-            "-c", "user.email=test@test.com",
-            "commit", "-m", "initial",
+            "-c",
+            "user.name=test",
+            "-c",
+            "user.email=test@test.com",
+            "commit",
+            "-m",
+            "initial",
         ])
         .current_dir(dir.path())
         .output()
@@ -281,7 +285,12 @@ blocking = {blocking}
     )
 }
 
-pub fn script_validator_with_input(gate: &str, name: &str, command: &str, input_glob: &str) -> String {
+pub fn script_validator_with_input(
+    gate: &str,
+    name: &str,
+    command: &str,
+    input_glob: &str,
+) -> String {
     format!(
         r#"[[gates.{gate}.validators]]
 name = "{name}"
@@ -292,7 +301,12 @@ input = "{input_glob}"
     )
 }
 
-pub fn script_validator_with_batch_input(gate: &str, name: &str, command: &str, match_glob: &str) -> String {
+pub fn script_validator_with_batch_input(
+    gate: &str,
+    name: &str,
+    command: &str,
+    match_glob: &str,
+) -> String {
     format!(
         r#"[[gates.{gate}.validators]]
 name = "{name}"
@@ -303,7 +317,12 @@ input = {{ match = "{match_glob}", collect = true }}
     )
 }
 
-pub fn script_validator_with_working_dir(gate: &str, name: &str, command: &str, dir: &str) -> String {
+pub fn script_validator_with_working_dir(
+    gate: &str,
+    name: &str,
+    command: &str,
+    dir: &str,
+) -> String {
     format!(
         r#"[[gates.{gate}.validators]]
 name = "{name}"
@@ -314,7 +333,12 @@ working_dir = "{dir}"
     )
 }
 
-pub fn script_validator_with_env(gate: &str, name: &str, command: &str, env_pairs: &[(&str, &str)]) -> String {
+pub fn script_validator_with_env(
+    gate: &str,
+    name: &str,
+    command: &str,
+    env_pairs: &[(&str, &str)],
+) -> String {
     let env_entries: Vec<String> = env_pairs
         .iter()
         .map(|(k, v)| format!("{k} = \"{v}\""))

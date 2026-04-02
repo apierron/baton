@@ -640,7 +640,10 @@ fn e2e_full_lifecycle_init_add_doctor_check_history() {
     );
 
     // Step 2: overwrite with a working config that has a script validator
-    let toml = minimal_toml("review", &script_validator_for("review", "lint", "echo PASS"));
+    let toml = minimal_toml(
+        "review",
+        &script_validator_for("review", "lint", "echo PASS"),
+    );
     fs::write(dir.path().join("baton.toml"), &toml).unwrap();
     fs::write(dir.path().join("artifact.txt"), "test").unwrap();
 
@@ -760,10 +763,7 @@ fn e2e_human_in_mixed_pipeline() {
         "Human feedback should have prefix: {feedback}"
     );
 
-    let post = history
-        .iter()
-        .find(|v| v["name"] == "post-check")
-        .unwrap();
+    let post = history.iter().find(|v| v["name"] == "post-check").unwrap();
     assert_eq!(post["status"], "pass");
 }
 
@@ -789,8 +789,7 @@ fn e2e_llm_freeform_always_warns() {
         }));
     });
 
-    let validators =
-        llm_validator_freeform("review", "advisory", "Review this code", "default");
+    let validators = llm_validator_freeform("review", "advisory", "Review this code", "default");
     let runtime = runtime_toml("default", &server.url(""));
     let toml = format!(
         r#"version = "0.4"
@@ -837,7 +836,10 @@ tmp_dir = "./.baton/tmp"
 
 #[test]
 fn e2e_diff_workflow() {
-    let toml = minimal_toml("review", &script_validator_for("review", "lint", "echo PASS"));
+    let toml = minimal_toml(
+        "review",
+        &script_validator_for("review", "lint", "echo PASS"),
+    );
     let dir = setup_git_project(&toml, &[("src/main.rs", "fn main() {}")]);
 
     // Modify a file after the initial commit
@@ -888,10 +890,7 @@ fn e2e_suppressed_verdict_history_records_true_status() {
     // The verdict JSON should have the true status in history
     let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
     let history = verdict["history"].as_array().unwrap();
-    let failing = history
-        .iter()
-        .find(|v| v["name"] == "failing")
-        .unwrap();
+    let failing = history.iter().find(|v| v["name"] == "failing").unwrap();
     assert_eq!(
         failing["status"], "fail",
         "History should record true 'fail' status even when suppressed"

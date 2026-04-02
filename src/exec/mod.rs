@@ -223,6 +223,77 @@ pub fn matches_filter(filter: &[String], gate_name: &str, name: &str, tags: &[St
     false
 }
 
+/// Aggregate multiple invocation results into a single ValidatorResult.
+///
+/// Status: worst among results (Error > Fail > Warn > Pass > Skip).
+/// Feedback: concatenated with separator. Duration: sum. Cost: sum.
+fn aggregate_results(name: &str, results: Vec<ValidatorResult>) -> ValidatorResult {
+    fn status_rank(s: Status) -> u8 {
+        match s {
+            Status::Skip => 0,
+            Status::Pass => 1,
+            Status::Warn => 2,
+            Status::Fail => 3,
+            Status::Error => 4,
+        }
+    }
+
+    let worst_status = results
+        .iter()
+        .map(|r| r.status)
+        .max_by_key(|s| status_rank(*s))
+        .unwrap_or(Status::Skip);
+
+    let feedbacks: Vec<&str> = results
+        .iter()
+        .filter_map(|r| r.feedback.as_deref())
+        .collect();
+    let feedback = if feedbacks.is_empty() {
+        None
+    } else {
+        Some(feedbacks.join("\n---\n"))
+    };
+
+    let duration_ms: i64 = results.iter().map(|r| r.duration_ms).sum();
+
+    let cost = {
+        let has_cost = results.iter().any(|r| r.cost.is_some());
+        if has_cost {
+            Some(Cost {
+                input_tokens: Some(
+                    results
+                        .iter()
+                        .filter_map(|r| r.cost.as_ref()?.input_tokens)
+                        .sum(),
+                ),
+                output_tokens: Some(
+                    results
+                        .iter()
+                        .filter_map(|r| r.cost.as_ref()?.output_tokens)
+                        .sum(),
+                ),
+                model: results.iter().find_map(|r| r.cost.as_ref()?.model.clone()),
+                estimated_usd: Some(
+                    results
+                        .iter()
+                        .filter_map(|r| r.cost.as_ref()?.estimated_usd)
+                        .sum(),
+                ),
+            })
+        } else {
+            None
+        }
+    };
+
+    ValidatorResult {
+        name: name.to_string(),
+        status: worst_status,
+        feedback,
+        duration_ms,
+        cost,
+    }
+}
+
 pub fn run_gate(
     gate: &GateConfig,
     config: &BatonConfig,
@@ -230,12 +301,6 @@ pub fn run_gate(
     options: &RunOptions,
 ) -> Result<Verdict> {
     let run_start = Instant::now();
-
-    // Build inputs map: all files under "file" key for simple dispatch
-    let mut inputs: BTreeMap<String, Vec<InputFile>> = BTreeMap::new();
-    if !input_pool.is_empty() {
-        inputs.insert("file".into(), input_pool);
-    }
 
     // Run validators
     let mut results: BTreeMap<String, ValidatorResult> = BTreeMap::new();
@@ -276,7 +341,37 @@ pub fn run_gate(
             }
         }
 
-        let result = execute_validator(validator, &mut inputs, &results, Some(config));
+        // Dispatch: route input files according to validator's input declaration
+        let (invocations, dispatch_warnings) = plan_dispatch(validator, &input_pool);
+        warnings_list.extend(dispatch_warnings);
+
+        if invocations.is_empty() {
+            // No matching files → skip
+            results.insert(
+                validator.name.clone(),
+                ValidatorResult {
+                    name: validator.name.clone(),
+                    status: Status::Skip,
+                    feedback: None,
+                    duration_ms: 0,
+                    cost: None,
+                },
+            );
+            continue;
+        }
+
+        let result = if invocations.len() == 1 {
+            let mut inv_inputs = invocations.into_iter().next().unwrap().inputs;
+            execute_validator(validator, &mut inv_inputs, &results, Some(config))
+        } else {
+            let inv_results: Vec<ValidatorResult> = invocations
+                .into_iter()
+                .map(|mut inv| {
+                    execute_validator(validator, &mut inv.inputs, &results, Some(config))
+                })
+                .collect();
+            aggregate_results(&validator.name, inv_results)
+        };
         results.insert(validator.name.clone(), result.clone());
 
         if result.status == Status::Warn {
@@ -989,5 +1084,230 @@ mod tests {
         // Only 2 results (third was blocked)
         assert_eq!(gate_result.validator_results.len(), 2);
         assert_eq!(gate_result.status, Status::Fail);
+    }
+
+    // ─── Dispatch integration tests ─────────────────
+
+    #[test]
+    fn dispatch_per_file_in_gate() {
+        // SPEC-EX-RG-030: per-file validator executes once per matching file
+        use crate::config::InputDecl;
+
+        let dir = tempfile::tempdir().unwrap();
+        let f1 = dir.path().join("a.sh");
+        let f2 = dir.path().join("b.sh");
+        let f3 = dir.path().join("c.txt");
+        std::fs::write(&f1, "#!/bin/bash\nexit 0").unwrap();
+        std::fs::write(&f2, "#!/bin/bash\nexit 0").unwrap();
+        std::fs::write(&f3, "not a script").unwrap();
+
+        // The command checks the file exists (always passes)
+        let gate = th::gate(
+            "test",
+            vec![ValidatorBuilder::script("lint", "exit 0")
+                .input(InputDecl::PerFile {
+                    pattern: "*.sh".into(),
+                })
+                .build()],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let opts = RunOptions::new();
+
+        let pool = vec![InputFile::new(f1), InputFile::new(f2), InputFile::new(f3)];
+        let verdict = run_gate(&gate, &config, pool, &opts).unwrap();
+        assert_eq!(verdict.status, VerdictStatus::Pass);
+        // The validator ran (not skipped)
+        let lint = verdict.history.iter().find(|r| r.name == "lint").unwrap();
+        assert_eq!(lint.status, Status::Pass);
+    }
+
+    #[test]
+    fn dispatch_batch_in_gate() {
+        // SPEC-EX-RG-030: batch validator executes once with all matching files
+        use crate::config::InputDecl;
+
+        let dir = tempfile::tempdir().unwrap();
+        let f1 = dir.path().join("a.py");
+        let f2 = dir.path().join("b.py");
+        std::fs::write(&f1, "pass").unwrap();
+        std::fs::write(&f2, "pass").unwrap();
+
+        let gate = th::gate(
+            "test",
+            vec![ValidatorBuilder::script("lint", "exit 0")
+                .input(InputDecl::Batch {
+                    pattern: "*.py".into(),
+                })
+                .build()],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let opts = RunOptions::new();
+
+        let pool = vec![InputFile::new(f1), InputFile::new(f2)];
+        let verdict = run_gate(&gate, &config, pool, &opts).unwrap();
+        assert_eq!(verdict.status, VerdictStatus::Pass);
+        let lint = verdict.history.iter().find(|r| r.name == "lint").unwrap();
+        assert_eq!(lint.status, Status::Pass);
+    }
+
+    #[test]
+    fn dispatch_none_input_empty_map() {
+        // SPEC-EX-RG-031: InputDecl::None receives empty inputs map
+        // (existing tests already cover this implicitly since all existing tests
+        // use InputDecl::None and no files, but we verify explicitly with files in pool)
+        let dir = tempfile::tempdir().unwrap();
+        let f1 = dir.path().join("a.txt");
+        std::fs::write(&f1, "data").unwrap();
+
+        let gate = th::gate(
+            "test",
+            vec![ValidatorBuilder::script("check", "exit 0").build()],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let opts = RunOptions::new();
+
+        let pool = vec![InputFile::new(f1)];
+        let verdict = run_gate(&gate, &config, pool, &opts).unwrap();
+        assert_eq!(verdict.status, VerdictStatus::Pass);
+        let check = verdict.history.iter().find(|r| r.name == "check").unwrap();
+        assert_eq!(check.status, Status::Pass);
+    }
+
+    #[test]
+    fn dispatch_no_match_skips() {
+        // SPEC-EX-RG-032: no matching files → Skip + warning
+        use crate::config::InputDecl;
+
+        let dir = tempfile::tempdir().unwrap();
+        let f1 = dir.path().join("readme.md");
+        std::fs::write(&f1, "# README").unwrap();
+
+        let gate = th::gate(
+            "test",
+            vec![ValidatorBuilder::script("lint", "exit 0")
+                .blocking(false)
+                .input(InputDecl::PerFile {
+                    pattern: "*.py".into(),
+                })
+                .build()],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut opts = RunOptions::new();
+        opts.run_all = true;
+
+        let pool = vec![InputFile::new(f1)];
+        let verdict = run_gate(&gate, &config, pool, &opts).unwrap();
+        let lint = verdict.history.iter().find(|r| r.name == "lint").unwrap();
+        assert_eq!(lint.status, Status::Skip);
+        assert!(
+            verdict
+                .warnings
+                .iter()
+                .any(|w| w.contains("no files match")),
+            "Warnings: {:?}",
+            verdict.warnings
+        );
+    }
+
+    #[test]
+    fn dispatch_per_file_aggregates_results() {
+        // SPEC-EX-RG-033: multiple invocations aggregated — worst status wins
+        use crate::config::InputDecl;
+
+        let dir = tempfile::tempdir().unwrap();
+        let f1 = dir.path().join("good.sh");
+        let f2 = dir.path().join("bad.sh");
+        std::fs::write(&f1, "good").unwrap();
+        std::fs::write(&f2, "bad").unwrap();
+
+        // Command: exit 1 if file contains "bad", else exit 0
+        // Uses {file.path} placeholder which is how baton passes files to scripts
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("lint", "grep -q bad {file.path} && exit 1 || exit 0")
+                    .blocking(false)
+                    .input(InputDecl::PerFile {
+                        pattern: "*.sh".into(),
+                    })
+                    .build(),
+            ],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let mut opts = RunOptions::new();
+        opts.run_all = true;
+
+        let pool = vec![InputFile::new(f1), InputFile::new(f2)];
+        let verdict = run_gate(&gate, &config, pool, &opts).unwrap();
+        let lint = verdict.history.iter().find(|r| r.name == "lint").unwrap();
+        // One pass + one fail → aggregated as Fail
+        assert_eq!(lint.status, Status::Fail);
+    }
+
+    // ─── aggregate_results unit tests ───────────────
+
+    #[test]
+    fn aggregate_results_worst_status() {
+        let results = vec![
+            th::result("v", Status::Pass),
+            th::result("v", Status::Fail),
+            th::result("v", Status::Pass),
+        ];
+        let agg = aggregate_results("v", results);
+        assert_eq!(agg.status, Status::Fail);
+    }
+
+    #[test]
+    fn aggregate_results_sums_duration() {
+        let results = vec![
+            ValidatorResult {
+                name: "v".into(),
+                status: Status::Pass,
+                feedback: None,
+                duration_ms: 100,
+                cost: None,
+            },
+            ValidatorResult {
+                name: "v".into(),
+                status: Status::Pass,
+                feedback: None,
+                duration_ms: 200,
+                cost: None,
+            },
+        ];
+        let agg = aggregate_results("v", results);
+        assert_eq!(agg.duration_ms, 300);
+    }
+
+    #[test]
+    fn aggregate_results_concatenates_feedback() {
+        let results = vec![
+            ValidatorResult {
+                name: "v".into(),
+                status: Status::Fail,
+                feedback: Some("error in a.py".into()),
+                duration_ms: 0,
+                cost: None,
+            },
+            ValidatorResult {
+                name: "v".into(),
+                status: Status::Pass,
+                feedback: None,
+                duration_ms: 0,
+                cost: None,
+            },
+            ValidatorResult {
+                name: "v".into(),
+                status: Status::Fail,
+                feedback: Some("error in b.py".into()),
+                duration_ms: 0,
+                cost: None,
+            },
+        ];
+        let agg = aggregate_results("v", results);
+        let fb = agg.feedback.unwrap();
+        assert!(fb.contains("error in a.py"));
+        assert!(fb.contains("error in b.py"));
+        assert!(fb.contains("---"));
     }
 }

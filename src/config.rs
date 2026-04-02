@@ -293,6 +293,10 @@ pub struct RawValidator {
     pub sandbox: Option<bool>,
     #[serde(default)]
     pub max_iterations: Option<u32>,
+
+    // Input declarations
+    #[serde(default)]
+    pub input: Option<toml::Value>,
 }
 
 // ─── Validated config structures ─────────────────────────
@@ -472,6 +476,14 @@ impl ConfigValidation {
 
 // ─── Parsing ─────────────────────────────────────────────
 
+/// Resolve env vars in an optional string field, mapping errors to ConfigError with context.
+fn resolve_opt(field: &Option<String>, ctx: &str) -> Result<Option<String>> {
+    field
+        .as_ref()
+        .map(|s| resolve_env_vars(s).map_err(|e| BatonError::ConfigError(format!("{ctx}: {e}"))))
+        .transpose()
+}
+
 /// Parse a baton.toml from a string, with `config_dir` as the base for relative paths.
 ///
 /// # Examples
@@ -516,10 +528,22 @@ pub fn parse_config(toml_str: &str, config_dir: &Path) -> Result<BatonConfig> {
     let defaults = Defaults {
         timeout_seconds: raw.defaults.timeout_seconds,
         blocking: raw.defaults.blocking,
-        prompts_dir: config_dir.join(&raw.defaults.prompts_dir),
-        log_dir: config_dir.join(&raw.defaults.log_dir),
-        history_db: config_dir.join(&raw.defaults.history_db),
-        tmp_dir: config_dir.join(&raw.defaults.tmp_dir),
+        prompts_dir: config_dir.join(
+            resolve_env_vars(&raw.defaults.prompts_dir)
+                .map_err(|e| BatonError::ConfigError(format!("defaults.prompts_dir: {e}")))?,
+        ),
+        log_dir: config_dir.join(
+            resolve_env_vars(&raw.defaults.log_dir)
+                .map_err(|e| BatonError::ConfigError(format!("defaults.log_dir: {e}")))?,
+        ),
+        history_db: config_dir.join(
+            resolve_env_vars(&raw.defaults.history_db)
+                .map_err(|e| BatonError::ConfigError(format!("defaults.history_db: {e}")))?,
+        ),
+        tmp_dir: config_dir.join(
+            resolve_env_vars(&raw.defaults.tmp_dir)
+                .map_err(|e| BatonError::ConfigError(format!("defaults.tmp_dir: {e}")))?,
+        ),
     };
 
     let mut runtimes = BTreeMap::new();
@@ -579,21 +603,35 @@ pub fn parse_config(toml_str: &str, config_dir: &Path) -> Result<BatonConfig> {
         }
 
         let source_type = if let Some(ref root) = raw_s.root {
+            let resolved_root = resolve_env_vars(root)
+                .map_err(|e| BatonError::ConfigError(format!("Source '{name}': root: {e}")))?;
             SourceType::Directory {
-                root: root.clone(),
+                root: resolved_root,
                 include: raw_s.include.clone().unwrap_or_else(|| vec!["**/*".into()]),
                 exclude: raw_s.exclude.clone().unwrap_or_default(),
             }
         } else if let Some(ref path) = raw_s.path {
-            SourceType::File { path: path.clone() }
+            let resolved_path = resolve_env_vars(path)
+                .map_err(|e| BatonError::ConfigError(format!("Source '{name}': path: {e}")))?;
+            SourceType::File {
+                path: resolved_path,
+            }
         } else if let Some(ref files) = raw_s.files {
             if files.is_empty() {
                 return Err(BatonError::ConfigError(format!(
                     "Source '{name}': 'files' must not be empty."
                 )));
             }
+            let resolved_files: std::result::Result<Vec<String>, _> = files
+                .iter()
+                .map(|f| {
+                    resolve_env_vars(f).map_err(|e| {
+                        BatonError::ConfigError(format!("Source '{name}': files: {e}"))
+                    })
+                })
+                .collect();
             SourceType::FileList {
-                files: files.clone(),
+                files: resolved_files?,
             }
         } else {
             unreachable!()
@@ -798,6 +836,21 @@ fn parse_validator_def(
 
     let input = parse_input_decl(name, &raw_v.input)?;
 
+    let ctx = |field: &str| format!("Validator '{name}': {field}");
+    let resolved_command = resolve_opt(&raw_v.command, &ctx("command"))?;
+    let resolved_working_dir = resolve_opt(&raw_v.working_dir, &ctx("working_dir"))?;
+    let resolved_prompt = resolve_opt(&raw_v.prompt, &ctx("prompt"))?;
+    let resolved_system_prompt = resolve_opt(&raw_v.system_prompt, &ctx("system_prompt"))?;
+    let resolved_env = raw_v
+        .env
+        .iter()
+        .map(|(k, v)| {
+            let resolved = resolve_env_vars(v)
+                .map_err(|e| BatonError::ConfigError(format!("{}: {e}", ctx("env"))))?;
+            Ok((k.clone(), resolved))
+        })
+        .collect::<Result<BTreeMap<String, String>>>()?;
+
     Ok(ValidatorConfig {
         name: name.to_string(),
         validator_type: vtype,
@@ -805,19 +858,19 @@ fn parse_validator_def(
         run_if: None,
         timeout_seconds: raw_v.timeout_seconds.unwrap_or(defaults.timeout_seconds),
         tags: raw_v.tags.clone(),
-        command: raw_v.command.clone(),
+        command: resolved_command,
         warn_exit_codes: raw_v.warn_exit_codes.clone(),
-        working_dir: raw_v.working_dir.clone(),
-        env: raw_v.env.clone(),
+        working_dir: resolved_working_dir,
+        env: resolved_env,
         mode,
         runtimes,
         model: raw_v.model.clone(),
-        prompt: raw_v.prompt.clone(),
+        prompt: resolved_prompt,
         context_refs: vec![],
         temperature: raw_v.temperature.unwrap_or(0.0),
         response_format,
         max_tokens: raw_v.max_tokens,
-        system_prompt: raw_v.system_prompt.clone(),
+        system_prompt: resolved_system_prompt,
         sandbox: raw_v.sandbox,
         max_iterations: raw_v.max_iterations,
         input,
@@ -892,6 +945,22 @@ fn parse_inline_validator(raw_v: &RawValidator, defaults: &Defaults) -> Result<V
         .map(|sol| sol.0.clone())
         .unwrap_or_default();
 
+    let name = &raw_v.name;
+    let ctx = |field: &str| format!("Validator '{name}': {field}");
+    let resolved_command = resolve_opt(&raw_v.command, &ctx("command"))?;
+    let resolved_working_dir = resolve_opt(&raw_v.working_dir, &ctx("working_dir"))?;
+    let resolved_prompt = resolve_opt(&raw_v.prompt, &ctx("prompt"))?;
+    let resolved_system_prompt = resolve_opt(&raw_v.system_prompt, &ctx("system_prompt"))?;
+    let resolved_env = raw_v
+        .env
+        .iter()
+        .map(|(k, v)| {
+            let resolved = resolve_env_vars(v)
+                .map_err(|e| BatonError::ConfigError(format!("{}: {e}", ctx("env"))))?;
+            Ok((k.clone(), resolved))
+        })
+        .collect::<Result<BTreeMap<String, String>>>()?;
+
     Ok(ValidatorConfig {
         name: raw_v.name.clone(),
         validator_type: vtype,
@@ -899,22 +968,22 @@ fn parse_inline_validator(raw_v: &RawValidator, defaults: &Defaults) -> Result<V
         run_if: raw_v.run_if.clone(),
         timeout_seconds: raw_v.timeout_seconds.unwrap_or(defaults.timeout_seconds),
         tags: raw_v.tags.clone(),
-        command: raw_v.command.clone(),
+        command: resolved_command,
         warn_exit_codes: raw_v.warn_exit_codes.clone(),
-        working_dir: raw_v.working_dir.clone(),
-        env: raw_v.env.clone(),
+        working_dir: resolved_working_dir,
+        env: resolved_env,
         mode,
         runtimes,
         model: raw_v.model.clone(),
-        prompt: raw_v.prompt.clone(),
+        prompt: resolved_prompt,
         context_refs: raw_v.context_refs.clone(),
         temperature: raw_v.temperature.unwrap_or(0.0),
         response_format,
         max_tokens: raw_v.max_tokens,
-        system_prompt: raw_v.system_prompt.clone(),
+        system_prompt: resolved_system_prompt,
         sandbox: raw_v.sandbox,
         max_iterations: raw_v.max_iterations,
-        input: InputDecl::None,
+        input: parse_input_decl(name, &raw_v.input)?,
     })
 }
 
@@ -2735,5 +2804,244 @@ command = "echo ok"
             config.runtimes["default"].base_url,
             "https://api.example.com/"
         );
+    }
+
+    // ─── Env var interpolation in validators ────────
+
+    #[test]
+    fn env_var_resolved_in_command() {
+        // SPEC-CF-PC-060
+        std::env::set_var("BATON_TEST_CMD", "/usr/bin/mycheck");
+        let toml = r#"
+version = "0.7"
+[validators.lint]
+type = "script"
+command = "${BATON_TEST_CMD} --strict"
+
+[gates.test]
+validators = [{ ref = "lint" }]
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        assert_eq!(
+            config.gates["test"].validators[0].command.as_deref(),
+            Some("/usr/bin/mycheck --strict")
+        );
+        std::env::remove_var("BATON_TEST_CMD");
+    }
+
+    #[test]
+    fn env_var_unset_in_command_errors() {
+        // SPEC-CF-PC-060
+        std::env::remove_var("BATON_TEST_UNSET_CMD_XYZ");
+        let toml = r#"
+version = "0.7"
+[validators.lint]
+type = "script"
+command = "${BATON_TEST_UNSET_CMD_XYZ}"
+
+[gates.test]
+validators = [{ ref = "lint" }]
+"#;
+        let result = parse_config(toml, &config_dir());
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("lint"), "Error: {err}");
+        assert!(err.contains("command"), "Error: {err}");
+    }
+
+    #[test]
+    fn env_var_resolved_in_working_dir() {
+        // SPEC-CF-PC-061
+        std::env::set_var("BATON_TEST_WDIR", "/tmp/work");
+        let toml = r#"
+version = "0.7"
+[validators.lint]
+type = "script"
+command = "echo ok"
+working_dir = "${BATON_TEST_WDIR}"
+
+[gates.test]
+validators = [{ ref = "lint" }]
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        assert_eq!(
+            config.gates["test"].validators[0].working_dir.as_deref(),
+            Some("/tmp/work")
+        );
+        std::env::remove_var("BATON_TEST_WDIR");
+    }
+
+    #[test]
+    fn env_var_resolved_in_env_values() {
+        // SPEC-CF-PC-062
+        std::env::set_var("BATON_TEST_ENVVAL", "resolved_value");
+        let toml = r#"
+version = "0.7"
+[validators.lint]
+type = "script"
+command = "echo ok"
+env = { MY_KEY = "${BATON_TEST_ENVVAL}" }
+
+[gates.test]
+validators = [{ ref = "lint" }]
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        assert_eq!(
+            config.gates["test"].validators[0]
+                .env
+                .get("MY_KEY")
+                .map(|s| s.as_str()),
+            Some("resolved_value")
+        );
+        std::env::remove_var("BATON_TEST_ENVVAL");
+    }
+
+    #[test]
+    fn env_var_resolved_in_prompt() {
+        // SPEC-CF-PC-063
+        std::env::set_var("BATON_TEST_PROMPT", "Check this code");
+        let toml = r#"
+version = "0.7"
+[runtimes.default]
+type = "cli"
+base_url = "claude"
+
+[validators.review]
+type = "llm"
+prompt = "${BATON_TEST_PROMPT}"
+runtime = "default"
+
+[gates.test]
+validators = [{ ref = "review" }]
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        assert_eq!(
+            config.gates["test"].validators[0].prompt.as_deref(),
+            Some("Check this code")
+        );
+        std::env::remove_var("BATON_TEST_PROMPT");
+    }
+
+    #[test]
+    fn env_var_resolved_in_system_prompt() {
+        // SPEC-CF-PC-064
+        std::env::set_var("BATON_TEST_SYSPROMPT", "You are a reviewer");
+        let toml = r#"
+version = "0.7"
+[runtimes.default]
+type = "cli"
+base_url = "claude"
+
+[validators.review]
+type = "llm"
+prompt = "review"
+system_prompt = "${BATON_TEST_SYSPROMPT}"
+runtime = "default"
+
+[gates.test]
+validators = [{ ref = "review" }]
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        assert_eq!(
+            config.gates["test"].validators[0].system_prompt.as_deref(),
+            Some("You are a reviewer")
+        );
+        std::env::remove_var("BATON_TEST_SYSPROMPT");
+    }
+
+    #[test]
+    fn env_var_resolved_in_defaults_paths() {
+        // SPEC-CF-PC-065
+        std::env::set_var("BATON_TEST_LOGDIR", "custom-logs");
+        let toml = r#"
+version = "0.7"
+[defaults]
+log_dir = "${BATON_TEST_LOGDIR}"
+
+[gates.test]
+[[gates.test.validators]]
+name = "check"
+type = "script"
+command = "echo ok"
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        assert!(
+            config.defaults.log_dir.ends_with("custom-logs"),
+            "log_dir: {:?}",
+            config.defaults.log_dir
+        );
+        std::env::remove_var("BATON_TEST_LOGDIR");
+    }
+
+    #[test]
+    fn env_var_resolved_in_source_root() {
+        // SPEC-CF-PC-066
+        std::env::set_var("BATON_TEST_SRCROOT", "/home/user/project");
+        let toml = r#"
+version = "0.7"
+[sources.code]
+root = "${BATON_TEST_SRCROOT}"
+
+[gates.test]
+[[gates.test.validators]]
+name = "check"
+type = "script"
+command = "echo ok"
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        match &config.sources["code"].source_type {
+            SourceType::Directory { root, .. } => assert_eq!(root, "/home/user/project"),
+            other => panic!("Expected Directory, got {other:?}"),
+        }
+        std::env::remove_var("BATON_TEST_SRCROOT");
+    }
+
+    #[test]
+    fn env_var_resolved_in_source_path() {
+        // SPEC-CF-PC-067
+        std::env::set_var("BATON_TEST_SRCPATH", "/etc/config.toml");
+        let toml = r#"
+version = "0.7"
+[sources.cfg]
+path = "${BATON_TEST_SRCPATH}"
+
+[gates.test]
+[[gates.test.validators]]
+name = "check"
+type = "script"
+command = "echo ok"
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        match &config.sources["cfg"].source_type {
+            SourceType::File { path } => assert_eq!(path, "/etc/config.toml"),
+            other => panic!("Expected File, got {other:?}"),
+        }
+        std::env::remove_var("BATON_TEST_SRCPATH");
+    }
+
+    #[test]
+    fn env_var_resolved_in_source_files() {
+        // SPEC-CF-PC-068
+        std::env::set_var("BATON_TEST_FILE1", "/tmp/a.txt");
+        let toml = r#"
+version = "0.7"
+[sources.data]
+files = ["${BATON_TEST_FILE1}", "b.txt"]
+
+[gates.test]
+[[gates.test.validators]]
+name = "check"
+type = "script"
+command = "echo ok"
+"#;
+        let config = parse_config(toml, &config_dir()).unwrap();
+        match &config.sources["data"].source_type {
+            SourceType::FileList { files } => {
+                assert_eq!(files[0], "/tmp/a.txt");
+                assert_eq!(files[1], "b.txt");
+            }
+            other => panic!("Expected FileList, got {other:?}"),
+        }
+        std::env::remove_var("BATON_TEST_FILE1");
     }
 }

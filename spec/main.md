@@ -205,8 +205,9 @@ SPEC-MN-CK-080: run-gate-error-exits-2
   test: IMPLICIT via cli tests with broken validators
 
 SPEC-MN-CK-081: verdict-stored-in-history
-  When `options.log` is true, the verdict is stored via `history::init_db` + `history::store_invocation`. History directory is created if needed.
+  When `options.log` is true, each verdict is stored via `history::store_verdict` (v1 schema) and the overall invocation is stored via `history::store_invocation` (v2 schema). History directory is created if needed.
   test: cli::history_without_gate_filter (verifies stored verdict is queryable)
+  test: cli::history_invocation_flag (verifies v2 invocation detail is queryable)
 
 SPEC-MN-CK-082: no-log-skips-history
   When `--no-log` is set, `options.log` is false and history storage is skipped entirely.
@@ -390,15 +391,15 @@ SPEC-MN-HY-002: db-init-error-exits-2
 
 SPEC-MN-HY-003: file-flag-uses-query-by-file
   When `--file` is provided, `history::query_by_file` is called to search validator runs by file path.
-  test: TODO
+  test: cli::history_file_flag
 
 SPEC-MN-HY-004: hash-flag-uses-query-by-hash
   When `--hash` is provided, `history::query_by_hash` is called to search validator runs by content hash.
-  test: TODO
+  test: cli::history_hash_flag
 
 SPEC-MN-HY-005: invocation-flag-uses-query-invocation
-  When `--invocation <id>` is provided, `history::query_invocation` is called for detail on a specific invocation.
-  test: TODO
+  When `--invocation <id>` is provided, `history::query_invocation` is called for detail on a specific invocation. Output includes invocation ID, timestamp, baton version, gate results with per-status counts, and individual validator run details.
+  test: cli::history_invocation_flag
 
 SPEC-MN-HY-006: default-uses-query-recent
   Without `--file`, `--hash`, or `--invocation`, calls `history::query_recent` with the limit, gate, and status filters.

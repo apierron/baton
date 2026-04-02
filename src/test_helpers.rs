@@ -219,6 +219,11 @@ impl ValidatorBuilder {
         self
     }
 
+    pub fn input(mut self, input: InputDecl) -> Self {
+        self.config.input = input;
+        self
+    }
+
     pub fn build(self) -> ValidatorConfig {
         self.config
     }
