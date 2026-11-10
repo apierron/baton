@@ -1585,6 +1585,84 @@ fn history_without_gate_filter() {
     assert!(stdout.contains("pass"));
 }
 
+// ─── History by input file and hash ──────────────────────
+
+/// Project with a per-file `lint` (*.py) and a no-input `count`, checked once on a.py.
+fn checked_py_project() -> TempDir {
+    let validators = format!(
+        "{}{}",
+        script_validator_with_input("review", "lint", "echo PASS", "*.py"),
+        script_validator("count", "echo PASS"),
+    );
+    let dir = setup_project_with_files(
+        &minimal_toml("review", &validators),
+        &[("a.py", "print(1)\n"), ("b.py", "print(2)\n")],
+    );
+    baton()
+        .args(["check", "a.py"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+    dir
+}
+
+fn history_stdout(dir: &TempDir, args: &[&str]) -> String {
+    let output = baton()
+        .arg("history")
+        .args(args)
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+#[test]
+fn history_file_flag() {
+    // SPEC-MN-HY-003, SPEC-HI-QF-001: --file finds the run that touched the file, and only that one.
+    // SPEC-HI-SI-005: runs without input files (`count`, and a check with no files) still record.
+    let dir = checked_py_project();
+    for args in [&["check", "b.py"][..], &["check"]] {
+        let output = baton().args(args).current_dir(dir.path()).output().unwrap();
+        assert!(output.status.success());
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("Warning"));
+    }
+
+    for file in ["a.py", "b.py"] {
+        let out = history_stdout(&dir, &["--file", file]);
+        assert_eq!(out.lines().count(), 1, "{out}");
+        assert!(out.contains("review lint [pass]"), "{out}");
+    }
+    let none = history_stdout(&dir, &["--file", "c.py"]);
+    assert!(none.contains("No validator runs found"), "{none}");
+    assert_eq!(history_stdout(&dir, &[]).lines().count(), 3);
+}
+
+#[test]
+fn history_hash_flag() {
+    // SPEC-MN-HY-004, SPEC-HI-QH-001: --hash matches the SHA-256 of the content at validation time.
+    use sha2::{Digest, Sha256};
+    let sha = |s: &str| hex::encode(Sha256::digest(s.as_bytes()));
+
+    let dir = checked_py_project();
+    fs::write(dir.path().join("a.py"), "print(3)\n").unwrap();
+    baton()
+        .args(["check", "a.py"])
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // The old and the new content of a.py each match their own run.
+    for content in ["print(1)\n", "print(3)\n"] {
+        let out = history_stdout(&dir, &["--hash", &sha(content)]);
+        assert_eq!(out.lines().count(), 1, "{out}");
+        assert!(out.contains("review lint [pass]"), "{out}");
+    }
+    // b.py was never checked.
+    let none = history_stdout(&dir, &["--hash", &sha("print(2)\n")]);
+    assert!(none.contains("No validator runs found"), "{none}");
+}
+
 #[test]
 #[cfg(not(windows))]
 fn dry_run_shows_run_if_expression() {

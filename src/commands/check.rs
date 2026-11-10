@@ -184,6 +184,7 @@ pub fn cmd_check(
                         VerdictStatus::Error => Status::Error,
                     },
                     validator_results: v.history.clone(),
+                    input_files: v.input_files.clone(),
                     duration: std::time::Duration::from_millis(v.duration_ms as u64),
                 })
                 .collect(),

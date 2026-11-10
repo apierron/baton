@@ -3,7 +3,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use crate::error::Result;
@@ -83,7 +83,16 @@ pub struct GateResult {
     pub gate_name: String,
     pub status: Status,
     pub validator_results: Vec<ValidatorResult>,
+    pub input_files: BTreeMap<String, BTreeSet<InputFileRecord>>,
     pub duration: std::time::Duration,
+}
+
+/// A file a validator ran against, as recorded in history: its path and the
+/// SHA-256 of its content (`None` if it could not be read as text).
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+pub struct InputFileRecord {
+    pub path: String,
+    pub hash: Option<String>,
 }
 
 // ─── InvocationResult ────────────────────────────────────
@@ -200,6 +209,9 @@ pub struct Verdict {
     pub warnings: Vec<String>,
     pub suppressed: Vec<String>,
     pub history: Vec<ValidatorResult>,
+    /// Files each validator ran against, by validator name. Recorded in history, not in JSON output.
+    #[serde(skip)]
+    pub input_files: BTreeMap<String, BTreeSet<InputFileRecord>>,
 }
 
 impl Verdict {
@@ -439,6 +451,7 @@ mod tests {
                 cost: None,
             }],
             duration: std::time::Duration::from_millis(100),
+            input_files: Default::default(),
         };
         assert_eq!(gr.gate_name, "code-review");
         assert_eq!(gr.status, Status::Pass);
@@ -458,6 +471,7 @@ mod tests {
                 status: Status::Fail,
                 validator_results: vec![],
                 duration: std::time::Duration::from_millis(200),
+                input_files: Default::default(),
             }],
             duration: std::time::Duration::from_millis(300),
         };
@@ -514,6 +528,7 @@ mod tests {
                 duration_ms: 50,
                 cost: None,
             }],
+            input_files: Default::default(),
         };
         let json = v.to_json();
         let parsed: Verdict = serde_json::from_str(&json).unwrap();
@@ -541,6 +556,7 @@ mod tests {
                 duration_ms: 200,
                 cost: None,
             }],
+            input_files: Default::default(),
         };
         let human = v.to_human();
         assert!(human.contains("lint"));
@@ -560,6 +576,7 @@ mod tests {
             warnings: vec![],
             suppressed: vec![],
             history: vec![],
+            input_files: Default::default(),
         };
         assert_eq!(v.to_summary(), "PASS");
     }
@@ -577,6 +594,7 @@ mod tests {
             warnings: vec![],
             suppressed: vec![],
             history: vec![],
+            input_files: Default::default(),
         };
         assert_eq!(v.to_summary(), "FAIL at lint: bad code");
     }
@@ -640,6 +658,7 @@ mod tests {
                     cost: None,
                 },
             ],
+            input_files: Default::default(),
         };
         let json = v.to_json();
         let parsed: Verdict = serde_json::from_str(&json).unwrap();
@@ -677,6 +696,7 @@ mod tests {
                 duration_ms: 0,
                 cost: None,
             }],
+            input_files: Default::default(),
         };
         let human = v.to_human();
         assert!(human.contains("(skipped)"));
@@ -702,6 +722,7 @@ mod tests {
                 duration_ms: 0,
                 cost: None,
             }],
+            input_files: Default::default(),
         };
         let human = v.to_human();
         // Pass feedback is deliberately not displayed
@@ -731,6 +752,7 @@ mod tests {
                 duration_ms: 0,
                 cost: None,
             }],
+            input_files: Default::default(),
         };
         let human = v.to_human();
         assert!(human.contains("line 5"));
@@ -786,6 +808,7 @@ mod tests {
                     cost: None,
                 },
             ],
+            input_files: Default::default(),
         };
         let human = v.to_human();
         assert!(human.contains("\u{2713}")); // ✓ pass
@@ -810,6 +833,7 @@ mod tests {
             warnings: vec![],
             suppressed: vec![],
             history: vec![],
+            input_files: Default::default(),
         };
         assert_eq!(v.to_summary(), "ERROR at broken: internal error");
     }
@@ -827,6 +851,7 @@ mod tests {
             warnings: vec![],
             suppressed: vec![],
             history: vec![],
+            input_files: Default::default(),
         };
         assert_eq!(v.to_summary(), "FAIL at lint");
     }
@@ -844,6 +869,7 @@ mod tests {
             warnings: vec![],
             suppressed: vec![],
             history: vec![],
+            input_files: Default::default(),
         };
         assert_eq!(v.to_summary(), "FAIL at lint: first line");
     }
@@ -888,6 +914,7 @@ mod tests {
                 duration_ms: 10,
                 cost: None,
             }],
+            input_files: Default::default(),
         };
         let human = v.to_human();
         assert!(!human.ends_with('\n'));
@@ -908,6 +935,7 @@ mod tests {
             warnings: vec![],
             suppressed: vec![],
             history: vec![],
+            input_files: Default::default(),
         };
         let summary = v.to_summary();
         assert!(summary.contains("unknown"), "Summary: {summary}");
