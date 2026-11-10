@@ -54,31 +54,15 @@ pub fn collect_file_pool(opts: &FileCollectOptions) -> Result<Vec<InputFile>> {
         }
     }
 
-    // --diff <refspec>: run git diff --name-only
+    // --diff <refspec>: run git diff --name-only. Git prints paths relative to
+    // the repo root, so prefix them with the cwd→root path (empty at the root).
     if let Some(ref refspec) = opts.diff {
-        match Command::new("git")
-            .args(["diff", "--name-only", refspec])
-            .output()
-        {
-            Ok(output) if output.status.success() => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                for line in stdout.lines() {
-                    let p = PathBuf::from(line.trim());
-                    if p.exists() {
-                        pool.push(InputFile::new(p));
-                    }
-                }
-            }
-            Ok(output) => {
-                return Err(BatonError::ValidationError(format!(
-                    "git diff failed: {}",
-                    String::from_utf8_lossy(&output.stderr).trim()
-                )));
-            }
-            Err(e) => {
-                return Err(BatonError::ValidationError(format!(
-                    "could not run git diff: {e}"
-                )));
+        let cdup = git(&["rev-parse", "--show-cdup"])?;
+        let root = PathBuf::from(cdup.trim());
+        for line in git(&["diff", "--name-only", refspec])?.lines() {
+            let p = root.join(line.trim());
+            if p.exists() {
+                pool.push(InputFile::new(p));
             }
         }
     }
@@ -114,6 +98,22 @@ pub fn collect_file_pool(opts: &FileCollectOptions) -> Result<Vec<InputFile>> {
     });
 
     Ok(pool)
+}
+
+/// Run git with `args` in the cwd and return its stdout.
+fn git(args: &[&str]) -> Result<String> {
+    let cmd = format!("git {}", args.join(" "));
+    let output = Command::new("git")
+        .args(args)
+        .output()
+        .map_err(|e| BatonError::ValidationError(format!("could not run '{cmd}': {e}")))?;
+    if !output.status.success() {
+        return Err(BatonError::ValidationError(format!(
+            "'{cmd}' failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 /// Recursively walk a directory, collecting all files.
@@ -197,6 +197,48 @@ mod tests {
         };
         let pool = collect_file_pool(&opts).unwrap();
         assert_eq!(pool.len(), 1);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn file_collector_symlink_deduplicated() {
+        // SPEC-EX-FC-004: a symlink and its target are one canonical path
+        let dir = tempfile::TempDir::new().unwrap();
+        let target = dir.path().join("real.py");
+        let link = dir.path().join("link.py");
+        std::fs::write(&target, "content").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let opts = FileCollectOptions {
+            files: vec![target.clone(), link],
+            diff: None,
+            file_list: None,
+            recursive: true,
+        };
+        let pool = collect_file_pool(&opts).unwrap();
+        assert_eq!(pool.len(), 1);
+        assert_eq!(pool[0].path, target); // first occurrence wins
+    }
+
+    #[test]
+    fn file_collector_dedup_across_sources() {
+        // SPEC-EX-FC-004: the same file via a directory walk, a `./` path,
+        // and a --files entry appears once
+        let dir = tempfile::TempDir::new().unwrap();
+        let file = dir.path().join("a.py");
+        std::fs::write(&file, "a").unwrap();
+        let list = dir.path().join("list.txt");
+        std::fs::write(&list, format!("{}\n", file.display())).unwrap();
+
+        let opts = FileCollectOptions {
+            files: vec![dir.path().to_path_buf(), dir.path().join(".").join("a.py")],
+            diff: None,
+            file_list: Some(list.display().to_string()),
+            recursive: true,
+        };
+        let pool = collect_file_pool(&opts).unwrap();
+        // a.py and list.txt (found by the walk); a.py only once
+        assert_eq!(pool.len(), 2);
     }
 
     #[test]

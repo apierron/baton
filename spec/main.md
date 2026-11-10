@@ -150,11 +150,12 @@ SPEC-MN-CK-053: skip-applied-after-only
 
 SPEC-MN-CK-054: diff-flag-adds-git-changed-files
   `--diff <refspec>` adds changed files to the input pool.
-  test: TODO
+  test: cli::check_diff_from_subdirectory_adds_only_changed_files
 
 SPEC-MN-CK-055: files-flag-reads-paths
   `--files <path | ->` reads newline-separated file paths.
-  test: TODO
+  test: cli::check_files_flag_reads_from_file
+  test: cli::check_files_stdin_reads_paths
 
 SPEC-MN-CK-056: no-positional-args-runs-project-level
   With no files, validators that don't need input run; those that do skip.

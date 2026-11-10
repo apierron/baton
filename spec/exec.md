@@ -539,16 +539,20 @@ SPEC-EX-FC-001: positional-args-populate-pool
   test: exec::tests::file_collector_directory_walk
 
 SPEC-EX-FC-002: diff-flag-adds-changed-files
-  `--diff <refspec>` runs `git diff --name-only <refspec>` and adds the result to the pool.
-  test: TODO
+  `--diff <refspec>` runs `git diff --name-only <refspec>` and adds the result to the pool. Git reports paths relative to the repository root; they are resolved against it, so `--diff` works from any subdirectory. Paths that no longer exist (deleted files) are not added. A refspec git rejects is an error.
+  test: cli::check_diff_from_subdirectory_adds_only_changed_files
+  test: cli::check_diff_invalid_refspec_exits_2
 
 SPEC-EX-FC-003: files-flag-reads-file-list
   `--files <path | ->` reads newline-separated paths from a file or stdin.
   test: exec::tests::file_collector_reads_file_list
+  test: cli::check_files_flag_missing_list_exits_2
 
 SPEC-EX-FC-004: deduplication-by-canonical-path
   The pool is deduplicated by canonical (absolute, symlink-resolved) path.
   test: exec::tests::file_collector_deduplication
+  test: exec::tests::file_collector_symlink_deduplicated
+  test: exec::tests::file_collector_dedup_across_sources
 
 SPEC-EX-FC-005: no-recursive-flag
   `--no-recursive` disables recursive directory walking.
