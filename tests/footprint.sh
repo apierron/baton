@@ -34,6 +34,10 @@ reset() { git reset -q --hard && git clean -qfd; }
 card limits 'footprint: files=2 lines=10 paths=src/,tests/'
 card none 'labels: x'
 card bad 'footprint: files=five'
+card empty 'footprint: files='
+card zero 'footprint: lines=0'
+card ten 'footprint: files=010'
+printf 'gen/** linguist-generated\n' >.gitattributes
 git add . && git commit -qm init
 
 # Under the limit: two files, 3 lines. Tests and generated files are not counted.
@@ -71,8 +75,43 @@ printf 'a\n' >src/a.rs
 expect "card with no footprint line is skipped" 0 '^SKIP: work/items/none.md has no footprint: line$' work/items/none.md
 reset
 
+# Run from a subdirectory: untracked files are still found, with repo-root paths.
+mkdir -p docs && printf 'd\n' >docs/notes.md
+printf 's\n' >src/new.rs
+out=$(cd src && bash "$script" ../work/items/limits.md 2>&1) || true
+if grep -qxF 'FAIL: 1 files outside allowed paths (src/,tests/): docs/notes.md' <<<"$out"; then
+  echo "ok   run from a subdirectory sees the whole repo"
+else
+  echo "FAIL run from a subdirectory: $out"
+  failures=$((failures + 1))
+fi
+reset
+
+# An untracked file without a trailing newline counts its line, as git would once staged.
+printf 'hello' >src/a.rs
+expect "untracked last line without newline counts" 1 '^FAIL: 1 lines changed, limit 0$' work/items/zero.md
+reset
+
+# A bare `linguist-generated` attribute exempts the file too.
+mkdir -p gen && printf 'x\n' >gen/out.rs
+expect "bare linguist-generated is exempt" 0 '^PASS: 0 files' work/items/limits.md
+reset
+
+# Limits are decimal even with a leading zero.
+for i in 1 2 3 4 5 6 7 8 9; do printf 'x\n' >"src/f$i.rs"; done
+expect "leading zero is decimal" 0 '^PASS: 9 files' work/items/ten.md
+reset
+
+# A git failure is an error, not a pass.
+printf 'changed\n' >>src/main.rs
+chmod 000 src/main.rs
+expect "git failure is an error" 2 'git' work/items/limits.md
+chmod 644 src/main.rs
+reset
+
 expect "missing card is a usage error" 2 'work item file not found' work/items/missing.md
 expect "bad number is a usage error" 2 "'five' is not a whole number" work/items/bad.md
+expect "empty number is a usage error" 2 "'' is not a whole number" work/items/empty.md
 
 # Through baton itself, when a binary is given.
 if [[ -n "${BATON:-}" ]]; then

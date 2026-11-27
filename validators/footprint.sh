@@ -38,32 +38,34 @@ if [[ -z "$line" ]]; then
   exit 0
 fi
 
+# A whole number, read as decimal (bash reads a leading 0 as octal).
+num() {
+  [[ "$1" =~ ^[0-9]+$ ]] || { echo "footprint: '$1' is not a whole number in $card: $line" >&2; exit 2; }
+  echo $((10#$1))
+}
 max_files="" max_lines="" paths=""
 for kv in ${line#footprint:}; do
   case "$kv" in
-    files=*) max_files="${kv#files=}" ;;
-    lines=*) max_lines="${kv#lines=}" ;;
+    files=*) max_files=$(num "${kv#files=}") ;;
+    lines=*) max_lines=$(num "${kv#lines=}") ;;
     paths=*) paths="${kv#paths=}" ;;
     *) echo "footprint: unknown field '$kv' in $card (expected files=N lines=N paths=a/,b/)" >&2; exit 2 ;;
   esac
-done
-for n in "$max_files" "$max_lines"; do
-  if [[ -n "$n" && ! "$n" =~ ^[0-9]+$ ]]; then
-    echo "footprint: '$n' is not a whole number in $card: $line" >&2
-    exit 2
-  fi
 done
 
 if ! merge_base=$(git merge-base "$base" HEAD 2>/dev/null); then
   echo "footprint: cannot find a merge-base of '$base' and HEAD" >&2
   exit 2
 fi
+# git paths are repo-root relative; work from the root so untracked files match them.
+cd "$(git rev-parse --show-toplevel)"
 
 is_generated() {
   case "${1##*/}" in
     Cargo.lock | package-lock.json | yarn.lock | pnpm-lock.yaml | poetry.lock | uv.lock | Gemfile.lock | go.sum) return 0 ;;
   esac
-  [[ "$(git check-attr linguist-generated -- "$1" | sed 's/.*: //')" == "true" ]]
+  case "$(git check-attr linguist-generated -- "$1" | sed 's/.*: //')" in true | set) return 0 ;; esac
+  return 1
 }
 
 is_test() {
@@ -96,14 +98,23 @@ consider() { # path added deleted
   [[ "$add" == "-" ]] || total_lines=$((total_lines + add + del))
 }
 
+# Collect into files first: a git failure inside `< <(...)` would be silently ignored.
+changes=$(mktemp) untracked=$(mktemp)
+trap 'rm -f "$changes" "$untracked"' EXIT
+git_or_die() { "$@" || { echo "footprint: '$*' failed" >&2; exit 2; }; }
 # ponytail: --no-renames counts a rename as a delete plus an add; parse -M records if that bites.
+git_or_die git diff --numstat --no-renames -z "$merge_base" >"$changes"
+git_or_die git ls-files -z --others --exclude-standard >"$untracked"
+
 while IFS=$'\t' read -r -d '' add del path; do
   consider "$path" "$add" "$del"
-done < <(git diff --numstat --no-renames -z "$merge_base")
+done <"$changes"
 
+# An untracked file counts its lines the way git numstat would (exit 1 means "differs").
 while IFS= read -r -d '' path; do
-  consider "$path" "$(wc -l <"$path" | tr -d ' ')" 0
-done < <(git ls-files -z --others --exclude-standard)
+  IFS=$'\t' read -r add del _ < <(git diff --no-index --numstat -- /dev/null "$path" || [[ $? == 1 ]])
+  consider "$path" "$add" "$del"
+done <"$untracked"
 
 join() { local out="" p; for p in "$@"; do out+="${out:+, }$p"; done; echo "$out"; }
 
