@@ -543,9 +543,10 @@ SPEC-EX-FC-001: positional-args-populate-pool
   test: exec::tests::file_collector_directory_walk
 
 SPEC-EX-FC-002: diff-flag-adds-changed-files
-  `--diff <refspec>` runs `git diff --name-only <refspec>` and adds the result to the pool. Git reports paths relative to the repository root; they are resolved against it, so `--diff` works from any subdirectory. Paths that no longer exist (deleted files) are not added. A refspec git rejects is an error.
+  `--diff <refspec>` runs `git diff --name-only -z <refspec>` and adds the result to the pool. Paths are read NUL-separated without trimming, skipping empty entries, so names with spaces or non-ASCII characters are kept. Git reports paths relative to the repository root; they are resolved against it, so `--diff` works from any subdirectory. Paths that no longer exist (deleted files) are not added. A refspec git rejects is an error.
   test: cli::check_diff_from_subdirectory_adds_only_changed_files
   test: cli::check_diff_invalid_refspec_exits_2
+  test: cli::check_diff_preserves_spaces_and_non_ascii_paths
 
 SPEC-EX-FC-003: files-flag-reads-file-list
   `--files <path | ->` reads newline-separated paths from a file or stdin.
