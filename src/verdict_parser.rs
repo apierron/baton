@@ -174,7 +174,7 @@ pub fn parse_verdict(text: &str) -> ParsedVerdict {
     }
 
     // Sort by position descending — take the last one
-    candidates.sort_by(|a, b| b.1.cmp(&a.1));
+    candidates.sort_by_key(|a| std::cmp::Reverse(a.1));
     let (status_str, pos) = candidates[0];
 
     let keyword_len = 4; // PASS, FAIL, WARN

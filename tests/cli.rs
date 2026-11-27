@@ -3307,6 +3307,44 @@ fn check_diff_invalid_refspec_exits_2() {
     );
 }
 
+#[test]
+#[cfg(not(windows))]
+fn check_diff_from_subdirectory_adds_only_changed_files() {
+    // git prints repo-root-relative paths; run from a subdirectory to prove they resolve.
+    // Exit 1 so the echoed pool lands in feedback.
+    let validators =
+        script_validator_with_batch_input("review", "pool", "echo {input.paths} && exit 1", "*.rs");
+    let toml = minimal_toml("review", &validators);
+    let dir = setup_git_project(
+        &toml,
+        &[
+            ("top.rs", "a"),
+            ("sub/changed.rs", "b"),
+            ("sub/same.rs", "c"),
+        ],
+    );
+    fs::write(dir.path().join("top.rs"), "a2").unwrap();
+    fs::write(dir.path().join("sub/changed.rs"), "b2").unwrap();
+    // diff.relative=true would make git print cwd-relative paths limited to sub/
+    std::process::Command::new("git")
+        .args(["config", "diff.relative", "true"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    let output = baton()
+        .args(["check", "--no-log", "--diff", "HEAD"])
+        .current_dir(dir.path().join("sub"))
+        .output()
+        .unwrap();
+
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    let feedback = verdict["history"][0]["feedback"].as_str().unwrap_or("");
+    assert!(feedback.contains("top.rs"), "feedback: {feedback}");
+    assert!(feedback.contains("changed.rs"), "feedback: {feedback}");
+    assert!(!feedback.contains("same.rs"), "feedback: {feedback}");
+}
+
 // ─── Human validators ───────────────────────────────────
 
 #[test]
