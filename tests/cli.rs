@@ -1618,6 +1618,45 @@ fn history_stdout(dir: &TempDir, args: &[&str]) -> String {
 }
 
 #[test]
+fn history_invocation_flag() {
+    // SPEC-MN-CK-081, SPEC-MN-HY-005: logged invocations expose their full detail.
+    let toml = minimal_toml("review", &script_validator("lint", "echo PASS"));
+    let dir = setup_project(&toml, "hello");
+    baton()
+        .arg("check")
+        .current_dir(dir.path())
+        .assert()
+        .success();
+
+    // Neither check nor the default history output includes the invocation ID.
+    let conn = rusqlite::Connection::open(dir.path().join(".baton/history.db")).unwrap();
+    let (id, timestamp): (String, String) = conn
+        .query_row("SELECT id, timestamp FROM invocations", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .unwrap();
+    assert!(uuid::Uuid::parse_str(&id).is_ok());
+    assert!(chrono::DateTime::parse_from_rfc3339(&timestamp).is_ok());
+
+    let out = history_stdout(&dir, &["--invocation", &id]);
+    assert!(out.contains(&format!("Invocation: {id}")), "{out}");
+    assert!(out.contains(&format!("Timestamp:  {timestamp}")), "{out}");
+    assert!(
+        out.contains(&format!("Version:    {}", env!("CARGO_PKG_VERSION"))),
+        "{out}"
+    );
+    assert!(out.contains("Gate: review [pass]"), "{out}");
+    assert!(
+        out.contains("(pass:1 fail:0 warn:0 error:0 skip:0)"),
+        "{out}"
+    );
+    assert!(
+        out.contains("Validator runs:\n  review lint [pass]"),
+        "{out}"
+    );
+}
+
+#[test]
 fn history_file_flag() {
     // SPEC-MN-HY-003, SPEC-HI-QF-001: --file finds the run that touched the file, and only that one.
     // SPEC-HI-SI-005: runs without input files (`count`, and a check with no files) still record.

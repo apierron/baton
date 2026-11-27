@@ -5,7 +5,7 @@
 //! and `Named` (group files by a key expression such as `{stem}`).
 //! Returns `(invocations, warnings)`; empty invocations + warnings means skip.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::config::{InputDecl, ValidatorConfig};
@@ -159,12 +159,10 @@ pub fn plan_dispatch(
                     }
                 }
 
-                // Collect all key values
-                let all_keys: HashSet<String> = slot_keys.keys().cloned().collect();
                 let slot_names: Vec<&String> = keyed_slots.iter().map(|(name, _)| *name).collect();
 
                 let mut invocations = Vec::new();
-                for key_val in &all_keys {
+                for key_val in slot_keys.keys() {
                     // DP-005: check completeness
                     let group = slot_keys.get(key_val);
                     let complete = slot_names
@@ -210,13 +208,13 @@ pub fn plan_dispatch(
                     });
                 }
 
-                if invocations.is_empty() && !all_keys.is_empty() {
+                if invocations.is_empty() && !slot_keys.is_empty() {
                     warnings.push(format!(
                         "Validator '{}': all groups incomplete",
                         validator.name
                     ));
                 }
-                if all_keys.is_empty() {
+                if slot_keys.is_empty() {
                     warnings.push(format!(
                         "Validator '{}': no files match any keyed input patterns",
                         validator.name
@@ -369,6 +367,48 @@ mod tests {
         assert_eq!(invocations[1].group_key, Some("b".into()));
         assert_eq!(invocations[0].inputs.len(), 2); // code + spec
         assert!(warnings.is_empty());
+    }
+
+    #[test]
+    fn dispatch_keyed_order_is_deterministic() {
+        // SPEC-EX-DP-008: keyed invocations retain sorted order across dispatches.
+        let slots = [("code", "*.py"), ("spec", "*.md")]
+            .into_iter()
+            .map(|(name, pattern)| {
+                (
+                    name.into(),
+                    InputSlot {
+                        match_pattern: Some(pattern.into()),
+                        path: None,
+                        key: Some("{stem}".into()),
+                        collect: false,
+                    },
+                )
+            })
+            .collect();
+        let v = validator_with_input("check", InputDecl::Named(slots));
+        let pool: Vec<InputFile> = ["c", "a", "b", "f", "d", "e"]
+            .into_iter()
+            .flat_map(|key| {
+                ["py", "md"].map(|ext| InputFile::new(PathBuf::from(format!("{key}.{ext}"))))
+            })
+            .collect();
+
+        let (first, first_warnings) = plan_dispatch(&v, &pool);
+        let (second, second_warnings) = plan_dispatch(&v, &pool);
+        let keys = |invocations: &[Invocation]| {
+            invocations
+                .iter()
+                .map(|inv| inv.group_key.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(keys(&first), keys(&second));
+        assert_eq!(
+            keys(&first),
+            ["a", "b", "c", "d", "e", "f"].map(|key| Some(key.to_string()))
+        );
+        assert!(first_warnings.is_empty());
+        assert!(second_warnings.is_empty());
     }
 
     #[test]
