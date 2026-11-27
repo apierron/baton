@@ -54,12 +54,13 @@ pub fn collect_file_pool(opts: &FileCollectOptions) -> Result<Vec<InputFile>> {
         }
     }
 
-    // --diff <refspec>: run git diff --name-only. Git prints paths relative to
-    // the repo root, so prefix them with the cwd→root path (empty at the root).
+    // --diff <refspec>: run git diff --name-only. With --no-relative git prints paths
+    // relative to the repo root (even under diff.relative=true), so prefix them with
+    // the cwd→root path (empty at the root).
     if let Some(ref refspec) = opts.diff {
         let cdup = git(&["rev-parse", "--show-cdup"])?;
         let root = PathBuf::from(cdup.trim());
-        for line in git(&["diff", "--name-only", refspec])?.lines() {
+        for line in git(&["diff", "--no-relative", "--name-only", refspec])?.lines() {
             let p = root.join(line.trim());
             if p.exists() {
                 pool.push(InputFile::new(p));
