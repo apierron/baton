@@ -1,7 +1,7 @@
 //! Input file pool collection from CLI sources.
 //!
 //! Gathers [`InputFile`]s from positional arguments, `--diff <refspec>`
-//! (via `git diff --name-only`), and `--files <path|->` (newline-delimited list).
+//! (via `git diff --name-only -z`), and `--files <path|->` (newline-delimited list).
 //! Directories are walked recursively. The resulting pool is deduplicated by
 //! canonical (absolute, symlink-resolved) path.
 
@@ -54,14 +54,17 @@ pub fn collect_file_pool(opts: &FileCollectOptions) -> Result<Vec<InputFile>> {
         }
     }
 
-    // --diff <refspec>: run git diff --name-only. With --no-relative git prints paths
+    // --diff <refspec>: run git diff --name-only -z. With --no-relative git prints paths
     // relative to the repo root (even under diff.relative=true), so prefix them with
     // the cwd→root path (empty at the root).
     if let Some(ref refspec) = opts.diff {
         let cdup = git(&["rev-parse", "--show-cdup"])?;
         let root = PathBuf::from(cdup.trim());
-        for line in git(&["diff", "--no-relative", "--name-only", refspec])?.lines() {
-            let p = root.join(line.trim());
+        for path in git(&["diff", "--no-relative", "--name-only", "-z", refspec])?.split('\0') {
+            if path.is_empty() {
+                continue;
+            }
+            let p = root.join(path);
             if p.exists() {
                 pool.push(InputFile::new(p));
             }

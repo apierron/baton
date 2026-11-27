@@ -3423,6 +3423,51 @@ fn check_diff_from_subdirectory_adds_only_changed_files() {
     assert!(!feedback.contains("same.rs"), "feedback: {feedback}");
 }
 
+#[test]
+#[cfg(not(windows))]
+fn check_diff_preserves_spaces_and_non_ascii_paths() {
+    // SPEC-EX-FC-002: preserve Git's raw filenames, including surrounding spaces.
+    let validators = script_validator_with_batch_input(
+        "review",
+        "pool",
+        "echo 'pool: {input.paths} :end' && exit 1",
+        "*",
+    );
+    let toml = minimal_toml("review", &validators);
+    let dir = setup_git_project(
+        &toml,
+        &[
+            ("sp ace.rs", "a"),
+            ("ünï.rs", "b"),
+            (" edge.rs ", "c"),
+            ("same.rs", "d"),
+        ],
+    );
+    assert!(std::process::Command::new("git")
+        .args(["config", "core.quotePath", "true"])
+        .current_dir(dir.path())
+        .status()
+        .unwrap()
+        .success());
+    for path in ["sp ace.rs", "ünï.rs", " edge.rs "] {
+        fs::write(dir.path().join(path), "changed").unwrap();
+    }
+
+    let output = baton()
+        .args(["check", "--no-log", "--diff", "HEAD"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(1));
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    let feedback = verdict["history"][0]["feedback"].as_str().unwrap_or("");
+    for path in ["sp ace.rs", "ünï.rs", " edge.rs "] {
+        assert!(feedback.contains(path), "missing {path:?}: {feedback}");
+    }
+    assert!(!feedback.contains("same.rs"), "feedback: {feedback}");
+}
+
 // ─── Human validators ───────────────────────────────────
 
 #[test]
