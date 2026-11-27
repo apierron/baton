@@ -237,13 +237,64 @@ type = "script"
 command = "bash validators/quality-max-fn-length.sh"
 tags = ["quality"]
 
+# ── Tier 7: One-line hygiene checks ──────────────────────
+
+[validators.cargo-fmt-check]
+type = "script"
+command = 'cargo fmt --check'
+tags = ["hygiene"]
+
+[validators.no-dbg-macro]
+type = "script"
+command = '''! grep -rnE --include='*.rs' 'dbg![[:space:]]*[([{]' src/'''
+tags = ["hygiene"]
+
+[validators.no-unsafe]
+type = "script"
+command = '''! grep -rnw --include='*.rs' unsafe src/'''
+tags = ["hygiene"]
+
+[validators.lockfile-up-to-date]
+type = "script"
+command = 'cargo check --locked'
+tags = ["hygiene"]
+
+[validators.no-trailing-whitespace]
+type = "script"
+command = '''! git grep -nI -E '[[:space:]]+$' -- '*.rs' '*.md' '*.sh' '*.toml''''
+tags = ["hygiene"]
+
+[validators.files-are-utf8]
+type = "script"
+command = '''git ls-files -z '*.rs' '*.md' '*.sh' '*.toml' | xargs -0 iconv -f UTF-8 -t UTF-8 > /dev/null'''
+tags = ["hygiene"]
+
+[validators.shell-scripts-executable]
+type = "script"
+command = '''test -z "$(find validators -name '*.sh' ! -perm -u+x)"'''
+tags = ["hygiene"]
+
+[validators.binary-size-no-bloat]
+type = "script"
+command = 'cargo build --release -q && test $(wc -c < "${CARGO_TARGET_DIR:-target}/release/baton") -lt 10000000'
+tags = ["hygiene"]
+
 # ── CI gate: clippy + tests ───────────────────────────────
 
 [gates.ci]
 description = "Clippy linting and full test suite"
 validators = [
+    # First: clippy and tests would quietly rewrite a stale Cargo.lock.
+    { ref = "lockfile-up-to-date", blocking = true },
     { ref = "clippy", blocking = true },
     { ref = "tests", blocking = true },
+    { ref = "cargo-fmt-check", blocking = true },
+    { ref = "no-dbg-macro", blocking = true },
+    { ref = "no-unsafe", blocking = true },
+    { ref = "no-trailing-whitespace", blocking = true },
+    { ref = "files-are-utf8", blocking = true },
+    { ref = "shell-scripts-executable", blocking = true },
+    { ref = "binary-size-no-bloat", blocking = true },
 ]
 
 # ── Deep gate: CI + fuzzing + invariants + security ───────
