@@ -130,8 +130,12 @@ SPEC-MN-CK-051: only-accepts-selectors
   `--only` accepts gate names, validator names, `gate.validator` dot paths, and `@tag` selectors.
   At gate level: includes gates matching by name, containing a matching validator name,
   containing a matching dot-path prefix, or containing a validator with the tag.
-  At validator level: includes validators matching by name, dot-path, or tag.
+  At validator level: includes validators matching by name, dot-path, or tag. A bare gate
+  name runs every validator in that gate (`--only <gate>` replaces `--gate`, SPEC-MN-CK-060),
+  unless other selectors in the list pick validators of that gate, which then narrow it
+  (`--only "review v1"` runs only `v1`).
   test: cli::only_tag_runs_matching_validators
+  test: cli::only_gate_name_runs_every_validator_in_gate
   test: cli::only_tag_filters_gates_in_multi_gate
   test: cli::dot_path_only_selects_gate_and_validator
   test: cli::mixed_name_and_tag_selectors

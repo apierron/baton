@@ -433,11 +433,13 @@ The loop maintains a map of prior results keyed by validator name. This map is p
 Key invariant: a validator can only reference results from validators that appeared earlier in the pipeline. The config validator enforces this for run_if expressions, but placeholder resolution handles missing references gracefully (empty string).
 
 SPEC-EX-RG-010: only-filter-skips-unlisted
-  When options.only is Some, validators not matching any selector (by name, dot-path, or @tag) are recorded as Status::Skip with no feedback. They do not execute. Skipped validators appear in the verdict history.
+  When options.only is Some, validators not matching any selector (by name, dot-path, or @tag) are recorded as Status::Skip with no feedback. If a bare name in the list is the gate's own name and no selector matches any of the gate's validators, the filter does not apply to that gate and every validator runs (`only_within_gate`); otherwise the gate name alone matches nothing at validator level. They do not execute. Skipped validators appear in the verdict history.
   test: exec::tests::gate_only_filter
   test: exec::tests::gate_only_tag_filter
   test: exec::tests::gate_only_tag_and_name_mixed
   test: exec::tests::matches_filter_dot_path
+  test: exec::tests::only_within_gate_bare_gate_name
+  test: cli::only_gate_name_runs_every_validator_in_gate
 
 SPEC-EX-RG-011: skip-filter-skips-listed
   When options.skip is Some, validators matching any selector (by name, dot-path, or @tag) are recorded as Status::Skip. This is the inverse of --only.

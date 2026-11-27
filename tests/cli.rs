@@ -2168,6 +2168,43 @@ fn only_tag_filters_gates_in_multi_gate() {
 }
 
 #[test]
+fn only_gate_name_runs_every_validator_in_gate() {
+    // --only <gate> runs that gate's validators (it replaces --gate); it must not skip them all
+    let toml = multi_gate_toml(&[
+        (
+            "review",
+            &format!(
+                "{}{}",
+                script_validator_for("review", "lint", "echo PASS"),
+                script_validator_for("review", "format", "echo FAIL && exit 1"),
+            ),
+        ),
+        (
+            "other",
+            &script_validator_for("other", "analyze", "echo PASS"),
+        ),
+    ]);
+    let dir = setup_project(&toml, "hello");
+
+    let output = baton()
+        .args(["check", "--no-log", "--only", "review"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    // format fails, so the gate fails: its validators really ran
+    assert_eq!(output.status.code(), Some(1));
+    let verdict = parse_verdict(&String::from_utf8_lossy(&output.stdout));
+    assert_eq!(verdict["gate"], "review");
+    let history = verdict["history"].as_array().unwrap();
+    let lint = history.iter().find(|v| v["name"] == "lint").unwrap();
+    assert_eq!(lint["status"], "pass");
+    let format = history.iter().find(|v| v["name"] == "format").unwrap();
+    assert_eq!(format["status"], "fail");
+    assert!(!history.iter().any(|v| v["name"] == "analyze"));
+}
+
+#[test]
 fn skip_tag_filters_gates_in_multi_gate() {
     // --skip @slow skips validators with tag @slow but doesn't exclude the gate
     let toml = multi_gate_toml(&[(

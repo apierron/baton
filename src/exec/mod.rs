@@ -223,6 +223,29 @@ pub fn matches_filter(filter: &[String], gate_name: &str, name: &str, tags: &[St
     false
 }
 
+/// The `--only` filter to apply to the validators of one gate, or `None` to run them all.
+///
+/// A bare gate name selects every validator in that gate (`--only <gate>` replaces
+/// `--gate`). If other selectors in the list pick specific validators of the gate, they
+/// narrow it instead (`--only "review lint"` runs only `lint`).
+pub fn only_within_gate<'a>(
+    filter: &'a [String],
+    gate_name: &str,
+    validators: &[ValidatorConfig],
+) -> Option<&'a [String]> {
+    let gate_named = filter
+        .iter()
+        .any(|e| matches!(parse_selector(e), Selector::Name(ref n) if n == gate_name));
+    let narrowed = validators
+        .iter()
+        .any(|v| matches_filter(filter, gate_name, &v.name, &v.tags));
+    if gate_named && !narrowed {
+        None
+    } else {
+        Some(filter)
+    }
+}
+
 /// Aggregate multiple invocation results into a single ValidatorResult.
 ///
 /// Status: worst among results (Error > Fail > Warn > Pass > Skip).
@@ -307,10 +330,14 @@ pub fn run_gate(
     let mut warnings_list: Vec<String> = Vec::new();
 
     let suppressed = &options.suppressed_statuses;
+    let only = options
+        .only
+        .as_deref()
+        .and_then(|o| only_within_gate(o, &gate.name, &gate.validators));
 
     for validator in &gate.validators {
         // Apply filters
-        if let Some(ref only) = options.only {
+        if let Some(only) = only {
             if !matches_filter(only, &gate.name, &validator.name, &validator.tags) {
                 results.insert(
                     validator.name.clone(),
@@ -715,6 +742,27 @@ mod tests {
         assert_eq!(b_result.status, Status::Skip);
         let c_result = verdict.history.iter().find(|r| r.name == "c").unwrap();
         assert_eq!(c_result.status, Status::Skip);
+    }
+
+    #[test]
+    fn only_within_gate_bare_gate_name() {
+        // SPEC-EX-RG-010: a bare gate name runs the whole gate unless other selectors narrow it
+        let validators = vec![
+            ValidatorBuilder::script("a", "true").build(),
+            ValidatorBuilder::script("b", "true").build(),
+        ];
+        let f = |s: &[&str]| s.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        assert_eq!(only_within_gate(&f(&["test"]), "test", &validators), None);
+        let narrow = f(&["test", "a"]);
+        assert_eq!(
+            only_within_gate(&narrow, "test", &validators),
+            Some(narrow.as_slice())
+        );
+        let other = f(&["other"]);
+        assert_eq!(
+            only_within_gate(&other, "test", &validators),
+            Some(other.as_slice())
+        );
     }
 
     #[test]
