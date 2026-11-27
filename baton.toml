@@ -244,6 +244,11 @@ type = "script"
 command = 'cargo fmt --check'
 tags = ["hygiene"]
 
+[validators.no-dbg-macro]
+type = "script"
+command = '''! grep -rn --include='*.rs' 'dbg!(' src/'''
+tags = ["hygiene"]
+
 # ── CI gate: clippy + tests ───────────────────────────────
 
 [gates.ci]
@@ -252,6 +257,7 @@ validators = [
     { ref = "clippy", blocking = true },
     { ref = "tests", blocking = true },
     { ref = "cargo-fmt-check", blocking = true },
+    { ref = "no-dbg-macro", blocking = true },
 ]
 
 # ── Deep gate: CI + fuzzing + invariants + security ───────
