@@ -246,7 +246,7 @@ tags = ["hygiene"]
 
 [validators.no-dbg-macro]
 type = "script"
-command = '''! grep -rn --include='*.rs' 'dbg!(' src/'''
+command = '''! grep -rnE --include='*.rs' 'dbg![[:space:]]*[([{]' src/'''
 tags = ["hygiene"]
 
 [validators.no-unsafe]
@@ -276,7 +276,7 @@ tags = ["hygiene"]
 
 [validators.binary-size-no-bloat]
 type = "script"
-command = 'cargo build --release -q && test $(wc -c < ${CARGO_TARGET_DIR:-target}/release/baton) -lt 10000000'
+command = 'cargo build --release -q && test $(wc -c < "${CARGO_TARGET_DIR:-target}/release/baton") -lt 10000000'
 tags = ["hygiene"]
 
 # ── CI gate: clippy + tests ───────────────────────────────
@@ -284,12 +284,13 @@ tags = ["hygiene"]
 [gates.ci]
 description = "Clippy linting and full test suite"
 validators = [
+    # First: clippy and tests would quietly rewrite a stale Cargo.lock.
+    { ref = "lockfile-up-to-date", blocking = true },
     { ref = "clippy", blocking = true },
     { ref = "tests", blocking = true },
     { ref = "cargo-fmt-check", blocking = true },
     { ref = "no-dbg-macro", blocking = true },
     { ref = "no-unsafe", blocking = true },
-    { ref = "lockfile-up-to-date", blocking = true },
     { ref = "no-trailing-whitespace", blocking = true },
     { ref = "files-are-utf8", blocking = true },
     { ref = "shell-scripts-executable", blocking = true },
