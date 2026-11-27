@@ -254,6 +254,11 @@ type = "script"
 command = '''! grep -rnw --include='*.rs' unsafe src/'''
 tags = ["hygiene"]
 
+[validators.lockfile-up-to-date]
+type = "script"
+command = 'cargo check --locked'
+tags = ["hygiene"]
+
 # ── CI gate: clippy + tests ───────────────────────────────
 
 [gates.ci]
@@ -264,6 +269,7 @@ validators = [
     { ref = "cargo-fmt-check", blocking = true },
     { ref = "no-dbg-macro", blocking = true },
     { ref = "no-unsafe", blocking = true },
+    { ref = "lockfile-up-to-date", blocking = true },
 ]
 
 # ── Deep gate: CI + fuzzing + invariants + security ───────
