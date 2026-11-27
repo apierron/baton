@@ -269,6 +269,11 @@ type = "script"
 command = '''git ls-files -z '*.rs' '*.md' '*.sh' '*.toml' | xargs -0 iconv -f UTF-8 -t UTF-8 > /dev/null'''
 tags = ["hygiene"]
 
+[validators.shell-scripts-executable]
+type = "script"
+command = '''test -z "$(find validators -name '*.sh' ! -perm -u+x)"'''
+tags = ["hygiene"]
+
 # ── CI gate: clippy + tests ───────────────────────────────
 
 [gates.ci]
@@ -282,6 +287,7 @@ validators = [
     { ref = "lockfile-up-to-date", blocking = true },
     { ref = "no-trailing-whitespace", blocking = true },
     { ref = "files-are-utf8", blocking = true },
+    { ref = "shell-scripts-executable", blocking = true },
 ]
 
 # ── Deep gate: CI + fuzzing + invariants + security ───────
