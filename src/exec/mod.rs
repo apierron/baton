@@ -376,9 +376,8 @@ pub fn run_gate(
             .collect();
         input_files.insert(validator.name.clone(), records);
 
-        let result = if invocations.len() == 1 {
-            let mut inv_inputs = invocations.into_iter().next().unwrap().inputs;
-            execute_validator(validator, &mut inv_inputs, &results, Some(config))
+        let result = if let [inv] = invocations.as_mut_slice() {
+            execute_validator(validator, &mut inv.inputs, &results, Some(config))
         } else {
             let inv_results: Vec<ValidatorResult> = invocations
                 .into_iter()
