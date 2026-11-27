@@ -109,7 +109,7 @@ SPEC-HI-SI-004: validator-run-rows-inserted
   test: history::tests::store_invocation_inserts_validator_runs
 
 SPEC-HI-SI-005: input-files-stored-as-json
-  The input_files column contains a JSON array of objects, each with `path` (string, the path as it appears in the input pool) and `hash` (string, SHA-256 of file content at time of validation, see SPEC-EX-RG-034). `hash` is null when the file cannot be read as UTF-8 text. A validator run with no input files stores `[]`. When a validator's invocations are aggregated into one ValidatorResult (SPEC-EX-RG-033), its row lists the files of all of them, each once.
+  The input_files column contains a JSON array of objects, each with `path` (string, the path as it appears in the input pool) and `hash` (string, SHA-256 of file content at time of validation, see SPEC-EX-RG-034). `hash` is null when the file is not a regular file or cannot be read as UTF-8 text. A validator run with no input files stores `[]`. When a validator's invocations are aggregated into one ValidatorResult (SPEC-EX-RG-033), its row lists the files of all of them, each once.
   test: history::tests::store_invocation_records_input_files
 
 SPEC-HI-SI-006: tokens-used-stored

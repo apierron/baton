@@ -343,7 +343,7 @@ pub fn run_gate(
         }
 
         // Dispatch: route input files according to validator's input declaration
-        let (mut invocations, dispatch_warnings) = plan_dispatch(validator, &input_pool);
+        let (invocations, dispatch_warnings) = plan_dispatch(validator, &input_pool);
         warnings_list.extend(dispatch_warnings);
 
         if invocations.is_empty() {
@@ -362,12 +362,23 @@ pub fn run_gate(
         }
 
         // SPEC-EX-RG-034: hash before running, so history records the content that was validated.
+        // Hash a throwaway copy so no invocation holds file contents before it runs, and skip
+        // anything that is not a regular file (opening a FIFO would block).
         // ponytail: each validator re-reads its files; hash the pool once if large pools get slow.
         let records = invocations
-            .iter_mut()
-            .flat_map(|inv| inv.inputs.values_mut().flatten())
+            .iter()
+            .flat_map(|inv| inv.inputs.values().flatten())
             .map(|f| {
-                let hash = f.get_hash().ok().map(str::to_string);
+                let hash = f
+                    .path
+                    .is_file()
+                    .then(|| {
+                        InputFile::new(f.path.clone())
+                            .get_hash()
+                            .ok()
+                            .map(str::to_string)
+                    })
+                    .flatten();
                 InputFileRecord {
                     path: f.path.display().to_string(),
                     hash,
@@ -1320,6 +1331,41 @@ mod tests {
         ]);
         assert_eq!(verdict.input_files["lint"], expected);
         assert!(verdict.input_files["count"].is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_gate_does_not_read_a_fifo_to_hash_it() {
+        // SPEC-EX-RG-034: a file that is not a regular file is recorded with no hash;
+        // opening a FIFO to hash it would block with no writer.
+        use crate::config::InputDecl;
+
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("a.py");
+        assert!(std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success());
+
+        let gate = th::gate(
+            "test",
+            vec![ValidatorBuilder::script("lint", "test -p {file.path}")
+                .input(InputDecl::PerFile {
+                    pattern: "*.py".into(),
+                })
+                .build()],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let pool = vec![InputFile::new(fifo.clone())];
+        let verdict = run_gate(&gate, &config, pool, &RunOptions::new()).unwrap();
+
+        assert_eq!(verdict.status, VerdictStatus::Pass);
+        let expected = BTreeSet::from([InputFileRecord {
+            path: fifo.display().to_string(),
+            hash: None,
+        }]);
+        assert_eq!(verdict.input_files["lint"], expected);
     }
 
     #[test]

@@ -3403,6 +3403,12 @@ fn check_diff_from_subdirectory_adds_only_changed_files() {
     );
     fs::write(dir.path().join("top.rs"), "a2").unwrap();
     fs::write(dir.path().join("sub/changed.rs"), "b2").unwrap();
+    // diff.relative=true would make git print cwd-relative paths limited to sub/
+    std::process::Command::new("git")
+        .args(["config", "diff.relative", "true"])
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
 
     let output = baton()
         .args(["check", "--no-log", "--diff", "HEAD"])
