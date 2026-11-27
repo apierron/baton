@@ -249,6 +249,11 @@ type = "script"
 command = '''! grep -rn --include='*.rs' 'dbg!(' src/'''
 tags = ["hygiene"]
 
+[validators.no-unsafe]
+type = "script"
+command = '''! grep -rnw --include='*.rs' unsafe src/'''
+tags = ["hygiene"]
+
 # ── CI gate: clippy + tests ───────────────────────────────
 
 [gates.ci]
@@ -258,6 +263,7 @@ validators = [
     { ref = "tests", blocking = true },
     { ref = "cargo-fmt-check", blocking = true },
     { ref = "no-dbg-macro", blocking = true },
+    { ref = "no-unsafe", blocking = true },
 ]
 
 # ── Deep gate: CI + fuzzing + invariants + security ───────
