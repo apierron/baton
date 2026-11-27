@@ -264,6 +264,11 @@ type = "script"
 command = '''! git grep -nI -E '[[:space:]]+$' -- '*.rs' '*.md' '*.sh' '*.toml''''
 tags = ["hygiene"]
 
+[validators.files-are-utf8]
+type = "script"
+command = '''git ls-files -z '*.rs' '*.md' '*.sh' '*.toml' | xargs -0 iconv -f UTF-8 -t UTF-8 > /dev/null'''
+tags = ["hygiene"]
+
 # ── CI gate: clippy + tests ───────────────────────────────
 
 [gates.ci]
@@ -276,6 +281,7 @@ validators = [
     { ref = "no-unsafe", blocking = true },
     { ref = "lockfile-up-to-date", blocking = true },
     { ref = "no-trailing-whitespace", blocking = true },
+    { ref = "files-are-utf8", blocking = true },
 ]
 
 # ── Deep gate: CI + fuzzing + invariants + security ───────
