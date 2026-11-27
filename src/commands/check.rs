@@ -83,8 +83,11 @@ pub fn cmd_check(
         for gate_name in &gate_names {
             let gate = &config.gates[gate_name];
             eprintln!("Gate '{gate_name}':");
+            let gate_only = only
+                .as_deref()
+                .and_then(|o| exec::only_within_gate(o, gate_name, &gate.validators));
             for v in &gate.validators {
-                let skip_reason = compute_skip_reason(v, gate_name, &only, &skip);
+                let skip_reason = compute_skip_reason(v, gate_name, gate_only, &skip);
                 match skip_reason {
                     Some(reason) => eprintln!("  \u{2014} {} (skipped by {reason})", v.name),
                     None => {
@@ -239,10 +242,10 @@ pub fn cmd_check(
 fn compute_skip_reason(
     v: &crate::config::ValidatorConfig,
     gate_name: &str,
-    only: &Option<Vec<String>>,
+    only: Option<&[String]>,
     skip: &Option<Vec<String>>,
 ) -> Option<&'static str> {
-    if let Some(ref o) = only {
+    if let Some(o) = only {
         if !exec::matches_filter(o, gate_name, &v.name, &v.tags) {
             return Some("--only");
         }
