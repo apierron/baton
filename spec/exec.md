@@ -598,6 +598,10 @@ SPEC-EX-DP-007: no-matching-files-skips-validator
   If a validator requires file input but no files in the pool match, the validator is skipped with a warning.
   test: exec::tests::dispatch_no_matching_files_produces_empty
 
+SPEC-EX-DP-008: keyed-invocation-order-is-deterministic
+  Keyed invocations are emitted in sorted key-value order, with the same order on repeated dispatches of the same input pool.
+  test: exec::tests::dispatch_keyed_order_is_deterministic
+
 ---
 
 ## Execution pipeline
