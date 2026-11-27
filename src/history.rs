@@ -415,21 +415,23 @@ pub struct GateResultDetail {
     pub skip_count: i64,
 }
 
-/// Query validator runs by file path (searches input_files JSON).
+/// Query validator runs by exact file path (searches input_files JSON).
 pub fn query_by_file(conn: &Connection, file_path: &str) -> Result<Vec<ValidatorRunSummary>> {
-    let pattern = format!("%\"path\":\"{}\"%", file_path.replace('"', "\\\""));
     let mut stmt = conn
         .prepare(
             "SELECT vr.id, vr.invocation_id, vr.gate, vr.validator, vr.group_key, vr.status, vr.feedback, vr.duration_ms, vr.input_files, i.timestamp
              FROM validator_runs vr
              JOIN invocations i ON i.id = vr.invocation_id
-             WHERE vr.input_files LIKE ?1
+             WHERE EXISTS (
+                 SELECT 1 FROM json_each(vr.input_files) je
+                 WHERE json_extract(je.value, '$.path') = ?1
+             )
              ORDER BY i.timestamp DESC",
         )
         .map_err(|e| BatonError::DatabaseError(format!("Query error: {e}")))?;
 
     let rows = stmt
-        .query_map(params![pattern], |row| {
+        .query_map(params![file_path], |row| {
             Ok(ValidatorRunSummary {
                 id: row.get(0)?,
                 invocation_id: row.get(1)?,
@@ -452,21 +454,23 @@ pub fn query_by_file(conn: &Connection, file_path: &str) -> Result<Vec<Validator
     Ok(results)
 }
 
-/// Query validator runs by content hash (searches input_files JSON).
+/// Query validator runs by exact content hash (searches input_files JSON).
 pub fn query_by_hash(conn: &Connection, hash: &str) -> Result<Vec<ValidatorRunSummary>> {
-    let pattern = format!("%\"hash\":\"{}\"%", hash);
     let mut stmt = conn
         .prepare(
             "SELECT vr.id, vr.invocation_id, vr.gate, vr.validator, vr.group_key, vr.status, vr.feedback, vr.duration_ms, vr.input_files, i.timestamp
              FROM validator_runs vr
              JOIN invocations i ON i.id = vr.invocation_id
-             WHERE vr.input_files LIKE ?1
+             WHERE EXISTS (
+                 SELECT 1 FROM json_each(vr.input_files) je
+                 WHERE json_extract(je.value, '$.hash') = ?1
+             )
              ORDER BY i.timestamp DESC",
         )
         .map_err(|e| BatonError::DatabaseError(format!("Query error: {e}")))?;
 
     let rows = stmt
-        .query_map(params![pattern], |row| {
+        .query_map(params![hash], |row| {
             Ok(ValidatorRunSummary {
                 id: row.get(0)?,
                 invocation_id: row.get(1)?,
@@ -1192,7 +1196,124 @@ mod tests {
         assert!(results.is_empty());
     }
 
+    fn store_invocation_with_input_file(conn: &Connection, path: &str, hash: &str) -> String {
+        let mut result = test_invocation_result();
+        result.gate_results[0].input_files.insert(
+            "lint".into(),
+            [crate::types::InputFileRecord {
+                path: path.into(),
+                hash: Some(hash.into()),
+            }]
+            .into(),
+        );
+        store_invocation(conn, &result).unwrap()
+    }
+
+    #[test]
+    fn query_by_file_underscore_is_literal() {
+        // SPEC-HI-QF-001
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+        store_invocation_with_input_file(&conn, "abpy", "abc123");
+
+        assert!(query_by_file(&conn, "a_py").unwrap().is_empty());
+        let id = store_invocation_with_input_file(&conn, "a_py", "def456");
+        let runs = query_by_file(&conn, "a_py").unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].invocation_id, id);
+    }
+
+    #[test]
+    fn query_by_file_percent_is_literal() {
+        // SPEC-HI-QF-001
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+        store_invocation_with_input_file(&conn, "abpy", "abc123");
+
+        assert!(query_by_file(&conn, "a%py").unwrap().is_empty());
+        let id = store_invocation_with_input_file(&conn, "a%py", "def456");
+        let runs = query_by_file(&conn, "a%py").unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].invocation_id, id);
+    }
+
+    #[test]
+    fn query_by_file_is_case_sensitive() {
+        // SPEC-HI-QF-001
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+        let id = store_invocation_with_input_file(&conn, "a.py", "abc123");
+
+        assert!(query_by_file(&conn, "A.py").unwrap().is_empty());
+        let runs = query_by_file(&conn, "a.py").unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].invocation_id, id);
+        assert_eq!(runs[0].validator, "lint");
+    }
+
+    #[test]
+    fn query_by_file_matches_json_escaped_path() {
+        // SPEC-HI-QF-001
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+        let path = r#"src\a"b.py"#;
+        let id = store_invocation_with_input_file(&conn, path, "abc123");
+
+        let runs = query_by_file(&conn, path).unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].invocation_id, id);
+        assert_eq!(runs[0].validator, "lint");
+    }
+
+    #[test]
+    fn query_by_file_and_hash_ignore_null_input_files() {
+        // SPEC-HI-QF-001, SPEC-HI-QH-001
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+        let id = store_invocation_with_input_file(&conn, "a.py", "abc123");
+        let updated = conn
+            .execute(
+                "UPDATE validator_runs SET input_files = NULL WHERE validator = 'typecheck'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(updated, 1);
+
+        for runs in [
+            query_by_file(&conn, "a.py").unwrap(),
+            query_by_hash(&conn, "abc123").unwrap(),
+        ] {
+            assert_eq!(runs.len(), 1);
+            assert_eq!(runs[0].invocation_id, id);
+            assert_eq!(runs[0].validator, "lint");
+        }
+        assert!(query_by_file(&conn, "").unwrap().is_empty());
+        assert!(query_by_hash(&conn, "").unwrap().is_empty());
+    }
+
     // ─── query_by_hash tests (SPEC-HI-QH-*) ───────────────
+
+    #[test]
+    fn query_by_hash_matches_exactly_and_case_sensitively() {
+        // SPEC-HI-QH-001
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+        let hash = "abcdef0123456789".repeat(4);
+        let id = store_invocation_with_input_file(&conn, "a.py", &hash);
+
+        let runs = query_by_hash(&conn, &hash).unwrap();
+        assert_eq!(runs.len(), 1);
+        assert_eq!(runs[0].invocation_id, id);
+        assert_eq!(runs[0].validator, "lint");
+        assert!(query_by_hash(&conn, &hash[..8]).unwrap().is_empty());
+        assert!(query_by_hash(&conn, &hash.to_uppercase())
+            .unwrap()
+            .is_empty());
+        assert!(query_by_hash(&conn, "abc%").unwrap().is_empty());
+        assert!(query_by_hash(&conn, &hash.replacen('a', "_", 1))
+            .unwrap()
+            .is_empty());
+    }
 
     #[test]
     fn query_by_hash_no_match_returns_empty() {

@@ -157,8 +157,13 @@ SPEC-HI-QR-006: empty-db-returns-empty-vec
 Queries validator runs by file path across the `validator_runs.input_files` JSON column.
 
 SPEC-HI-QF-001: filters-by-file-path
-  Searches for a file path within the JSON input_files array of validator_runs rows. Returns matching validator runs with their invocation context.
+  Matches a file path exactly within the JSON input_files array of validator_runs rows: comparisons are case-sensitive, with no wildcards, and JSON escapes are decoded. Rows with NULL input_files do not match and do not cause an error. Returns matching validator runs with their invocation context.
   test: cli::history_file_flag
+  test: history::tests::query_by_file_underscore_is_literal
+  test: history::tests::query_by_file_percent_is_literal
+  test: history::tests::query_by_file_is_case_sensitive
+  test: history::tests::query_by_file_matches_json_escaped_path
+  test: history::tests::query_by_file_and_hash_ignore_null_input_files
 
 SPEC-HI-QF-002: ordered-by-timestamp-desc
   Results are ordered by timestamp DESC.
@@ -175,8 +180,10 @@ SPEC-HI-QF-003: no-match-returns-empty-vec
 Queries validator runs by content hash across the `validator_runs.input_files` JSON column.
 
 SPEC-HI-QH-001: filters-by-content-hash
-  Searches for a content hash within the JSON input_files array of validator_runs rows.
+  Matches a content hash exactly within the JSON input_files array of validator_runs rows: comparisons are case-sensitive, with no wildcards or prefix matches. Rows with NULL input_files do not match and do not cause an error.
   test: cli::history_hash_flag
+  test: history::tests::query_by_hash_matches_exactly_and_case_sensitively
+  test: history::tests::query_by_file_and_hash_ignore_null_input_files
 
 SPEC-HI-QH-002: ordered-by-timestamp-desc
   Results are ordered by timestamp DESC.
