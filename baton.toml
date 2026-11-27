@@ -237,6 +237,13 @@ type = "script"
 command = "bash validators/quality-max-fn-length.sh"
 tags = ["quality"]
 
+# ── Tier 7: One-line hygiene checks ──────────────────────
+
+[validators.cargo-fmt-check]
+type = "script"
+command = 'cargo fmt --check'
+tags = ["hygiene"]
+
 # ── CI gate: clippy + tests ───────────────────────────────
 
 [gates.ci]
@@ -244,6 +251,7 @@ description = "Clippy linting and full test suite"
 validators = [
     { ref = "clippy", blocking = true },
     { ref = "tests", blocking = true },
+    { ref = "cargo-fmt-check", blocking = true },
 ]
 
 # ── Deep gate: CI + fuzzing + invariants + security ───────
