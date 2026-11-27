@@ -218,6 +218,31 @@ input = "*.py"
 warn_exit_codes = [2]
 ```
 
+#### Example: footprint gate
+
+`validators/footprint.sh` fails a change that is bigger than its work item allows. The item is a markdown work-item file whose `key: value` header ends at the first `---` line; it states its size in a header line:
+
+```text
+footprint: files=5 lines=400 paths=src/,tests/
+```
+
+Each key is optional. Lines are additions plus deletions from `git diff --numstat`, measured from the merge-base of `$FOOTPRINT_BASE` (default `HEAD`) and `HEAD`, with untracked files included. Tests are left out of the file and line counts but must stay inside `paths`; lockfiles and files marked `linguist-generated` are left out entirely. An item with no `footprint:` line is skipped with a message.
+
+```toml
+[validators.footprint]
+type = "script"
+command = "bash validators/footprint.sh {file.path}"
+input = "work/items/*.md"
+
+[gates.footprint]
+validators = [{ ref = "footprint", blocking = true }]
+```
+
+```bash
+FOOTPRINT_BASE=master baton check --only footprint work/items/wk-1a2b.md
+# FAIL: 7 files, limit 5: src/a.rs, src/b.rs, ...
+```
+
 ### LLM
 
 Invokes a language model for validation in one of two modes:
