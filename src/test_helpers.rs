@@ -345,6 +345,7 @@ pub fn verdict(status: VerdictStatus) -> Verdict {
                 estimated_usd: Some(0.001),
             }),
         }],
+        input_files: Default::default(),
     }
 }
 

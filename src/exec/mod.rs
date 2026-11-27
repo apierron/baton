@@ -17,7 +17,7 @@ pub use run_if::evaluate_run_if;
 pub use status::compute_final_status;
 
 use chrono::Utc;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
 use crate::config::{BatonConfig, GateConfig, ValidatorConfig, ValidatorType};
@@ -305,6 +305,7 @@ pub fn run_gate(
     // Run validators
     let mut results: BTreeMap<String, ValidatorResult> = BTreeMap::new();
     let mut warnings_list: Vec<String> = Vec::new();
+    let mut input_files: BTreeMap<String, BTreeSet<InputFileRecord>> = BTreeMap::new();
 
     let suppressed = &options.suppressed_statuses;
 
@@ -360,6 +361,32 @@ pub fn run_gate(
             continue;
         }
 
+        // SPEC-EX-RG-034: hash before running, so history records the content that was validated.
+        // Hash a throwaway copy so no invocation holds file contents before it runs, and skip
+        // anything that is not a regular file (opening a FIFO would block).
+        // ponytail: each validator re-reads its files; hash the pool once if large pools get slow.
+        let records = invocations
+            .iter()
+            .flat_map(|inv| inv.inputs.values().flatten())
+            .map(|f| {
+                let hash = f
+                    .path
+                    .is_file()
+                    .then(|| {
+                        InputFile::new(f.path.clone())
+                            .get_hash()
+                            .ok()
+                            .map(str::to_string)
+                    })
+                    .flatten();
+                InputFileRecord {
+                    path: f.path.display().to_string(),
+                    hash,
+                }
+            })
+            .collect();
+        input_files.insert(validator.name.clone(), records);
+
         let result = if invocations.len() == 1 {
             let mut inv_inputs = invocations.into_iter().next().unwrap().inputs;
             execute_validator(validator, &mut inv_inputs, &results, Some(config))
@@ -404,6 +431,7 @@ pub fn run_gate(
                 warnings: warnings_list,
                 suppressed: suppressed.iter().map(|s| s.to_string()).collect(),
                 history: results.values().cloned().collect(),
+                input_files,
             });
         }
     }
@@ -451,6 +479,7 @@ pub fn run_gate(
         warnings: warnings_list,
         suppressed: suppressed.iter().map(|s| s.to_string()).collect(),
         history: result_list,
+        input_files,
     })
 }
 
@@ -1079,6 +1108,7 @@ mod tests {
             status: Status::Fail,
             validator_results: results,
             duration: std::time::Duration::from_millis(20),
+            input_files: Default::default(),
         };
 
         // Only 2 results (third was blocked)
@@ -1255,6 +1285,87 @@ mod tests {
         ];
         let agg = aggregate_results("v", results);
         assert_eq!(agg.status, Status::Fail);
+    }
+
+    #[test]
+    fn run_gate_records_input_files() {
+        // SPEC-EX-RG-034: each per-file invocation's file is recorded with its SHA-256;
+        // a validator without input files records an empty set
+        use crate::config::InputDecl;
+
+        let dir = tempfile::tempdir().unwrap();
+        let f1 = dir.path().join("a.py");
+        let f2 = dir.path().join("b.py");
+        std::fs::write(&f1, "a").unwrap();
+        std::fs::write(&f2, "b").unwrap();
+
+        let gate = th::gate(
+            "test",
+            vec![
+                ValidatorBuilder::script("lint", "exit 0")
+                    .input(InputDecl::PerFile {
+                        pattern: "*.py".into(),
+                    })
+                    .build(),
+                ValidatorBuilder::script("count", "exit 0").build(),
+            ],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let pool = vec![InputFile::new(f1.clone()), InputFile::new(f2.clone())];
+        let verdict = run_gate(&gate, &config, pool, &RunOptions::new()).unwrap();
+
+        let record = |p: &std::path::Path, hash: &str| InputFileRecord {
+            path: p.display().to_string(),
+            hash: Some(hash.into()),
+        };
+        // sha256("a") and sha256("b")
+        let expected = BTreeSet::from([
+            record(
+                &f1,
+                "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+            ),
+            record(
+                &f2,
+                "3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d",
+            ),
+        ]);
+        assert_eq!(verdict.input_files["lint"], expected);
+        assert!(verdict.input_files["count"].is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_gate_does_not_read_a_fifo_to_hash_it() {
+        // SPEC-EX-RG-034: a file that is not a regular file is recorded with no hash;
+        // opening a FIFO to hash it would block with no writer.
+        use crate::config::InputDecl;
+
+        let dir = tempfile::tempdir().unwrap();
+        let fifo = dir.path().join("a.py");
+        assert!(std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success());
+
+        let gate = th::gate(
+            "test",
+            vec![ValidatorBuilder::script("lint", "test -p {file.path}")
+                .input(InputDecl::PerFile {
+                    pattern: "*.py".into(),
+                })
+                .build()],
+        );
+        let config = th::config_for_gate(gate.clone());
+        let pool = vec![InputFile::new(fifo.clone())];
+        let verdict = run_gate(&gate, &config, pool, &RunOptions::new()).unwrap();
+
+        assert_eq!(verdict.status, VerdictStatus::Pass);
+        let expected = BTreeSet::from([InputFileRecord {
+            path: fifo.display().to_string(),
+            hash: None,
+        }]);
+        assert_eq!(verdict.input_files["lint"], expected);
     }
 
     #[test]

@@ -109,8 +109,8 @@ SPEC-HI-SI-004: validator-run-rows-inserted
   test: history::tests::store_invocation_inserts_validator_runs
 
 SPEC-HI-SI-005: input-files-stored-as-json
-  The input_files column contains a JSON array of objects, each with `path` (string) and `hash` (string, SHA-256 of file content at time of validation).
-  test: TODO (input_files JSON population depends on dispatch planner wiring)
+  The input_files column contains a JSON array of objects, each with `path` (string, the path as it appears in the input pool) and `hash` (string, SHA-256 of file content at time of validation, see SPEC-EX-RG-034). `hash` is null when the file is not a regular file or cannot be read as UTF-8 text. A validator run with no input files stores `[]`. When a validator's invocations are aggregated into one ValidatorResult (SPEC-EX-RG-033), its row lists the files of all of them, each once.
+  test: history::tests::store_invocation_records_input_files
 
 SPEC-HI-SI-006: tokens-used-stored
   When a ValidatorResult has token usage data, the tokens_used column is populated. Otherwise it is NULL.
@@ -158,7 +158,7 @@ Queries validator runs by file path across the `validator_runs.input_files` JSON
 
 SPEC-HI-QF-001: filters-by-file-path
   Searches for a file path within the JSON input_files array of validator_runs rows. Returns matching validator runs with their invocation context.
-  test: TODO
+  test: cli::history_file_flag
 
 SPEC-HI-QF-002: ordered-by-timestamp-desc
   Results are ordered by timestamp DESC.
@@ -176,7 +176,7 @@ Queries validator runs by content hash across the `validator_runs.input_files` J
 
 SPEC-HI-QH-001: filters-by-content-hash
   Searches for a content hash within the JSON input_files array of validator_runs rows.
-  test: TODO
+  test: cli::history_hash_flag
 
 SPEC-HI-QH-002: ordered-by-timestamp-desc
   Results are ordered by timestamp DESC.

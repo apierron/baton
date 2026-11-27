@@ -68,7 +68,7 @@ SPEC-TY-IN-001: fields
 Result of running all validators in a single gate. Gates are orchestration — they don't touch files, they sequence validators and reduce their statuses to a single verdict.
 
 SPEC-TY-GR-001: fields
-  A GateResult records which gate ran, its overall status (any of pass/fail/warn/skip/error), all individual validator results (in pipeline order), and the total wall-clock duration. A gate can be skipped (filtered by `--skip`) or produce a warning (all validators passed but some warned).
+  A GateResult records which gate ran, its overall status (any of pass/fail/warn/skip/error), all individual validator results (in pipeline order), the input files each validator ran against (copied from `Verdict.input_files`), and the total wall-clock duration. A gate can be skipped (filtered by `--skip`) or produce a warning (all validators passed but some warned).
   test: types::tests::gate_result_fields
 
 ---
@@ -191,6 +191,7 @@ Final gate-level result containing all validator outcomes and aggregate metadata
 | `warnings`       | `Vec<String>`          | Non-fatal warnings collected during execution  |
 | `suppressed`     | `Vec<String>`          | Names of status-suppressed validators          |
 | `history`        | `Vec<ValidatorResult>` | All validator results in pipeline order        |
+| `input_files`    | `BTreeMap<String, BTreeSet<InputFileRecord>>` | Files each validator ran against (path + hash), by validator name. Not serialized; feeds history (SPEC-EX-RG-034) |
 
 ### Verdict: to_json
 
@@ -199,7 +200,7 @@ SPEC-TY-VD-001: to-json-produces-pretty-printed-json
   test: types::tests::verdict_to_json_roundtrip
 
 SPEC-TY-VD-002: to-json-preserves-all-fields
-  All Verdict fields survive a JSON roundtrip, including nested structures like Cost within ValidatorResult, optional fields (Some and None), and vector fields (warnings, suppressed, history).
+  All Verdict fields except `input_files` (which is `#[serde(skip)]`) survive a JSON roundtrip, including nested structures like Cost within ValidatorResult, optional fields (Some and None), and vector fields (warnings, suppressed, history).
   test: types::tests::verdict_json_roundtrip_full
 
 SPEC-TY-VD-003: to-json-panics-on-serialization-failure

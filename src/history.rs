@@ -320,6 +320,17 @@ pub fn store_invocation(conn: &Connection, result: &InvocationResult) -> Result<
                 .cost
                 .as_ref()
                 .and_then(|c| c.input_tokens.map(|i| i + c.output_tokens.unwrap_or(0)));
+            // SPEC-HI-SI-005: always a JSON array; empty when the run had no input files.
+            let input_files = serde_json::to_string(
+                &gate_result
+                    .input_files
+                    .get(&vr.name)
+                    .cloned()
+                    .unwrap_or_default(),
+            )
+            .map_err(|e| {
+                BatonError::DatabaseError(format!("Failed to serialize input files: {e}"))
+            })?;
 
             conn.execute(
                 "INSERT INTO validator_runs (id, invocation_id, gate, validator, group_key, status, feedback, duration_ms, tokens_used, input_files)
@@ -334,7 +345,7 @@ pub fn store_invocation(conn: &Connection, result: &InvocationResult) -> Result<
                     vr.feedback,
                     vr.duration_ms,
                     tokens_used,
-                    None::<String>, // input_files JSON — populated when dispatch planner is wired
+                    input_files,
                 ],
             )
             .map_err(|e| {
@@ -1041,6 +1052,7 @@ mod tests {
                     },
                 ],
                 duration: std::time::Duration::from_millis(170),
+                input_files: Default::default(),
             }],
             duration: std::time::Duration::from_millis(170),
         }
@@ -1137,6 +1149,34 @@ mod tests {
             )
             .unwrap();
         assert_eq!(tokens, Some(700)); // 500 input + 200 output
+    }
+
+    #[test]
+    fn store_invocation_records_input_files() {
+        // SPEC-HI-SI-005: input_files is a JSON array of {path, hash}; "[]" for a run without files
+        let dir = TempDir::new().unwrap();
+        let conn = init_db(&dir.path().join("test.db")).unwrap();
+        let mut result = test_invocation_result();
+        result.gate_results[0].input_files.insert(
+            "lint".into(),
+            [crate::types::InputFileRecord {
+                path: "src/a.py".into(),
+                hash: Some("abc".into()),
+            }]
+            .into(),
+        );
+        let id = store_invocation(&conn, &result).unwrap();
+
+        let files = |validator: &str| -> String {
+            conn.query_row(
+                "SELECT input_files FROM validator_runs WHERE invocation_id = ?1 AND validator = ?2",
+                params![id, validator],
+                |row| row.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(files("lint"), r#"[{"path":"src/a.py","hash":"abc"}]"#);
+        assert_eq!(files("typecheck"), "[]");
     }
 
     // ─── query_by_file tests (SPEC-HI-QF-*) ───────────────

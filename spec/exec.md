@@ -527,6 +527,10 @@ SPEC-EX-RG-033: aggregate-multiple-invocations
   When plan_dispatch produces N>1 invocations, each is executed independently. The results are aggregated: status is the worst among all results (Error > Fail > Warn > Pass > Skip), feedback is concatenated with separator, durations are summed, costs are summed.
   test: exec::tests::dispatch_per_file_aggregates_results
 
+SPEC-EX-RG-034: input-files-recorded
+  Before executing a validator's invocations, run_gate records every file in them (path and SHA-256 hash, see SPEC-HI-SI-005) in `Verdict.input_files` under the validator's name. Hashing reads the file and caches its content on the InputFile, so the validator sees the content that was hashed. A validator with no input files records an empty set; one that is filtered out or has no matching files records nothing.
+  test: exec::tests::run_gate_records_input_files
+
 ---
 
 ## File collector
